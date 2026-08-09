@@ -1,0 +1,486 @@
+/* UI остаётся адаптером: игровые правила здесь запрещены. */
+:root {
+  color-scheme: dark;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #14130f;
+  color: #f0ead9;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  background:
+    radial-gradient(circle at 50% 30%, rgba(116, 96, 57, .2), transparent 45%),
+    #14130f;
+}
+
+#world {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;
+}
+
+/* Экран игры: рамка интерфейса из INTERF.RES и окно мира в её проёме.
+   Пропорции родные — вся рамка масштабируется одним множителем
+   (высота окна / 768), поэтому панель не растягивается. */
+#game {
+  position: fixed;
+  /* ИГРЕ — ВЕСЬ ЭКРАН. Отладочные панели убраны из игры и живут под
+     ?debug=1, поэтому места справа под них больше не отводится. */
+  inset: 0;
+  display: flex;
+  align-items: stretch;
+  background: #14130f;
+}
+
+#ui-panel {
+  position: relative;
+  flex: 0 0 auto;
+  overflow: hidden;
+}
+
+#ui-panel-art {
+  position: absolute;
+  inset: 0;
+  background-repeat: no-repeat;
+  background-position: 0 0;
+  image-rendering: pixelated;
+}
+
+#ui-panel-cells { position: absolute; inset: 0; }
+
+#ui-view {
+  position: relative;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+#ui-view #world { flex: 1 1 auto; min-height: 0; }
+
+/* Нижняя полоса рамки: в игре она идёт со строки 709 до низа экрана. */
+#ui-frame-bottom {
+  position: relative;
+  flex: 0 0 auto;
+  image-rendering: pixelated;
+}
+
+/* Пояс лежит поверх нижней кромки окна мира, а не отодвигает его: в игре
+   проём окна 884x709, и ряд ячеек рисуется прямо в нём (VA 0x43096C). */
+#ui-belt {
+  position: absolute;
+  left: 0; right: 0;
+  z-index: 2;
+  image-rendering: pixelated;
+}
+
+#bag-slots { position: absolute; inset: 0; }
+
+/* Гнездо интерфейса: прозрачная кликабельная область поверх рамки. */
+.ui-cell {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.ui-cell:hover { border-color: rgba(215, 183, 95, .75); }
+.ui-cell.disabled { opacity: .45; cursor: default; }
+.ui-cell.disabled:hover { border-color: transparent; }
+.ui-cell img { width: 100%; height: 100%; object-fit: contain;
+               image-rendering: pixelated; }
+.ui-cell.active { border-color: #d7b75f; }
+
+/* Разговор: панель поверх нижней части окна мира. */
+#ui-talk {
+  position: absolute;
+  z-index: 4;
+  left: 6%; right: 6%; bottom: 14%;
+  padding: 14px 18px 16px;
+  background: rgba(18, 15, 10, .92);
+  border: 1px solid rgba(222, 204, 157, .45);
+  color: #f0e6c8;
+  font-family: Georgia, "Times New Roman", serif;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .55);
+}
+#ui-talk[hidden] { display: none; }
+.ui-talk-who { color: #d7b75f; font-size: 15px; margin-bottom: 6px; }
+.ui-talk-text { font-size: 16px; line-height: 1.45; margin-bottom: 12px; }
+.ui-talk-options { display: flex; flex-direction: column; gap: 6px; }
+.ui-talk-options button {
+  text-align: left; background: rgba(44, 36, 22, .9); color: #ecdfb8;
+  border: 1px solid rgba(222, 204, 157, .35); padding: 7px 10px;
+  font: 14px/1.35 Georgia, serif; cursor: pointer;
+}
+.ui-talk-options button:hover { background: rgba(70, 57, 32, .95); color: #fff2c8; }
+
+/* Карта мира — тот же проём, что и окно снаряжения. */
+#ui-map {
+  position: absolute;
+  z-index: 3;
+  image-rendering: pixelated;
+  background-repeat: no-repeat;
+}
+#ui-map[hidden] { display: none; }
+/* Туман, значки и отряд рисуются одним холстом в размер картинки. */
+.ui-map-layer {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  image-rendering: pixelated;
+}
+.ui-map-title {
+  position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%);
+  color: #f2e6c2; font-family: Georgia, serif; font-size: 18px;
+  text-shadow: 0 2px 6px #000;
+}
+
+/* Окно снаряжения — поверх окна мира, как в игре. */
+#ui-window {
+  position: absolute;
+  z-index: 3;
+  background: rgba(10, 9, 7, .35);
+}
+
+#ui-window[hidden] { display: none; }
+#ui-window-close {
+  position: absolute; top: 4px; right: 4px; z-index: 4;
+  background: rgba(24, 22, 16, .8); color: #e8dfc4;
+  border: 1px solid rgba(222, 204, 157, .4); cursor: pointer;
+  font-size: 15px; line-height: 1; padding: 2px 7px;
+}
+
+#world.dragging { cursor: grabbing; }
+
+.topbar, .panel {
+  position: fixed;
+  z-index: 2;
+  border: 1px solid rgba(222, 204, 157, .2);
+  background: rgba(24, 22, 16, .88);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, .32);
+  backdrop-filter: blur(14px);
+}
+
+.topbar {
+  top: 18px;
+  left: 18px;
+  right: 18px;
+  min-height: 72px;
+  padding: 13px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.eyebrow {
+  margin: 0 0 3px;
+  color: #bca66d;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .2em;
+}
+
+h1, h2 { font-family: Georgia, "Times New Roman", serif; font-weight: 500; }
+h1 { margin: 0; font-size: clamp(22px, 3vw, 32px); }
+h2 { margin: 0 0 14px; font-size: 20px; }
+
+.status-block {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  color: #c9c2ae;
+  font-size: 12px;
+}
+
+.status-block span {
+  padding: 7px 10px;
+  border: 1px solid rgba(222, 204, 157, .14);
+  background: rgba(255, 255, 255, .035);
+}
+
+.panel {
+  right: 18px;
+  bottom: 18px;
+  max-height: calc(100vh - 130px);
+  overflow: auto;
+  width: min(310px, calc(100vw - 36px));
+  padding: 16px 18px;
+  color: #cbc4b2;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.panel p { margin: 12px 0 0; }
+
+.debug-controls {
+  margin: 14px 0 0;
+  padding: 9px 10px 10px;
+  border: 1px solid rgba(222, 204, 157, .16);
+}
+
+.debug-controls legend { padding: 0 5px; color: #bca66d; }
+.debug-controls label { display: block; margin-top: 5px; cursor: pointer; }
+.debug-controls input { accent-color: #d7b75f; vertical-align: -1px; }
+
+#debug-info {
+  min-height: 54px;
+  max-height: 160px;
+  margin: 10px 0 0;
+  overflow: auto;
+  color: #d8d0bc;
+  font: 11px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+  white-space: pre-wrap;
+}
+
+dl { margin: 0; }
+dl div { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid rgba(222, 204, 157, .1); }
+dt { color: #8e8776; }
+dd { margin: 0; color: #efe7d2; font-variant-numeric: tabular-nums; }
+
+#error {
+  position: fixed;
+  z-index: 4;
+  inset: 50% auto auto 50%;
+  transform: translate(-50%, -50%);
+  max-width: 620px;
+  padding: 20px;
+  border: 1px solid #ad5c4d;
+  background: #2b1714;
+  color: #ffd8cf;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 620px) {
+  .topbar { align-items: flex-start; }
+  .status-block { flex-direction: column; align-items: flex-end; }
+  #status { max-width: 140px; text-align: right; }
+}
+
+/* Инвентарь: пять слотов экипировки и мешок на 42 ячейки — раскладка
+   движка (unit+0x58 … unit+0x62), а не наша выдумка. */
+.inventory { border: 1px solid #3a3428; padding: .5rem; margin: .6rem 0; }
+.inventory legend { font-size: .8rem; letter-spacing: .04em; }
+.inventory .slots { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+.inventory .bag { display: grid; grid-template-columns: repeat(7, 1fr);
+                  gap: 3px; margin-top: 6px; }
+.inventory .cell { aspect-ratio: 1; border: 1px solid #4a422f; border-radius: 3px;
+                   background: #1b1913; display: flex; align-items: center;
+                   justify-content: center; font-size: .62rem; line-height: 1.05;
+                   text-align: center; color: #cdc3a6; cursor: pointer;
+                   overflow: hidden; padding: 1px; }
+.inventory .cell.filled { background: #2a2418; border-color: #6b5c3a; }
+.inventory .cell.empty { color: #4c4636; }
+.inventory .slots .cell { aspect-ratio: auto; min-height: 2.6rem; }
+.inventory .hint { font-size: .7rem; color: #8e866f; margin: .4rem 0 0; }
+
+.inventory .cell img { width: 100%; height: 100%; object-fit: contain;
+                       image-rendering: pixelated; }
+
+/* Окно снаряжения — картинка из игры, гнёзда стоят по координатам движка. */
+.equip-window { position: relative; width: 100%; line-height: 0; }
+.equip-window-art { width: 100%; height: auto; image-rendering: pixelated; }
+.equip-slot { position: absolute; border: 1px solid transparent; cursor: pointer; }
+.equip-slot:hover { border-color: #b99a4a; }
+.equip-slot.filled { border-color: #6b5c3a; }
+.equip-slot img { width: 100%; height: 100%; object-fit: contain;
+                  image-rendering: pixelated; }
+
+/* Полоска здоровья у портрета — как в игре, снизу вверх. */
+.ui-health {
+  position: absolute; right: -6px; bottom: 0; width: 5px;
+  background: linear-gradient(#c4443a, #7c2a24);
+  border: 1px solid rgba(0, 0, 0, .5);
+}
+
+/* Числа и подписи экрана персонажа стоят по координатам движка. */
+.ui-char {
+  position: absolute;
+  white-space: nowrap;
+  color: #e9dfbe;
+  font-family: Georgia, "Times New Roman", serif;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .9);
+  pointer-events: none;
+  line-height: 1;
+}
+.ui-char.raise {
+  color: #ffd45e;
+  font-weight: 700;
+  cursor: pointer;
+  pointer-events: auto;
+  padding: 0 4px;
+}
+.ui-char.raise:hover { color: #fff2c0; }
+/* Перегруз: движок печатает вес красной палитрой (0x60054C). */
+.ui-char.over { color: #e05a4e; }
+
+/* Таблица прокачки в окне персонажа. */
+.ui-progress { position: absolute; right: 2%; top: 6%; width: 44%;
+               max-height: 88%; overflow: auto; font-size: 12px;
+               color: #e6dcbe; background: rgba(18, 15, 10, .72);
+               border: 1px solid rgba(222, 204, 157, .25); padding: 8px 10px; }
+.ui-progress-head { color: #d7b75f; margin-bottom: 6px; line-height: 1.4; }
+.ui-progress-row { display: grid; grid-template-columns: 1fr auto auto;
+                   gap: 8px; align-items: center; padding: 1px 0; }
+.ui-progress-row b { color: #f0e6c8; font-weight: 600; }
+.ui-progress-row button { background: #2c2416; color: #e8dfc4; cursor: pointer;
+                          border: 1px solid rgba(222, 204, 157, .4);
+                          font-size: 11px; padding: 0 6px; }
+.ui-progress-row button:disabled { opacity: .35; cursor: default; }
+
+/* Торговый экран: он занимает проём мира, а всё внутри стоит по
+   координатам из exe. */
+#ui-trade {
+  position: absolute;
+  z-index: 6;
+  background: rgba(12, 10, 8, .92);
+  border: 1px solid #4a3a24;
+}
+
+/* Журнал заданий. Движок рисует его на подложке экрана персонажа, строка за
+   строкой с шагом 6 и обрывом на 0x251 (VA 0x42A8F4); здесь это прокрутка. */
+#ui-journal {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(620px, 84%);
+  max-height: 70%;
+  z-index: 7;
+  padding: 18px 20px;
+  overflow-y: auto;
+  background: rgba(12, 10, 8, .95);
+  border: 1px solid #4a3a24;
+  color: #e8d6ac;
+  font: 400 14px/1.5 Georgia, serif;
+}
+#ui-journal[hidden] { display: none; }
+#ui-journal p { margin: 0 0 14px; }
+#ui-journal p:last-child { margin-bottom: 0; }
+#ui-journal-close {
+  position: absolute;
+  right: 8px;
+  top: 6px;
+  background: none;
+  border: 0;
+  color: #f2d79a;
+  font: 600 18px/1 system-ui, sans-serif;
+  cursor: pointer;
+}
+#ui-trade .trade-number {
+  position: absolute;
+  color: #f2d79a;
+  font: 600 15px/1 system-ui, sans-serif;
+  text-shadow: 0 1px 2px #000;
+}
+#ui-trade .trade-button {
+  position: absolute;
+  background: linear-gradient(#5a4526, #33260f);
+  color: #f2d79a;
+  border: 1px solid #7a6032;
+  border-radius: 4px;
+  font: 600 15px/1 system-ui, sans-serif;
+  cursor: pointer;
+}
+
+/* ОТЛАДОЧНЫЕ ПАНЕЛИ. Шапка и боковая панель — наши инструменты, а не
+   часть игры: их узлы нужны коду (там живут переключатели часов, теней и
+   атмосферы), поэтому они остаются в разметке, но с экрана убраны. Вернуть
+   их можно, открыв страницу с ?debug=1. */
+.topbar, .panel { display: none; }
+body.debug .topbar { display: flex; }
+body.debug .panel { display: block; }
+
+
+/* ---- экран создания героя (состояние 2, отрисовка 0x430DF4) ------------- */
+
+/* Пока экран открыт, сцена не рисуется: в движке это отдельное состояние
+   со своим фоном, игра под ним не видна. */
+body.creation-open #world, body.creation-open .ui { display: none; }
+
+.creation { position: fixed; inset: 0; z-index: 60; background: #000; }
+
+/* КАДР 4:3 по центру. Экран движка — 1024x768, и все его координаты имеют
+   смысл только внутри этого кадра: проценты считаются от него, а не от окна.
+   Иначе подписи и кнопки уезжают мимо картинки. */
+.creation__frame {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(100vw, 133.3333vh);
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  /* размеры букв меряются от кадра, а не от окна */
+  container-type: inline-size;
+}
+
+.creation__background {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
+
+.creation__text, .creation__zone, .creation__story { position: absolute; }
+
+/* Имя и значение выравниваются ПРАВЫМ краем по своему x, как в движке. */
+.creation__text {
+  transform: translateX(-100%);
+  color: rgb(255 214 138);
+  font: 500 clamp(8px, 1.6cqw, 15px)/1 "Trebuchet MS", system-ui, sans-serif;
+  white-space: nowrap;
+  pointer-events: none;
+  text-shadow: 0 1px 2px #000;
+}
+
+/* Добавленное на этом экране движок печатает другой палитрой. */
+.creation__text.добавлено { color: #8fe08f; }
+
+.creation__zone {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: rgb(255 214 138);
+  background: transparent;
+  border: 1px solid transparent;
+  font: 600 clamp(8px, 1.6cqw, 16px)/1 "Trebuchet MS", system-ui, sans-serif;
+  cursor: pointer;
+  text-shadow: 0 1px 2px #000;
+}
+
+.creation__zone:hover, .creation__zone:focus-visible {
+  border-color: rgb(255 214 138 / .55);
+  outline: none;
+}
+
+.creation__zone.выбран { border-color: rgb(255 214 138 / .9); }
+
+.creation__face {
+  width: 100%;
+  height: 100%;
+  object-fit: none;
+  object-position: left top;
+  image-rendering: pixelated;
+}
+
+/* Описание героя движок печатает в рамке слева внизу (0x4622E4…0x4622EC). */
+/* Место рамки задаётся из пака числами движка — здесь только вид. */
+.creation__story {
+  margin: 0;
+  overflow: hidden;
+  color: rgb(232 208 170);
+  font: 400 clamp(8px, 1.45cqw, 14px)/1.3 "Trebuchet MS", system-ui, sans-serif;
+  text-shadow: 0 1px 2px #000;
+}

@@ -1,0 +1,77 @@
+# собранные файлы игры и копии оригиналов — не в репозиторий
+build/
+backup/
+gfx/
+maps_png/
+content_build/
+
+# промежуточные каталоги сборки content pack: сборка идёт в .stage-*, старая
+# версия на время подмены уезжает в .previous-*. При обрыве сборки каталог
+# остаётся на диске и весит столько же, сколько сам пак.
+.content_build.stage-*/
+.content_build.previous-*/
+
+__pycache__/
+*.pyc
+*.egg-info/
+
+catalog/tiles/
+catalog/objects/
+catalog/*_sheet*.png
+
+# Опыты с ригом в Blender — лежат в корне, но к паку отношения не имеют
+base_proportions_*
+.codex_*
+walk_preview_sequence/
+walk_preview_frames/
+mocap_sources/
+mocap_preview_frames/
+mocap_*
+
+# Разбор оригинального движка: проект Ghidra и декомпилированный код — это
+# производное от чужого бинарника, в репозиторий не кладём. Наша карта
+# адресов (engine/names.json) остаётся.
+engine/ghidra_project/
+engine/decompiled/
+
+# Ретаргет женской походки — эксперименты в корне
+female_walk_*
+
+# ассеты стартового меню: картинки и пункты режутся из MENU.RES, ролик
+# перекодируется из исходника. Всё воспроизводится tools/menu_extract.py
+# и tools/menu_video.py, в репозиторий не идёт.
+knyaz2/web/static/menu/
+
+# ── что НИКОГДА не уезжает в публичный репозиторий ────────────────────────
+# Всё ниже — производное от самой игры либо её распакованные данные. Код,
+# который это читает и собирает, публикуется; сами данные — нет. Игру каждый
+# берёт свою, а project/ появляется локально после tools/unpack_all.py.
+#
+# Комментарий в .gitignore работает ТОЛЬКО с начала строки: хвостовой текст
+# после шаблона становится частью самого шаблона и правило перестаёт ловить.
+
+# разобранные GAME.x, сетки карт, таблицы exe, тексты
+project/
+# вырезанные кадры анимации и снимки оригинальной игры
+tools/refanim/
+tools/isoshots/
+tools/isosweep/
+tools/stance_shots/
+# выгруженные данные анимации
+tools/webanim/
+# разобранный каталог клеток и объектов
+catalog/
+sprites/
+poses/
+
+# Опыты с ригом: сотни мегабайт двоичных файлов Blender. У GitHub предел
+# 100 МБ на файл, и hero_mixamo_posed.blend его превышал.
+*.blend
+*.blend1
+*.glb
+*.fbx
+
+# Редакторы собираются скриптами tools/make_*.py и несут вшитые кадры игры.
+anim_editor.html
+character_studio.html
+joint_editor.html

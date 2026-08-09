@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Звуковая лаборатория — Князь 2</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 16px 20px 60px;
+      background: #17140f; color: #d6c6aa;
+      font: 14px/1.45 "Segoe UI", system-ui, sans-serif;
+    }
+    h1 { font-size: 18px; margin: 0 0 4px; color: #e8d9b0; }
+    h2 { font-size: 15px; margin: 22px 0 8px; color: #caa85f; }
+    p.note { margin: 2px 0 10px; color: #8d8271; font-size: 12.5px; }
+    .row { display: flex; flex-wrap: wrap; gap: 6px; }
+    button.snd {
+      padding: 5px 9px; border: 1px solid #4a4234; border-radius: 5px;
+      background: #241f17; color: #d6c6aa; cursor: pointer; font-size: 12.5px;
+    }
+    button.snd:hover { border-color: #caa85f; color: #ffe9b0; }
+    button.snd.playing { background: #3a2f1c; border-color: #e0b25f; }
+    button.snd small { color: #877b66; margin-left: 5px; }
+    button.snd.silent { opacity: .38; }
+    fieldset {
+      border: 1px solid #3a332a; border-radius: 8px;
+      margin: 14px 0; padding: 10px 14px 12px;
+    }
+    legend { color: #caa85f; padding: 0 6px; font-size: 13px; }
+    label { margin-right: 14px; font-size: 12.5px; }
+    input[type=range] { vertical-align: middle; width: 220px; }
+    input[type=number] { width: 90px; background: #241f17; color: inherit;
+      border: 1px solid #4a4234; border-radius: 4px; padding: 3px 6px; }
+    #stats { position: fixed; right: 12px; top: 10px; text-align: right;
+      font-size: 12px; color: #8d8271; white-space: pre-line; }
+    .muted { color: #6f6555; }
+  </style>
+</head>
+<body>
+  <h1>Звуковая лаборатория</h1>
+  <p class="note">Все 494 слота SOUNDS.RES и реплики voices.res — прямо из пака,
+    формулы громкости и пана — из assets/audio.json (канон движка).
+    Первый клик по странице разблокирует звук.</p>
+  <div id="stats"></div>
+
+  <fieldset>
+    <legend>стенд: громкость · пан · питч</legend>
+    <label>громкость <input type="range" id="vol" min="-10000" max="0" value="0">
+      <span id="volText">0</span></label>
+    <label>пан <input type="range" id="pan" min="-10000" max="10000" value="0">
+      <span id="panText">0</span></label>
+    <label><input type="checkbox" id="pitch" checked> случайный питч (как движок)</label>
+    <button class="snd" id="stopAll">■ стоп всё</button>
+  </fieldset>
+
+  <div id="groups"></div>
+
+  <fieldset>
+    <legend>реплики диалогов (1…1215) и приветствия (5500…5529)</legend>
+    <label>номер <input type="number" id="lineNo" value="1" min="1" max="5529"></label>
+    <label>голос <input type="number" id="voiceNo" value="0" min="0" max="255"></label>
+    <button class="snd" id="playLine">▶ реплика</button>
+    <span class="muted" id="lineInfo"></span>
+    <div class="row" id="greetings" style="margin-top:8px"></div>
+  </fieldset>
+
+  <script type="module" src="/sound_lab.js"></script>
+</body>
+</html>

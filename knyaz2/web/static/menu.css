@@ -1,0 +1,279 @@
+/* Стартовое меню: экран 4:3 как у оригинала (1024x768), внутри — ролик и
+   список пунктов на плите 308x285. Всё внутри .frame меряется в процентах
+   от кадра, поэтому меню не разъезжается ни при каком размере окна. */
+
+:root {
+  /* Посадка списка на плиту ролика — по замерам, а не на глаз (скрипты
+     лежали в scratchpad, числа перепроверены по всем 338 кадрам):
+       руны над плитой опускаются до 0.342 высоты кадра в самой яркой фазе;
+       тёмное поле плиты держится примерно с 0.36 до 0.70;
+       ниже 0.70 идёт светящаяся трещина у подножия.
+     Отсюда верх 38 % и ширина 25.5 %. Шаг между пунктами вдобавок поджат
+     до 0.9 от оригинального: буквы остаются прежнего размера, а весь блок
+     кончается на 0.668 — «ВЫХОД» больше не наезжает на нижнюю трещину. */
+  --plate-width: 25.5%;      /* ширина списка от ширины кадра */
+  --plate-top: 38%;          /* верх списка от высоты кадра */
+  --pitch: .9;               /* сжатие шага строк: 1 — как в оригинале */
+  --plate-shift: 0%;         /* сдвиг вправо, если захочется подвинуть */
+  --gold: 255 174 84;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: #000;
+  overflow: hidden;
+}
+
+.stage {
+  height: 100%;
+  display: grid;
+  place-items: center;
+}
+
+/* кадр 4:3 — тот же формат, что у экрана игры и у ролика, поэтому
+   object-fit: cover ничего не срезает */
+.frame {
+  position: relative;
+  width: min(100vw, 133.3333vh);
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  user-select: none;
+}
+
+.frame__film {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* пока ролик не приехал, тут стоит poster; чёрного мига не будет */
+}
+
+/* виньетка по краям + мягкая тень под списком: буквы оригинала рисовались
+   на почти чёрном проёме, а у ролика по плите бегают угли */
+.frame__haze {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(58% 42% at 50% 52%, rgb(0 0 0 / .55), rgb(0 0 0 / 0) 70%),
+    radial-gradient(120% 100% at 50% 50%, rgb(0 0 0 / 0) 55%, rgb(0 0 0 / .65));
+}
+
+/* ---- список пунктов -------------------------------------------------- */
+
+.menu {
+  position: absolute;
+  left: calc(50% + var(--plate-shift));
+  translate: -50% 0;
+  top: var(--plate-top);
+  width: var(--plate-width);
+  aspect-ratio: 308 / 285;      /* холст плиты из MENU.RES */
+}
+
+/* каждый пункт стоит на своей строке плиты — числа --top и --height
+   заданы в разметке и взяты прямо из спрайтов; --pitch поджимает только
+   расстояния между строками, высоту самих букв не трогает */
+.menu__item {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  top: calc(var(--top) * var(--pitch) / 285 * 100%);
+  height: calc(var(--height) / 285 * 100%);
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  appearance: none;
+}
+
+.menu__item img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  /* спрайты 308 px шириной, тянутся под ширину списка */
+  transition: opacity .12s linear;
+}
+
+.menu__hot { opacity: 0; }
+
+/* курсор на пункте: оригинал просто менял плиту на золотую, добавляем
+   только лёгкое тепло вокруг букв */
+.menu__item:is(:hover, :focus-visible, [data-active]) .menu__hot { opacity: 1; }
+.menu__item:is(:hover, :focus-visible, [data-active]) .menu__idle { opacity: 0; }
+.menu__item:is(:hover, :focus-visible, [data-active]) {
+  filter: drop-shadow(0 0 .35em rgb(var(--gold) / .5));
+}
+.menu__item:focus { outline: none; }
+
+.menu__item[disabled] {
+  cursor: default;
+  opacity: .5;               /* пункт виден, но ясно, что он не работает */
+  filter: none;
+}
+.menu__item[disabled] .menu__hot { opacity: 0; }
+.menu__item[disabled] .menu__idle { opacity: 1; }
+
+/* нажатие: короткая вспышка, как будто буквы разгорелись */
+.menu__item:active:not([disabled]) {
+  filter: drop-shadow(0 0 .7em rgb(var(--gold) / .85)) brightness(1.25);
+}
+
+/* ---- мелочи по углам ------------------------------------------------- */
+
+.hint,
+.sound {
+  position: absolute;
+  color: rgb(214 198 170 / .38);
+  font: 400 clamp(10px, 1.5cqw, 15px) / 1.4 "Palatino Linotype", "Book Antiqua", Georgia, serif;
+  letter-spacing: .08em;
+}
+
+.hint {
+  left: 0;
+  right: 0;
+  bottom: 2.2%;
+  margin: 0;
+  text-align: center;
+  pointer-events: none;
+  transition: opacity .4s;
+}
+
+.hint[data-quiet] { opacity: 0; }
+
+.sound {
+  right: 2%;
+  bottom: 2%;
+  width: 2.6em;
+  height: 2.6em;
+  padding: 0;
+  border: 1px solid rgb(214 198 170 / .18);
+  border-radius: 50%;
+  background: rgb(0 0 0 / .35);
+  font-size: clamp(12px, 1.6cqw, 18px);
+  cursor: pointer;
+  transition: color .2s, border-color .2s;
+}
+
+.sound:hover,
+.sound[aria-pressed="true"] {
+  color: rgb(var(--gold) / .9);
+  border-color: rgb(var(--gold) / .45);
+}
+
+/* cqw/cqh работают, только если .frame объявлен контейнером */
+.frame { container-type: size; }
+
+@media (prefers-reduced-motion: reduce) {
+  .menu__item img,
+  .hint { transition: none; }
+}
+
+/* ---- экраны поверх меню: герои, настройки, слоты ------------------------ */
+
+/* ПРЯТАТЬСЯ ЭКРАНЫ ОБЯЗАНЫ. Атрибут hidden прячет элемент через display:
+   none браузерной таблицы стилей, а любое своё правило display её
+   перебивает — из-за этого все три экрана рисовались друг поверх друга:
+   заголовок «Загрузить игру» с содержимым «Настроек» и меню сзади. */
+.screen[hidden], .menu[hidden] { display: none; }
+
+.screen {
+  position: absolute;
+  inset: 8% 6% 6%;
+  display: flex;
+  flex-direction: column;
+  gap: 1.2vh;
+  padding: 2.2vh 2.4vw;
+  overflow: auto;
+  background: rgb(8 6 4 / .82);
+  border: 1px solid rgb(var(--gold) / .35);
+  color: rgb(var(--gold));
+  font: 500 clamp(11px, 1.5vh, 17px)/1.35 "Trebuchet MS", system-ui, sans-serif;
+}
+
+.screen__title {
+  margin: 0;
+  font-size: clamp(15px, 2.4vh, 26px);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.screen__note { margin: 0; opacity: .72; }
+
+.screen__back {
+  align-self: flex-start;
+  margin-top: auto;
+  padding: .5em 1.4em;
+  color: inherit;
+  background: transparent;
+  border: 1px solid rgb(var(--gold) / .45);
+  font: inherit;
+  letter-spacing: .06em;
+  cursor: pointer;
+}
+
+.screen__back:hover, .screen__back:focus-visible {
+  background: rgb(var(--gold) / .14);
+  outline: none;
+}
+
+/* карточки героев: шесть миров — шесть героев */
+.heroes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(15rem, 100%), 1fr));
+  gap: 1vh 1vw;
+}
+
+.hero, .slot {
+  display: flex;
+  flex-direction: column;
+  gap: .35em;
+  padding: .8em 1em;
+  text-align: left;
+  color: inherit;
+  background: rgb(255 255 255 / .04);
+  border: 1px solid rgb(var(--gold) / .3);
+  font: inherit;
+  cursor: pointer;
+}
+
+.hero:hover, .hero:focus-visible,
+.slot:not([disabled]):hover, .slot:not([disabled]):focus-visible {
+  background: rgb(var(--gold) / .16);
+  border-color: rgb(var(--gold) / .7);
+  outline: none;
+}
+
+.hero b, .slot b { letter-spacing: .05em; }
+.hero__where { opacity: .85; }
+.hero__stats, .hero__skills, .hero__purse, .slot span { opacity: .7; font-size: .92em; }
+
+.slots { display: flex; flex-direction: column; gap: .6vh; }
+.slot[disabled] { opacity: .38; cursor: default; }
+
+/* настройки */
+.options { display: flex; flex-direction: column; gap: 1.4vh; }
+
+.option {
+  display: grid;
+  grid-template-columns: minmax(6rem, 9rem) minmax(8rem, 18rem) 1fr;
+  align-items: center;
+  gap: .8em;
+}
+
+.option__name { letter-spacing: .05em; }
+.option__hint { opacity: .7; }
+
+.option__input {
+  color: inherit;
+  background: rgb(0 0 0 / .5);
+  border: 1px solid rgb(var(--gold) / .4);
+  font: inherit;
+  padding: .3em .5em;
+}
+
+input.option__input { padding: 0; accent-color: rgb(var(--gold)); }

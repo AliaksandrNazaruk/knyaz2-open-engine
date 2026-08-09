@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Князь 2 — Кровь Титанов</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/menu.css">
+</head>
+<body>
+  <!-- Стартовое меню. Раскладка повторяет оригинал (MENU.RES): экран 4:3,
+       список пунктов лежит на плите 308x285 в тёмном проёме, каждый пункт —
+       свой спрайт в двух состояниях (серебро — обычное, золото — под
+       курсором). Отличие одно: вместо неподвижной картинки фон играет
+       роликом. Числа top/height взяты из самих спрайтов, их печатает
+       tools/menu_extract.py. -->
+  <main class="stage">
+    <div class="frame">
+      <video class="frame__film" poster="/menu/intro-poster.jpg"
+             autoplay muted loop playsinline preload="auto"
+             disablepictureinpicture>
+        <source src="/menu/intro.mp4" type="video/mp4">
+      </video>
+      <!-- виньетка по краям и мягкое затемнение под списком: буквы
+           оригинала рассчитаны на почти чёрный проём, а у ролика плита
+           дышит углями -->
+      <div class="frame__haze" aria-hidden="true"></div>
+
+      <nav class="menu" id="menu" aria-label="Главное меню">
+        <button class="menu__item" type="button" data-action="continue"
+                style="--top: 0; --height: 37">
+          <img class="menu__idle" src="/menu/item-continue-idle.png" alt="Продолжить игру">
+          <img class="menu__hot"  src="/menu/item-continue-hot.png"  alt="" aria-hidden="true">
+        </button>
+        <button class="menu__item" type="button" data-action="save"
+                style="--top: 51; --height: 34">
+          <img class="menu__idle" src="/menu/item-save-idle.png" alt="Сохранить игру">
+          <img class="menu__hot"  src="/menu/item-save-hot.png"  alt="" aria-hidden="true">
+        </button>
+        <button class="menu__item" type="button" data-action="load"
+                style="--top: 100; --height: 34">
+          <img class="menu__idle" src="/menu/item-load-idle.png" alt="Загрузить игру">
+          <img class="menu__hot"  src="/menu/item-load-hot.png"  alt="" aria-hidden="true">
+        </button>
+        <button class="menu__item" type="button" data-action="new"
+                style="--top: 151; --height: 30">
+          <img class="menu__idle" src="/menu/item-new-idle.png" alt="Новая игра">
+          <img class="menu__hot"  src="/menu/item-new-hot.png"  alt="" aria-hidden="true">
+        </button>
+        <button class="menu__item" type="button" data-action="options"
+                style="--top: 199; --height: 35">
+          <img class="menu__idle" src="/menu/item-options-idle.png" alt="Настройки">
+          <img class="menu__hot"  src="/menu/item-options-hot.png"  alt="" aria-hidden="true">
+        </button>
+        <button class="menu__item" type="button" data-action="exit"
+                style="--top: 250; --height: 35">
+          <img class="menu__idle" src="/menu/item-exit-idle.png" alt="Выход">
+          <img class="menu__hot"  src="/menu/item-exit-hot.png"  alt="" aria-hidden="true">
+        </button>
+      </nav>
+
+      <!-- НАСТРОЙКИ. Сложность — канон: множитель опыта и стартовые деньги
+           берутся из неё (глобал 0x84958C). Громкость — наша, оригинал
+           хранит её в KONUNG2.CFG. -->
+      <section class="screen" id="screen-options" hidden aria-label="Настройки">
+        <h2 class="screen__title">Настройки</h2>
+        <div class="options">
+          <label class="option">
+            <span class="option__name">Сложность</span>
+            <select class="option__input" id="opt-difficulty">
+              <option value="0">Ученик</option>
+              <option value="1">Воин</option>
+              <option value="2">Витязь</option>
+              <option value="3">Богатырь</option>
+              <option value="4">Князь</option>
+            </select>
+            <span class="option__hint" id="opt-difficulty-hint"></span>
+          </label>
+          <label class="option">
+            <span class="option__name">Музыка</span>
+            <input class="option__input" id="opt-music" type="range"
+                   min="0" max="100" step="5">
+            <span class="option__hint" id="opt-music-hint"></span>
+          </label>
+          <label class="option">
+            <span class="option__name">Звук</span>
+            <input class="option__input" id="opt-sound" type="range"
+                   min="0" max="100" step="5">
+            <span class="option__hint" id="opt-sound-hint"></span>
+          </label>
+        </div>
+        <button class="screen__back" type="button" data-back>Назад</button>
+      </section>
+
+      <!-- СЛОТЫ СОХРАНЕНИЙ. В движке это файлы KONUNG2.SA<N>, здесь —
+           отдельные ключи хранилища браузера. -->
+      <section class="screen" id="screen-slots" hidden aria-label="Сохранения">
+        <h2 class="screen__title" id="slots-title">Загрузить игру</h2>
+        <div class="slots" id="slots"></div>
+        <button class="screen__back" type="button" data-back>Назад</button>
+      </section>
+
+      <button class="sound" id="sound" type="button"
+              aria-pressed="false" title="музыка меню (трек 29)">♪</button>
+      <p class="hint" id="hint">↑ ↓ — выбор · Enter — подтвердить · Esc — назад в игру</p>
+    </div>
+  </main>
+
+  <script type="module" src="/menu.js"></script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "knyaz2-open-engine"
+version = "0.1.0"
+description = "Headless open engine and modding toolkit for Konung 2"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+knyaz2-content = "knyaz2.content.cli:main"
+knyaz2-web = "knyaz2.web.server:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["knyaz2*", "konung2*", "simulation*"]
+exclude = ["tests*", "tools*"]
+
+[tool.setuptools.package-data]
+"knyaz2.web" = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

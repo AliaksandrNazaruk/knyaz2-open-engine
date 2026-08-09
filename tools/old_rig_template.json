@@ -1,0 +1,338 @@
+{
+ "root": {
+  "head": [
+   0.0,
+   0.04222,
+   -1.1413
+  ],
+  "tail": [
+   0.00475,
+   0.0,
+   -0.02077
+  ],
+  "roll": 0.0,
+  "parent": null,
+  "use_connect": false,
+  "length": 1.12134
+ },
+ "spine_01": {
+  "head": [
+   0.00475,
+   0.0,
+   -0.02077
+  ],
+  "tail": [
+   0.01428,
+   0.0,
+   0.32221
+  ],
+  "roll": 0.0,
+  "parent": "root",
+  "use_connect": true,
+  "length": 0.34311
+ },
+ "spine_02": {
+  "head": [
+   0.01428,
+   0.0,
+   0.32221
+  ],
+  "tail": [
+   0.0,
+   -0.005,
+   0.34
+  ],
+  "roll": 0.0,
+  "parent": "spine_01",
+  "use_connect": true,
+  "length": 0.02335
+ },
+ "chest": {
+  "head": [
+   0.0,
+   -0.005,
+   0.34
+  ],
+  "tail": [
+   -0.00417,
+   0.01848,
+   0.59593
+  ],
+  "roll": 0.0,
+  "parent": "spine_02",
+  "use_connect": true,
+  "length": 0.25704
+ },
+ "neck": {
+  "head": [
+   -0.00417,
+   0.01848,
+   0.59593
+  ],
+  "tail": [
+   0.00252,
+   -0.02,
+   0.7558
+  ],
+  "roll": 0.0,
+  "parent": "chest",
+  "use_connect": true,
+  "length": 0.16457
+ },
+ "clavicle.L": {
+  "head": [
+   0.0,
+   -0.005,
+   0.34
+  ],
+  "tail": [
+   0.17774,
+   0.05645,
+   0.55796
+  ],
+  "roll": 0.0,
+  "parent": "spine_02",
+  "use_connect": false,
+  "length": 0.28788
+ },
+ "upper_arm.L": {
+  "head": [
+   0.17774,
+   0.05645,
+   0.55796
+  ],
+  "tail": [
+   0.44526,
+   -0.022,
+   0.44263
+  ],
+  "roll": 0.0,
+  "parent": "clavicle.L",
+  "use_connect": true,
+  "length": 0.3017
+ },
+ "forearm.L": {
+  "head": [
+   0.44526,
+   -0.022,
+   0.44263
+  ],
+  "tail": [
+   0.775,
+   -0.03,
+   0.335
+  ],
+  "roll": 0.0,
+  "parent": "upper_arm.L",
+  "use_connect": true,
+  "length": 0.34695
+ },
+ "hand.L": {
+  "head": [
+   0.775,
+   -0.03,
+   0.335
+  ],
+  "tail": [
+   0.885,
+   -0.045,
+   0.325
+  ],
+  "roll": 0.0,
+  "parent": "forearm.L",
+  "use_connect": true,
+  "length": 0.11147
+ },
+ "clavicle.R": {
+  "head": [
+   0.0,
+   -0.005,
+   0.34
+  ],
+  "tail": [
+   -0.15933,
+   0.06595,
+   0.55796
+  ],
+  "roll": 0.0,
+  "parent": "spine_02",
+  "use_connect": false,
+  "length": 0.27915
+ },
+ "upper_arm.R": {
+  "head": [
+   -0.15933,
+   0.06595,
+   0.55796
+  ],
+  "tail": [
+   -0.45895,
+   0.038,
+   0.44263
+  ],
+  "roll": 0.0,
+  "parent": "clavicle.R",
+  "use_connect": true,
+  "length": 0.32226
+ },
+ "forearm.R": {
+  "head": [
+   -0.45895,
+   0.038,
+   0.44263
+  ],
+  "tail": [
+   -0.775,
+   0.03,
+   0.335
+  ],
+  "roll": 0.0,
+  "parent": "upper_arm.R",
+  "use_connect": true,
+  "length": 0.33397
+ },
+ "hand.R": {
+  "head": [
+   -0.775,
+   0.03,
+   0.335
+  ],
+  "tail": [
+   -0.885,
+   0.015,
+   0.325
+  ],
+  "roll": 0.0,
+  "parent": "forearm.R",
+  "use_connect": true,
+  "length": 0.11147
+ },
+ "hip.L": {
+  "head": [
+   0.00475,
+   0.0,
+   -0.02077
+  ],
+  "tail": [
+   0.13814,
+   -0.03,
+   0.0221
+  ],
+  "roll": 0.0,
+  "parent": "root",
+  "use_connect": false,
+  "length": 0.14329
+ },
+ "thigh.L": {
+  "head": [
+   0.13814,
+   -0.03,
+   0.0221
+  ],
+  "tail": [
+   0.07145,
+   -0.00525,
+   -0.49103
+  ],
+  "roll": 0.0,
+  "parent": "hip.L",
+  "use_connect": true,
+  "length": 0.51804
+ },
+ "shin.L": {
+  "head": [
+   0.07145,
+   -0.00525,
+   -0.49103
+  ],
+  "tail": [
+   0.115,
+   0.07544,
+   -1.11282
+  ],
+  "roll": 0.0,
+  "parent": "thigh.L",
+  "use_connect": true,
+  "length": 0.62851
+ },
+ "foot.L": {
+  "head": [
+   0.115,
+   0.07544,
+   -1.11282
+  ],
+  "tail": [
+   0.115,
+   -0.19037,
+   -1.16029
+  ],
+  "roll": 0.0,
+  "parent": "shin.L",
+  "use_connect": true,
+  "length": 0.27002
+ },
+ "hip.R": {
+  "head": [
+   0.00475,
+   0.0,
+   -0.02077
+  ],
+  "tail": [
+   -0.11434,
+   0.03747,
+   0.03109
+  ],
+  "roll": 0.0,
+  "parent": "root",
+  "use_connect": false,
+  "length": 0.13519
+ },
+ "thigh.R": {
+  "head": [
+   -0.11434,
+   0.03747,
+   0.03109
+  ],
+  "tail": [
+   -0.08575,
+   0.012,
+   -0.51143
+  ],
+  "roll": 0.0,
+  "parent": "hip.R",
+  "use_connect": true,
+  "length": 0.54387
+ },
+ "shin.R": {
+  "head": [
+   -0.08575,
+   0.012,
+   -0.51143
+  ],
+  "tail": [
+   -0.115,
+   0.09443,
+   -1.11282
+  ],
+  "roll": 0.0,
+  "parent": "thigh.R",
+  "use_connect": true,
+  "length": 0.60772
+ },
+ "foot.R": {
+  "head": [
+   -0.115,
+   0.09443,
+   -1.11282
+  ],
+  "tail": [
+   -0.115,
+   -0.18087,
+   -1.1508
+  ],
+  "roll": 0.0,
+  "parent": "shin.R",
+  "use_connect": true,
+  "length": 0.27791
+ }
+}
