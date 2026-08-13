@@ -11,7 +11,8 @@
 import { ambientNode, canvas, clockRunNode, clockTimeNode, debugGroundNode,
          debugObjectsNode, errorNode, showRoofsNode, statsNode, statusNode,
          titleNode } from "./dom.js";
-import { contentUrl, preload, readJson } from "./content.js";
+import { contentUrl, preload, readJson,
+         setContentVersion } from "./content.js";
 // Счётчик такта НЕ сбрасывается при входе на карту: в движке
 // `_DAT_0084962c` глобальный и монотонный, от него же считается время суток.
 import { clock, clockAdvance } from "./clock.js";
@@ -19,7 +20,12 @@ import { creationOpen, creationOpened } from "./creation.js";
 import { loadMap, loadShared, mapAssets, shared,
          world } from "./world.js";
 import { actorItem, actorItemName, actorSheetPaths } from "./actor.js";
-import { resize, updateZoom, view } from "./viewport.js";
+import { cameraFollow, resize, updateZoom, view, visibleWorld } from "./viewport.js";
+import { settingsLoad } from "./settings.js";
+import { fullscreenArm } from "./fullscreen.js";
+import { gameMenuOpen, gameMenuShow, gameMenuToggle } from "./gamemenu.js";
+import { loadScreenDone, loadScreenHide,
+         loadScreenShow } from "./loadscreen.js";
 import { clockTick, daylight, daylightSet, sunProgress } from "./daylight.js";
 import { lightActive } from "./light.js";
 import { water, waterInit, waterRender, waterTick } from "./water.js";
@@ -38,28 +44,51 @@ import { shadows } from "./shadows.js";
 import { render } from "./scene.js";
 import { edgeScrollTick } from "./input.js";
 import { lootAssets, lootDrop, lootPut, lootSetup, loot } from "./loot.js";
+import { furnitureAssets, furnitureSetup } from "./furniture.js";
 import { projectileAssets, projectiles } from "./projectiles.js";
 import { inventorySetup, pickUp } from "./inventory.js";
-import { beltFollow, refresh as refreshUi, showWorldMap, uiEscape,
+import { beltFollow, panelUnit, refresh as refreshUi, showWorldMap, uiEscape,
          uiSetup } from "./ui.js";
 import { unitSpawn } from "./units.js";
-import { warbandJoin } from "./warband.js";
+import { warbandJoin, warbandsReset } from "./warband.js";
 import { exitsSetup, exitsTick } from "./exits.js";
-import { partyRegroup, unitsSetup, unitsTick, units } from "./units.js";
-import { combat, combatSetup, combatTick, orderAt } from "./combat.js";
+import { partyCapture, partyRegroup, unitsSetup, unitsTick, units } from "./units.js";
+import { combat, combatDropTargets, combatSetup, combatTick,
+         orderAt } from "./combat.js";
 import { dialog, dialogApproachTick, dialogJournal,
          questsReset } from "./dialog.js";
 import { effectsTick } from "./effects.js";
 import { buildingsSetup } from "./buildings.js";
+import { shopsRestock } from "./shops.js";
 import { createSelfCheck } from "./selfcheck.js";
-import { formationCells, markerVisible, openLocation, revealAll, standAt,
-         travelTick, travelling, worldMap, worldMapSetup } from "./worldmap.js";
+import { formationCells, knownReset, locationName, markerVisible,
+         openLocation,
+         revealAll, standAt,
+         stopTravel, travelTick, travelling, worldMap,
+         worldMapSetup } from "./worldmap.js";
 import { applySave, dropSave, saveGame, savedGame } from "./save.js";
 import { questItemUsable, useQuestItem } from "./questitems.js";
-import { villageSetup, villageTick } from "./village.js";
-import { mapStateCapture } from "./mapstate.js";
+import { villageCapture, villageReset, villageSetup, villageTick,
+         villageUnpack } from "./village.js";
+import { mapStateCapture, mapStateUnpack } from "./mapstate.js";
 
 import "./input.js";
+
+// ЗАМЕРЫ ЗАГРУЗКИ ЧЕСТНЫМИ. Браузер держит в `performance` последние 250
+// записей о ресурсах и молча выбрасывает остальные, а вход на карту стоит
+// шестисот с лишним файлов. Пока буфер стоял по умолчанию, любой подсчёт
+// трафика показывал вес первых двухсот пятидесяти и выглядел вдвое меньше
+// настоящего. Ставим до первой загрузки — задним числом записи не вернуть.
+performance.setResourceTimingBufferSize?.(5000);
+
+//: Настройки игрока из меню — до первого кадра, чтобы камера уже знала,
+//: держать ли выбранного в середине окна. Ставим её здесь, а не в самом
+//: модуле настроек: он намеренно ничего не знает про холст, иначе выходила
+//: петля settings -> viewport -> daylight.
+view.follow = settingsLoad().follow;
+//: Полный экран просится на ПЕРВОЕ КАСАНИЕ: без жеста игрока браузер его не
+//: даёт. Взводим сразу — жест придёт когда придёт.
+fullscreenArm();
 
 //: Свёртка локации при уходе (VA 0x43A628) идёт НЕ на всех картах: движок
 //: гейтит её номером — ниже 50 и мимо 26…32. Двадцать шестая и следующие
@@ -106,13 +135,44 @@ function mapTeardown(number) {
 
 let lastFrameTime = 0;
 
+// ОШИБКА В ТИКЕ НЕ ДОЛЖНА УБИВАТЬ ИГРУ. Кадр заказывался последней строкой
+// цикла, поэтому любое исключение по дороге обрывало цепочку rAF навсегда:
+// картинка застывала, часы вставали, никто не шевелился — со стороны это
+// «игра зависла», и найти причину игрок не мог. Так и случилось с обучением
+// у воеводы. Заказ следующего кадра вынесен в `finally`, а само исключение
+// печатается ОДИН раз на своём месте: молча глотать его нельзя.
+let loopFault = "";
+
 function animationLoop(now) {
+  try {
+    animationFrame(now);
+  } catch (error) {
+    const mark = String(error?.stack ?? error);
+    if (mark !== loopFault) {
+      loopFault = mark;
+      console.error("сбой в тике игры (кадр пропущен, игра продолжается):", error);
+    }
+  } finally {
+    requestAnimationFrame(animationLoop);
+  }
+}
+
+function animationFrame(now) {
   const seconds = now / 1000;
   const dt = lastFrameTime ? Math.min(0.1, seconds - lastFrameTime) : 0;
   lastFrameTime = seconds;
   // Мировой такт движка двигается РОВНО ЗДЕСЬ и больше нигде — как
   // `_DAT_0084962c` в начале главного цикла (VA 0x438A00). Всё периодическое
   // фазируется от него, а не от кадров браузера.
+  // ПОКА МЕНЮ ОТКРЫТО, ИГРА СТОИТ. Счётчик такта не двигаем вовсе: от него
+  // фазируется всё периодическое, и накопленный за паузу долг прокрутился бы
+  // разом — отрава, стройка и сутки скакнули бы вперёд. Возврат безопасен:
+  // `clockAdvance` видит разрыв больше секунды и просто подводит своё время
+  // к текущему, ничего не начисляя (clock.js).
+  if (gameMenuOpen()) {
+    lastFrameTime = seconds;
+    return;
+  }
   clockAdvance(seconds);
   let dirty = false;
   if (waterTick(now)) { waterRender(); dirty = true; }
@@ -142,11 +202,17 @@ function animationLoop(now) {
   // world.map оставляет чёрный экран: панели неоткуда взяться.
   if (currentMap !== null) {
     if (heroTick(now, dt)) dirty = true;
+    requeueByDistance();
     if (unitsTick(now, dt)) dirty = true;
     // Сюжетная встреча: NPC с взведённым битом «подойди и заговори» сам
     // ловит игрока рядом и переводит его в приказ 0x22 (VA 0x410684).
     if (dialogApproachTick()) dirty = true;
     if (combatTick(dt)) dirty = true;
+    // Камера за выбранным лицом, если игрок её попросил (settings.js). Идёт
+    // ПОСЛЕ шагов: место юнита уже свежее, и камера не отстаёт на кадр. Панель
+    // и камера смотрят на одного и того же — `panelUnit` — поэтому щелчок по
+    // портрету сам переносит взгляд, отдельного обработчика не нужно.
+    if (cameraFollow(panelUnit())) dirty = true;
   }
   // ОТРАВА ИДЁТ И В ПОХОДЕ. Её вычитание в мировом такте не отфильтровано по
   // карте (VA 0x41C944), а у хода по глобальной есть ещё своя копия того же
@@ -157,7 +223,6 @@ function animationLoop(now) {
   if (worldTick(now)) refreshUi();
   exitsTick();
   if (dirty) render();
-  requestAnimationFrame(animationLoop);
 }
 
 function refresh() {
@@ -170,6 +235,35 @@ function refresh() {
 // Здесь меню — отдельная страница, поэтому состояние сохраняется ПЕРЕД
 // уходом: тогда в меню есть что раскладывать по местам, и ни один шаг не
 // теряется. Автосохранение при входе на карту остаётся как было.
+// ОДНА ДВЕРЬ В МЕНЮ — и для клавиши, и для герба на панели. С телефона
+// клавиши нет вовсе, поэтому кнопка там не роскошь, а единственный выход.
+function leaveToMenu() {
+  if (Number.isFinite(currentMap)) saveGame(currentMap);
+  location.href = "/menu.html";
+}
+world.leaveToMenu = leaveToMenu;
+
+//: Герб на панели и клавиша Esc делают одно и то же — поднимают накладку.
+world.openMenu = () => { gameMenuShow(true); render(); };
+//: Обратно в игру: раскладка панели и пояса пересчитывается (`refreshUi`),
+//: следом холст и кадр. Просто `refresh` тут мало — он трогает только холст.
+world.onMenuClose = () => { refreshUi(); refresh(); };
+
+//: «Сохранить игру» из накладки — тем же путём, что и самосохранение входа.
+//: ОТВЕТ `saveGame` ВОЗВРАЩАЕМ, а не выбрасываем. Здесь стояло `saveGame(...)`
+//: без проверки и `return true` — меню рапортовало об успехе даже тогда,
+//: когда записать не вышло, и игрок уходил уверенный, что сохранился.
+world.onMenuSave = () => {
+  if (!Number.isFinite(currentMap)) return false;
+  return saveGame(currentMap);
+};
+
+//: Беда с записью — сразу в строку состояния, молчать о ней нельзя.
+world.onSaveTrouble = (текст) => {
+  console.error("сохранение:", текст);
+  world.onStatus?.(`СОХРАНЕНИЕ: ${текст}`);
+};
+
 window.addEventListener("keydown", (event) => {
   if (event.code !== "Escape" || event.repeat) return;
   event.preventDefault();
@@ -179,8 +273,11 @@ window.addEventListener("keydown", (event) => {
   // Сперва то же, что делает движок: отменить перенос вещи и закрыть
   // открытый экран. Пока что-то открыто, ESC из игры не выкидывает.
   if (uiEscape()) { render(); return; }
-  if (Number.isFinite(currentMap)) saveGame(currentMap);
-  location.href = "/menu.html";
+  // МЕНЮ ОТКРЫВАЕТСЯ ПОВЕРХ ИГРЫ, А НЕ УВОДИТ СТРАНИЦУ. Уход означал бы
+  // полную перезагрузку: заново общий блок пака, описание карты и сотни
+  // картинок, которые вот только что лежали разобранными в памяти.
+  gameMenuToggle();
+  render();
 });
 
 // Ход по глобальной карте идёт мировыми тактами: на каждом отряд
@@ -198,9 +295,19 @@ function worldTick(now) {
   // вместо 12.8, а вместе с ним стояли сутки, стройка и счётчик работы.
   // Копиться шагам похода нечему: они берутся из clock.elapsed, то есть
   // только из тактов ЭТОГО кадра.
-  if (!travelling() || entering) return false;
+  // ПОХОД ИДЁТ ТОЛЬКО НА ГЛОБАЛЬНОЙ КАРТЕ. Здесь стояли лишь два условия —
+  // «идём ли» и «не грузится ли карта», — а спросить, где мы, забыли. Из-за
+  // этого отряд, ушедший в локацию посреди маршрута, продолжал шагать по
+  // глобальной: встречи срабатывали, точки сменялись, и на выходе из поля
+  // игрока выкидывало в следующую точку маршрута без всякого подтверждения.
+  //
+  // В движке такого случиться не может по построению: ход по глобальной
+  // считает своё состояние главного цикла (`0x8495F0`), а вход в локацию из
+  // него выходит — тика просто нет. Наш `worldMap.onMap` — то же самое
+  // состояние: `enterMapInner` гасит его, выход на глобальную поднимает.
+  if (!travelling() || entering || !worldMap.onMap) return false;
   let moved = false;
-  for (let шаг = 0; шаг < clock.elapsed; шаг += 1) {
+  for (let tick = 0; tick < clock.elapsed; tick += 1) {
     const step = travelTick({ body: hero.data?.body ?? 0,
                               pathfinder: heroPathfinder() });
     moved = true;
@@ -227,10 +334,10 @@ function heroPathfinder() {
 //: движок и рисует такую клетку пустой (VA 0x4277F4 -> markerVisible).
 function arrivalText(row, col) {
   const cell = worldMap.cells[row][col];
-  if (markerVisible(cell)) {
-    const name = worldMap.rules.names?.[cell & 0xFF];
-    if (name) return name;
-  }
+  const number = cell & 0xFF;
+  //: Имя решает `locationName` — одна на всех: подпись карты, наведение и
+  //: приход. Неизвестное место называется «Неизвестное место», как в движке.
+  if (number && markerVisible(cell)) return locationName(number);
   return `Клетка ${row}:${col}`;
 }
 
@@ -263,24 +370,201 @@ async function meetEnemy(met) {
   render();
 }
 
-// ЗАКАЗ НЕДОСТАЮЩЕЙ КАРТИНКИ. Зовётся из spriteReady, когда кадру нужен
-// лист, которого ещё нет. Заявки копятся кадр-другой и уходят пачкой, иначе
-// на каждый кадр отрисовки летел бы свой запрос и своя перерисовка.
-const заказано = new Set();
-let очередь = [];
-let таймер = null;
-world.requestAsset = (path) => {
-  if (!path || заказано.has(path)) return;
-  заказано.add(path);
-  очередь.push(path);
-  if (таймер) return;
-  таймер = setTimeout(() => {
-    const пачка = очередь;
-    очередь = [];
-    таймер = null;
-    preload(пачка).then(() => render());
-  }, 50);
+// ОЧЕРЕДЬ ПОДГРУЗКИ С ПРИОРИТЕТОМ ПО БЛИЗОСТИ.
+//
+// Заявки приходят из двух мест: из `spriteReady`, когда кадру не хватило
+// картинки (вес нулевой — это нужно немедленно), и из разбора карты по
+// радиусу, где весом служит квадрат расстояния до героя.
+//
+// Тянем помалу и по порядку, а не залпом: залп забивает канал дальними
+// домами, пока ближний юнит ещё не приехал. Шесть штук разом — столько же
+// соединений браузер и так держит на один адрес.
+const requested = new Set();
+let queue = [];
+let inFlight = 0;
+
+// СКОЛЬКО ТЯНЕМ РАЗОМ — ПО ПРОТОКОЛУ. На HTTP/1.1 браузер и сам не откроет
+// больше шести соединений на хост, и просить больше бессмысленно. Боевой
+// сервер отдаёт по h2/h3, где запросы мультиплексируются в одном соединении:
+// там шестёрка была нашим собственным тормозом. Протокол берём у первого же
+// доехавшего ресурса — к моменту первой заявки их уже десятки.
+//: Считается ОДИН раз: `качать()` зовётся после каждого доехавшего файла, а
+//: список ресурсов к тому времени в тысячу записей — перебирать его на каждый
+//: файл значило бы отдать загрузке больше времени, чем она экономит.
+let slotsCached = 0;
+
+function slotLimit() {
+  if (slotsCached) return slotsCached;
+  const protocol = performance.getEntriesByType("resource")
+    .find((e) => e.nextHopProtocol)?.nextHopProtocol ?? "";
+  if (!protocol) return 6;                    // ещё нечего спрашивать
+  slotsCached = multiplexed(protocol) ? 12 : 6;
+  return slotsCached;
+}
+
+function multiplexed(protocol) {
+  return protocol === "h2" || protocol === "h3" || protocol.startsWith("h3-");
+}
+
+// ПЕРЕРИСОВКА СКЛЕИВАЕТСЯ. Раньше `render()` звался на каждый доехавший файл.
+// Пока в очередь шли десятки листов, это сходило с рук; но в неё теперь
+// попадают и сотни иконок, а ночной кадр стоит около 33 мс — вышло бы больше
+// времени на рисование, чем на саму загрузку. Кадр всё равно один на экран,
+// поэтому копим отметку и рисуем раз за кадр браузера.
+let framePending = false;
+
+function redrawSoon() {
+  if (framePending) return;
+  framePending = true;
+  requestAnimationFrame(() => {
+    framePending = false;
+    render();
+  });
+}
+
+function pump() {
+  const limit = slotLimit();
+  while (inFlight < limit && queue.length) {
+    queue.sort((a, b) => a.weight - b.weight);
+    const { path } = queue.shift();
+    inFlight += 1;
+    preload([path]).finally(() => {
+      inFlight -= 1;
+      redrawSoon();
+      pump();
+    });
+  }
+}
+
+world.requestAsset = (path, weight = 0, origin = null) => {
+  if (!path || requested.has(path)) return;
+  requested.add(path);
+  queue.push({ path, weight, origin });
+  pump();
 };
+
+// ГЕРОЙ ПОШЁЛ — ВЕСА УСТАРЕЛИ. Расстояния считались один раз, на входе; пока
+// игрок идёт через карту, дальний лист продолжает ехать впереди того, к кому
+// герой уже подошёл. Пересчитываем ОЖИДАЮЩИЕ заявки — их десятки, это дешевле
+// одного кадра, и делать это чаще, чем герой прошёл полокна, незачем.
+//
+// У заявки помнится её источник — актёр, из-за которого лист понадобился.
+// Один лист может обслуживать нескольких, тогда остаётся первый: очередь
+// решает лишь порядок, и ошибка здесь стоит одного места в ней.
+let reweighedAt = null;
+
+function requeueByDistance() {
+  if (!queue.length) return;
+  const threshold = view.width / (2 * (view.zoom || 1));
+  if (reweighedAt) {
+    const dx = hero.x - reweighedAt.x, dy = hero.y - reweighedAt.y;
+    if (dx * dx + dy * dy < threshold * threshold) return;
+  }
+  reweighedAt = { x: hero.x, y: hero.y };
+  for (const request of queue) {
+    if (request.origin) request.weight = actorWeight(request.origin);
+  }
+}
+
+//: Новая карта — новая очередь: прежние дальние заявки больше не нужны.
+//: Уже загруженное помним, иначе `spriteReady` закажет то же самое второй раз.
+function queueReset() {
+  queue = [];
+  requested.clear();
+  for (const path of world.images.keys()) requested.add(path);
+  reweighedAt = null;
+}
+
+// АКТЁРЫ ПО БЛИЗОСТИ — как видеокарта с текстурами: сперва те, кто в кадре,
+// остальные по мере удаления от героя.
+//
+// Раньше вход ЖДАЛ листы ВСЕХ юнитов: на Морском лагере это двадцать бойцов,
+// из которых в первом кадре видны двое-трое.
+function actorInFrame(actor, box) {
+  if (!actor) return false;
+  const x = actor.x ?? 0, y = actor.y ?? 0;
+  return x >= box.left && x <= box.right && y >= box.top && y <= box.bottom;
+}
+
+// РАМКА СЧИТАЕТСЯ ОТ ГЕРОЯ, А НЕ ОТ КАМЕРЫ.
+//
+// Через камеру это уже подводило: на входе она ещё стоит в нуле, кламп
+// прижимает её к левому верхнему углу карты, и «близким» оказывался угол —
+// игрок смотрел в черноту, пока грузилось не то. Герой к этому мигу уже
+// расставлен, поэтому берём его место и те же полразмера окна.
+function frameAroundHero() {
+  const halfWidth = view.width / (2 * (view.zoom || 1)) + 256;
+  const halfHeight = view.height / (2 * (view.zoom || 1)) + 256;
+  const x = hero.x ?? 0, y = hero.y ?? 0;
+  return { left: x - halfWidth, right: x + halfWidth,
+           top: y - halfHeight, bottom: y + halfHeight };
+}
+
+function actorsByProximity() {
+  const box = frameAroundHero();
+  const own = [hero, ...units];
+  const distanceTo = (actor) => {
+    const dx = (actor.x ?? 0) - (hero.x ?? 0);
+    const dy = (actor.y ?? 0) - (hero.y ?? 0);
+    return dx * dx + dy * dy;
+  };
+  return {
+    inFrame: own.filter((actor) => actorInFrame(actor, box)),
+    rest: own.filter((actor) => !actorInFrame(actor, box))
+      .sort((a, b) => distanceTo(a) - distanceTo(b)),
+  };
+}
+
+//: Вес заявки — квадрат расстояния до героя в мировых единицах. Одна шкала на
+//: всю очередь: `spriteReady` просит нулём (нужно прямо сейчас), актёры — своим
+//: расстоянием, иконки — заведомо большим числом.
+function actorWeight(actor) {
+  const dx = (actor.x ?? 0) - (hero.x ?? 0);
+  const dy = (actor.y ?? 0) - (hero.y ?? 0);
+  return dx * dx + dy * dy;
+}
+
+//: Дальше любого расстояния на карте: сторона мира меньше 65536, квадрат —
+//: меньше 2^32, так что эта отметка всегда в хвосте очереди.
+const LAST_OF_ALL = 2 ** 34;
+
+//: Дальние — в очередь весом по расстоянию: живые юниты идут перед дальней
+//: землёй, их отсутствие заметнее.
+function queueDistantActors(actorData, rest) {
+  for (const actor of rest) {
+    const weight = actorWeight(actor);
+    for (const path of actorSheetPaths(actorData, [actor])) {
+      world.requestAsset?.(path, weight, actor);
+    }
+  }
+}
+
+// ИКОНКИ ПРЕДМЕТОВ — В ХВОСТ, А НЕ В ЖДУЩУЮ ПАЧКУ.
+//
+// Раньше они собирались в `heroAssets` с пометкой «их единицы»: на Морском
+// лагере их 225 на 1.47 МБ, и первый кадр ждал их все. Между тем на карте они
+// не рисуются вовсе — панель заводит свой `Image`, курсор подставляет путь в
+// CSS, а куча на земле берёт `item.ground`. Нужны они, только когда игрок
+// откроет сумку, поэтому едут последними и никого не держат.
+function queueItemIcons(map) {
+  for (const item of Object.values(map.items ?? {})) {
+    if (item.icon) world.requestAsset?.(item.icon.path, LAST_OF_ALL);
+  }
+}
+
+// Выбросить листы, которых на новой карте нет ни у кого. Возвращает, сколько
+// картинок отпущено.
+function forgetForeignSheets(data, actors) {
+  if (!data?.sheets?.length) return 0;
+  const keep = new Set(actorSheetPaths(data, actors));
+  let dropped = 0;
+  for (const path of [...world.images.keys()]) {
+    if (!path.includes("/units/") || keep.has(path)) continue;
+    world.images.delete(path);
+    dropped += 1;
+  }
+  return dropped;
+}
 
 //: Что где лежит в паке: номер карты -> путь до её описания.
 const mapPaths = new Map();
@@ -316,10 +600,24 @@ async function enterMap(number, entry = null) {
     if (currentMap !== null) {
       mapTeardown(currentMap);
       mapStateCapture(currentMap, units, loot);
+      // Спутники — в запись отряда: она у нас единственная долгая память о
+      // них, и без этого переход возвращал им здоровье и опыт дня найма.
+      partyCapture();
+      // Хозяйство деревни — в свой склад: запись поселения в движке живёт
+      // отдельно от карты и уход с неё переживает (0x83D408 читается один раз
+      // при новой игре или из сейва, 0x43DF48 её только читает).
+      villageCapture();
     }
+    // ЭКРАН ЗАГРУЗКИ ИДЁТ ПЕРВЫМ И ДОЖИДАЕТСЯ ОТРИСОВКИ. Иначе он встанет в
+    // очередь за шестью сотнями файлов локации и приедет, когда уже не нужен.
+    // Картинка общая на все переходы, так что платим за неё раз за сеанс.
+    await loadScreenShow();
     return await enterMapInner(number, path, entry);
   } finally {
     entering = false;
+    // Гасим не сразу, а по отрисованному кадру — иначе между снятием
+    // картинки и первым кадром новой локации мигнёт пустая рамка.
+    loadScreenDone();
   }
 }
 
@@ -328,6 +626,11 @@ async function enterMapInner(number, path, entry) {
   // Вошли в локацию — отряд больше не на глобальной: в движке текущая
   // карта перестаёт быть −1, и щелчки по карте снова ничего не делают.
   worldMap.onMap = false;
+  // И САМ МАРШРУТ БРОСАЕМ. Вход в локацию — это выход из состояния похода, а
+  // не пауза в нём: движок в локации глобальную карту не считает вовсе.
+  // Оставленный маршрут иначе оживал бы при возвращении и уводил отряд
+  // дальше, хотя игрок уже передумал и зашёл сюда по своим делам.
+  stopTravel();
   // Свечение Факела и Чистой слезы живёт до входа на карту: загрузчик
   // 0x43DF48 гасит флаг 0x849610 первым делом.
   world.glow = false;
@@ -338,6 +641,7 @@ async function enterMapInner(number, path, entry) {
   const assets = heroSetup(map.hero, map) ?? [];
   unitsSetup(map);
   lootSetup(map);
+  furnitureSetup(map);
   exitsSetup(map);
   villageSetup(map);
   // Герой встаёт на клетку прибытия — её называет сама запись выхода.
@@ -348,19 +652,69 @@ async function enterMapInner(number, path, entry) {
     hero.y = anchor.y;
     hero.path = [];
     hero.step = null;
+    // НАПРАВЛЕНИЕ ПРИХОДА НАЗЫВАЕТ САМА ЗАПИСЬ. Переход кладёт его отряду
+    // (`отряд[+0x18] = запись[+2]`, VA 0x420900:56), а расстановка переписывает
+    // отряду ЖЕ вожаку (`юнит[+0x18] = отряд[+0x18]`, VA 0x415238:61) и от него
+    // отсчитывает кольцо. Без этого герой выходил из двери, глядя туда же, куда
+    // шёл на прошлой карте, и отряд вставал не с той стороны.
+    if (entry.facing != null) hero.direction = entry.facing;
     heroUpdateBuilding();
-    // Отряд встаёт вокруг вожака ПОСЛЕ него: расстановка юнитов идёт
-    // раньше, и без этого спутники оставались у прежней клетки.
-    partyRegroup();
   }
-  // Листы кадров — только те, что нужны актёрам ЭТОЙ карты (см.
-  // actorSheetPaths): вместо 121.6 МБ выходит около десяти.
-  const нужные = actorSheetPaths(map.hero, [hero, ...units]);
-  await preload(mapAssets([...assets, ...нужные]));
+  // ОТРЯД ВСТАЁТ ВОКРУГ ВОЖАКА ВСЕГДА, а не только по переходу. В движке это
+  // последняя строка загрузчика карты, и стоит она без условий:
+  //
+  //     FUN_00415238(отряд_игрока, текущая_карта, 1)     // VA 0x43DF48:294
+  //
+  // Гейт `if (entry)` стоил отряда на всех картах БЕЗ записи в таблице
+  // прибытия (0x460028): их в паке двадцать четыре из пятидесяти двух, и на
+  // них спутники оставались там, где их поставил spawnCompanion, — у клетки,
+  // которую герой занимал на ПРОШЛОЙ карте. Среди этих двадцати четырёх и
+  // карта 17 «Волхв у Борье», то есть ровно тот путь, на котором тестер и
+  // увидел «отряд не выходит, уходит только герой».
+  //
+  // Порядок важен: сперва герой на своей клетке, потом отряд вокруг него.
+  // partyRegroup гасит и приказы — вожаку тоже, иначе он с порога убегает к
+  // цели прошлой карты (см. там же).
+  partyRegroup();
+  combatDropTargets();
+  // ЖДЁМ ТОЛЬКО РАДИУС ВОКРУГ ГЕРОЯ: землю и постройки в кадре плюс тех, кто
+  // в нём стоит. Всё дальнее уходит в очередь по удалению и приезжает, пока
+  // игрок осматривается.
+  // КАМЕРА НА ГЕРОЯ — ДО расчёта радиуса, иначе рамка считается вокруг нуля,
+  // а герой стоит посреди карты: «близким» оказывался её угол, а всё нужное
+  // уезжало в хвост очереди. Зум ставим тут же — от него зависит, сколько
+  // мира попадает в кадр.
+  // ЧУЖИЕ ЛИСТЫ ВЫБРАСЫВАЕМ. Лист актёра — 4095x1700, в распакованном виде
+  // около 26 МБ; на Морском лагере их два десятка, то есть под треть гигабайта
+  // битмапов. Между картами `world.images` не чистился вовсе, и телефон убивал
+  // вкладку раньше, чем кончался трафик.
+  //
+  // Выбрасывать безопасно: набор листов актёра НЕ зависит от позы (замер на
+  // карте 23 — `stand` из 16 записей требует те же 24 листа, что и все позы
+  // вместе), поэтому `actorSheetPaths` для актёров новой карты и есть полный
+  // список нужного. Всё, что сверх него, осталось от прежней карты.
+  forgetForeignSheets(map.hero, [hero, ...units]);
+  view.zoom = 1;
+  updateZoom();
+  centreOnHero();
+  queueReset();
+  const near = actorsByProximity();
+  // mapAssets ОБЯЗАТЕЛЕН: он подаёт землю, подложку, круги выбора и дымку.
+  // Убрав его ради радиуса, я оставил карту без земли — радиус теперь лишь
+  // ПОДСКАЗКА для очереди, а не замена списку обязательного.
+  await preload(mapAssets([...assets, ...furnitureAssets(map),
+                           ...actorSheetPaths(map.hero, near.inFrame)]));
+  queueDistantActors(map.hero, near.rest);
+  queueItemIcons(map);
   // Листы тварей НЕ тянем скопом: их 83 на 43.4 МБ, а на карте встречается
   // горстка пород. Они рисуются через тот же spriteReady, поэтому нужный лист
   // закажет он сам, когда тварь попадёт в кадр.
   buildingsSetup();
+  // ЛАВКИ НАБИВАЮТСЯ ПРИ КАЖДОМ ВХОДЕ. В движке это последняя строка
+  // загрузчика карты: FUN_0043DF48 зовёт генератор FUN_0041896C уже после
+  // расстановки построек. Без этого вызова прилавки стояли пустыми всегда —
+  // в самих GAME.N они и есть пустые.
+  shopsRestock();
   const waterAnimation = world.underlayVisual?.animation ?? null;
   const waterSource = waterAnimation ? world.images.get(waterAnimation.source) : null;
   if (waterSource) waterInit(waterAnimation, waterSource);
@@ -377,9 +731,6 @@ async function enterMapInner(number, path, entry) {
     standAt(currentMap);
   }
   await preload(worldMapAssets(map));
-  view.zoom = 1;
-  updateZoom();
-  centreOnHero();
   refreshUi();
   render();
   // САМОСОХРАНЕНИЕ НА КАЖДОМ ВХОДЕ. Для демо это главное: тестировщик
@@ -394,7 +745,7 @@ async function enterMapInner(number, path, entry) {
 function arrivalCell(number) {
   const table = world.map?.hero?.rules?.world_map?.arrivals ?? {};
   const place = table[String(number)];
-  return place ? { row: place.row, col: place.col } : null;
+  return place ? { row: place.row, col: place.col, facing: place.facing } : null;
 }
 
 //: Картинки глобальной карты: сама карта, значки локаций и значок отряда.
@@ -410,9 +761,34 @@ function worldMapAssets(map) {
   return paths.filter(Boolean);
 }
 
+//: FNV-1a по хешам файлов манифеста. Не криптография: нужно лишь, чтобы
+//: строка менялась при любой правке пака и не менялась без неё.
+function packVersion(manifest) {
+  let h = 0x811c9dc5;
+  for (const record of manifest.files ?? []) {
+    for (const text of [record.path ?? "", record.sha256 ?? ""]) {
+      for (let i = 0; i < text.length; i += 1) {
+        h ^= text.charCodeAt(i);
+        h = Math.imul(h, 0x01000193) >>> 0;
+      }
+    }
+  }
+  return `${manifest.content_id ?? "pack"}-${h.toString(36)}`;
+}
+
 async function boot() {
   refresh();
   const manifest = await readJson("/content/manifest.json");
+  // ВЕРСИЯ ПАКА — СВЁРТКА ЕГО СОДЕРЖИМОГО, А НЕ ИМЯ И СЧЁТ ФАЙЛОВ.
+  //
+  // Версия подставляется в адрес каждого ресурса (`?v=`), и на ней держится
+  // весь кеш. Прежняя пара «content_id + число файлов» этого не выдерживает:
+  // `content_id` от сборки к сборке один и тот же, а перепечь карту или лист,
+  // не меняя их числа, — обычное дело. Тогда адрес остаётся прежним, и браузер
+  // вправе отдать старое. Пока сервер слал `no-cache`, спасала перепроверка;
+  // с `immutable` на `/content/` она пропадает, поэтому версия обязана меняться
+  // от ЛЮБОЙ правки. Свёртка идёт по sha256 всех файлов — они и так в манифесте.
+  setContentVersion(packVersion(manifest));
   if (!manifest.maps?.length) throw new Error("В content pack нет карт");
   // Канон звука и вечный набор (UI + отклики) — параллельно с остальным.
   soundBindCell(heroCellAt);   // порт 0x43B9B0 для панорамы, без петли модулей
@@ -426,7 +802,9 @@ async function boot() {
   }
   // Общее на весь пак тянем ОДИН раз: кадры героя, слои снаряжения и
   // наборы тварей одинаковы на всех картах.
-  loadShared(await readJson("/content/shared.json"));
+  // Через `contentUrl`, а не голым путём: без версии в адресе этот файл на
+  // 2.4 МБ не удержать в кеше — правка пака его бы уже не сменила.
+  loadShared(await readJson(contentUrl("shared.json")));
   // БЕЗ ШАБЛОНА НЕ ИГРАЕМ. Пак без hero.template (регрессия Б1 — например,
   // shared.json отдан посреди пересборки) молча собирал героя-пустышку, а
   // автосейв закреплял её в хранилище. Лучше честная ошибка загрузки, чем
@@ -501,6 +879,9 @@ async function boot() {
     // Экрану нужны правила прокачки: они лежат в общем блоке пака, там же,
     // где список стартов. Карта до этого мига не грузится вовсе.
     hero.data = hero.data ?? shared.hero;
+    //: Выбор героя — это уже не загрузка: экран уводим, иначе он закроет
+    //: карточки. Вход на карту поднимет его снова.
+    loadScreenHide();
     const chosen = await new Promise((resolve) => {
       const opened = creationOpen(starts, newGame?.world, resolve,
                                   shared.hero?.creation ?? null);
@@ -518,6 +899,20 @@ async function boot() {
   if (Array.isArray(saved?.party_members) && shared.hero?.template?.party) {
     shared.hero.template.party.members = saved.party_members;
   }
+  // ПАМЯТЬ КАРТ — ПО ТОЙ ЖЕ ПРИЧИНЕ И В ТОМ ЖЕ МЕСТЕ. Из неё `unitsSetup`
+  // берёт убитых и приёмышей (оставленного в деревне спутника), а `applySave`
+  // разворачивает её много позже — стартовая карта успевала собраться на
+  // пустой памяти, и оставленный житель на ней не поднимался. Развернуть
+  // дважды безвредно: `mapStateUnpack` каждый раз чистит и заполняет заново,
+  // а между этими двумя вызовами память никто не трогает.
+  if (Array.isArray(saved?.mapState)) mapStateUnpack(saved.mapState);
+  // ПОСЕЛЕНИЯ — ТУДА ЖЕ И ПО ТОЙ ЖЕ ПРИЧИНЕ. `villageSetup` накладывает
+  // сохранённое при ПЕРВОМ визите на карту, но берёт его из отложенного
+  // склада, который заполняет `villageUnpack`. Из `applySave` тот звался уже
+  // после сборки стартовой карты: постройки успевало наложить (запись правится
+  // на месте), а прилавок — нет, потому что генератор к тому мигу уже раздал
+  // торговцу ссылку на пустой список мест.
+  if (Array.isArray(saved?.villages)) villageUnpack(saved.villages);
   // КАРТУ НАЗЫВАЕТ ВЫБРАННЫЙ МИР, а не манифест. В движке номер берётся из
   // записи отряда только что загруженного мира (`0x8496C8 = отряд+...`,
   // VA 0x438A00), то есть у каждого героя своя стартовая карта: Ратибор 33,
@@ -526,11 +921,17 @@ async function boot() {
   // `manifest.start_map` — это карта мира 0, и опора на неё была ещё одним
   // источником Ратибора: любой путь мимо выбора приземлялся у него.
   // Оставлен последним запасным, чтобы пак без стартов не ронял загрузку.
-  const первая = mapPaths.get(Number(start?.map))
+  const firstMap = mapPaths.get(Number(start?.map))
     ?? mapPaths.get(Number(manifest.start_map)) ?? manifest.maps[0].path;
-  const путь = (saved && mapPaths.get(Number(saved.map))) || первая;
-  const map = await readJson(contentUrl(путь));
-  currentMap = Number(String(путь).match(/maps\/(\d+)\//)?.[1]);
+  const path = (saved && mapPaths.get(Number(saved.map))) || firstMap;
+  // ЭКРАН ПОДНИМАЕМ СНОВА — И ЖДЁМ ЕГО. Мимо экрана создания сюда приходят с
+  // погашенной картинкой (её убрали, чтобы не закрывала карточки героев), и
+  // без этой строки самая долгая часть запуска — чтение карты и шести сотен
+  // её файлов — шла бы на пустой рамке. Ждать обязательно: иначе картинка
+  // встанет в очередь за файлами локации.
+  await loadScreenShow();
+  const map = await readJson(contentUrl(path));
+  currentMap = Number(String(path).match(/maps\/(\d+)\//)?.[1]);
   loadMap(map);
   ambientInit();
 
@@ -546,9 +947,19 @@ async function boot() {
   // уезжает в сейв целиком (0x423CB8). В ветке смены карты его трогать
   // нельзя — стёрся бы весь прогресс.
   questsReset();
+  // Склад поселений — тоже на игру, а не на карту: новая партия начинает с
+  // чистого блока, как 0x43D898 перечитывает его из GAME.x.
+  villageReset();
+  //: И знание о местах: новая партия не помнит ни одного, как и блок
+  //: состояния движка, который перечитывается целиком.
+  knownReset();
+  // Записи отрядов — туда же. Блок 0x71E56C движок читает заново ровно тут
+  // (0x43D898) и при загрузке сохранения; вход на карту его не касается.
+  warbandsReset();
   const heroAssets = heroSetup(map.hero, map) ?? [];
   unitsSetup(map);
   lootSetup(map);
+  furnitureSetup(map);
   exitsSetup(map);
   villageSetup(map);
   // Инвентарь заводится ДО боя: combatSetup раскладывает по слотам стартовое
@@ -556,8 +967,8 @@ async function boot() {
   inventorySetup();
   combatSetup();
   world.onPickup = (name) => {
-    const куда = pickUp(name);
-    statusNode.textContent = `Поднято: ${actorItemName(name)} (${куда})`;
+    const placedIn = pickUp(name);
+    statusNode.textContent = `Поднято: ${actorItemName(name)} (${placedIn})`;
     // пояс сам доезжает до свободной ячейки, как в игре
     beltFollow();
     refreshUi();
@@ -609,11 +1020,11 @@ async function boot() {
     // Приказ разговора ключа НЕ спрашивает: замок живёт только в двери
     // (0x420900), а 0x435AA0 просто пишет заявку `[0x8496D8] = -куда`.
     // Поэтому отрицательная карта здесь — это прямо карта |куда|.
-    const цель = door.to_map < 0 ? -door.to_map : door.to_map;
-    const path = mapPaths.get(Number(цель));
+    const targetMap = door.to_map < 0 ? -door.to_map : door.to_map;
+    const path = mapPaths.get(Number(targetMap));
     if (!path) return false;
-    statusNode.textContent = `Переход: ${mapNameOf(цель)}`;
-    enterMap(цель, { row: door.entry_row, col: door.entry_col });
+    statusNode.textContent = `Переход: ${mapNameOf(targetMap)}`;
+    enterMap(targetMap, { row: door.entry_row, col: door.entry_col, facing: door.facing });
     return true;
   };
   // Выход с локации: -1 уводит на глобальную карту, остальное — в соседнюю
@@ -636,13 +1047,13 @@ async function boot() {
       // (VA 0x4277F4). Терять здоровье в походе — канон.
       mapTeardown(currentMap);
       mapStateCapture(currentMap, units, loot);
+      // Выход на глобальную — тот же уход с карты: нажитое спутниками в
+      // запись отряда, иначе поход вернёт им здоровье дня найма.
+      partyCapture();
       currentMap = null;
       // Бой держит ссылки на юнитов: цель, начатый замах и намеченную кучу.
-      // Без сброса первый же кадр после возврата доводил бы удар по тому,
-      // кого мы уже покинули.
-      combat.target = null;
-      combat.pendingHit = null;
-      combat.pickup = null;
+      // Тот же сброс, что и при входе на карту, — общей функцией.
+      combatDropTargets();
       worldMap.onMap = true;
       statusNode.textContent = "Вышли на глобальную карту";
       showWorldMap(true);
@@ -668,22 +1079,36 @@ async function boot() {
     // даже со связкой: единственный выход карты 1 ведёт как раз в −3, то
     // есть на карту 3 «Застава Летающего острова».
     if (door.to_map < 0) {
-      const КЛЮЧ = 25;
-      if (!dialog.handlers?.[17]?.(КЛЮЧ)) {
+      const KEY = 25;
+      if (!dialog.handlers?.[17]?.(KEY)) {
         statusNode.textContent = "Заперто";
         return;
       }
-      dialog.handlers?.[45]?.(КЛЮЧ);
-      const цель = -door.to_map;
-      statusNode.textContent = `Переход: ${mapNameOf(цель)}`;
-      enterMap(цель, { row: door.entry_row, col: door.entry_col })
-        .then((ok) => { if (ok) statusNode.textContent = mapNameOf(цель); });
+      dialog.handlers?.[45]?.(KEY);
+      const targetMap = -door.to_map;
+      statusNode.textContent = `Переход: ${mapNameOf(targetMap)}`;
+      enterMap(targetMap, { row: door.entry_row, col: door.entry_col, facing: door.facing })
+        .then((ok) => { if (ok) statusNode.textContent = mapNameOf(targetMap); });
       return;
     }
-    if (door.to_map === currentMap) return;
+    // ПЕРЕХОД НА ТУ ЖЕ КАРТУ — ЭТО НОРМАЛЬНЫЙ ПЕРЕХОД, А НЕ ОШИБКА.
+    //
+    // Здесь стояло `if (door.to_map === currentMap) return;`, и оно молча
+    // съедало целый вид дверей: проход ВНУТРИ локации. В «Подземной тюрьме»
+    // таких две из четырёх — выход со строк 63..66 ставит отряд на (51,13),
+    // а запертая дверь со строк 21..24 на (12,22), и обе ведут на карту 48,
+    // то есть на саму себя. Игрок подходит к проходу в скале, и не
+    // происходит ничего.
+    //
+    // В движке никакой такой проверки нет: `0x420900` на положительной карте
+    // всегда делает одно и то же — сворачивает локацию (`0x43A628`) и грузит
+    // карту по номеру (`0x43DF48`), даже если номер тот же самый. Через это
+    // и работают проходы сквозь стену: карта перечитывается, а отряд встаёт
+    // на клетку прибытия из записи двери.
+    //
     // Клетку прибытия называет сама запись выхода (+0x05 и +0x07).
     statusNode.textContent = `Переход: ${door.to_name}`;
-    enterMap(door.to_map, { row: door.entry_row, col: door.entry_col })
+    enterMap(door.to_map, { row: door.entry_row, col: door.entry_col, facing: door.facing })
       .then((ok) => {
         if (ok) statusNode.textContent = `${door.to_name}`;
       });
@@ -700,16 +1125,38 @@ async function boot() {
   // Интерфейс сам двигает кромки окна мира, поэтому после его раскладки
   // холст пересчитывается по новому размеру, а не только перерисовывается.
   uiSetup(() => refresh());
-  heroAssets.push(...lootAssets());
+  heroAssets.push(...lootAssets(), ...furnitureAssets(map));
   heroAssets.push(...projectileAssets());
-  // Иконки предметов карты: их единицы, а нужны и на земле, и в панели.
-  for (const item of Object.values(map.items ?? {})) {
-    if (item.icon) heroAssets.push(item.icon.path);
-  }
   heroAssets.push(...worldMapAssets(map));
-  const нужныеЛисты = actorSheetPaths(map.hero, [hero, ...units]);
-  await preload(mapAssets([...heroAssets, ...нужныеЛисты]));
+  // КАМЕРА НА ГЕРОЯ — ДО расчёта радиуса, иначе рамка считается вокруг нуля,
+  // а герой стоит посреди карты: «близким» оказывался её угол, а всё нужное
+  // уезжало в хвост очереди. Зум ставим тут же — от него зависит, сколько
+  // мира попадает в кадр.
+  // ЧУЖИЕ ЛИСТЫ ВЫБРАСЫВАЕМ. Лист актёра — 4095x1700, в распакованном виде
+  // около 26 МБ; на Морском лагере их два десятка, то есть под треть гигабайта
+  // битмапов. Между картами `world.images` не чистился вовсе, и телефон убивал
+  // вкладку раньше, чем кончался трафик.
+  //
+  // Выбрасывать безопасно: набор листов актёра НЕ зависит от позы (замер на
+  // карте 23 — `stand` из 16 записей требует те же 24 листа, что и все позы
+  // вместе), поэтому `actorSheetPaths` для актёров новой карты и есть полный
+  // список нужного. Всё, что сверх него, осталось от прежней карты.
+  forgetForeignSheets(map.hero, [hero, ...units]);
+  view.zoom = 1;
+  updateZoom();
+  centreOnHero();
+  queueReset();
+  const near = actorsByProximity();
+  await preload(mapAssets([...heroAssets,
+                           ...actorSheetPaths(map.hero, near.inFrame)]));
+  queueDistantActors(map.hero, near.rest);
+  queueItemIcons(map);
   buildingsSetup();
+  // ЛАВКИ НАБИВАЮТСЯ ПРИ КАЖДОМ ВХОДЕ. В движке это последняя строка
+  // загрузчика карты: FUN_0043DF48 зовёт генератор FUN_0041896C уже после
+  // расстановки построек. Без этого вызова прилавки стояли пустыми всегда —
+  // в самих GAME.N они и есть пустые.
+  shopsRestock();
   // Слои оружия и щитов догружаются фоном: кадр рисует то, что уже приехало.
   preload(heroEquipmentAssets());
 
@@ -737,6 +1184,13 @@ async function boot() {
   if (saved) {
     applySave(saved);
     daylightSet(daylight.time);
+    // КАМЕРА — СЛЕДОМ ЗА ГЕРОЕМ, А НЕ ЗА КЛЕТКОЙ ИЗ ПАКА. Наведение выше
+    // (0x4291B4) случилось ДО разбора сохранения, когда герой ещё стоял на
+    // стартовой клетке карты. Сейв ставит его на его настоящее место, и без
+    // повторного наведения игрок после загрузки смотрел на точку начала игры,
+    // а сам стоял неизвестно где. В движке такой щели нет: сохранение
+    // читается блоками ДО загрузки карты, и наведение всегда идёт последним.
+    centreOnHero();
     statusNode.textContent = "Продолжаем с сохранения";
   }
 
@@ -750,15 +1204,17 @@ async function boot() {
     <div><dt>Коллизии</dt><dd>${(stats.blocked_cells ?? 0).toLocaleString("ru-RU")}</dd></div>`;
   // Камера встаёт у героя в натуральную величину: игра рисуется один к
   // одному, и с высоты всей карты по спутнику не попасть мышью.
-  view.zoom = 1;
-  updateZoom();
-  centreOnHero();
+  // (камера наведена выше, до расчёта радиуса подгрузки)
   soundMapEnter(map.audio, hero.data?.body ?? 0);
   sfxSetup({ hero });
   statusNode.textContent = world.missingAssets.size
     ? `Схема ${manifest.schema_version} · нет ресурсов: ${world.missingAssets.size}`
     : `Схема ${manifest.schema_version} · готово`;
   render();
+  // ЭКРАН ЗАГРУЗКИ УХОДИТ ЗДЕСЬ — когда сцена нарисована и герой на месте.
+  // Первая карта грузится в обход `enterMap`, поэтому и гасить его приходится
+  // своим вызовом: при переходах это делает `finally` там.
+  loadScreenDone();
   // Сетку глобальной карты заводим и на первом запуске, а не только при
   // переходе: без неё туман некуда копить и нечего сохранять.
   if (worldMapSetup() && worldMap.x === null) standAt(currentMap);

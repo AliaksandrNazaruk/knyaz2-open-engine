@@ -20,17 +20,20 @@ import { isSelected, select as selectUnit, selection,
          selectionLead } from "./orders.js";
 import { combatStanceNode } from "./dom.js";
 import { trade, tradeFinish, tradeLayout, tradeMove, tradeTotals } from "./trade.js";
-import { carriedWeight, carry, carryCancel, carryDrop, carryMixing,
-         carryPlaceBag, carryPlaceSlot, carryTake, carrying,
+import { carriedWeight, carry, carryActor, carryApplyTo, carryCancel, carryDrop,
+         carryMixing, carryPlaceBag, carryPlaceSlot, carryTake, carryUse, carrying,
          weightLimit } from "./carry.js";
-import { mixing, mixingSlot } from "./craft.js";
-import { SLOT_TITLES, dropFromBag, dropFromSlot, equipFromBag,
-         inventoryWeight, unequip } from "./inventory.js";
-import { armourOf } from "./combat.js";
-import { bonusStrike, currentCharacteristics } from "./jewels.js";
+import { mixing, mixingHides, mixingSlot, mixingTake } from "./craft.js";
+import { carryCursorSync } from "./cursors.js";
+import { SLOT_TITLES, equipFromBag, inventoryWeight,
+         requirementMet, unequip } from "./inventory.js";
+import { armourOf, orderTalkTo } from "./combat.js";
+import { bonusStrike, currentCharacteristics,
+         enchantBonuses } from "./jewels.js";
 import { dialog, dialogChoose, dialogClose, dialogJournal,
          dialogOptions } from "./dialog.js";
-import { markerVisible, standAt, startTravel, startTravelTo, travelling,
+import { locationName, markerVisible, standAt, startTravel,
+         startTravelTo, travelling,
          worldMap, worldMapSetup } from "./worldmap.js";
 import { canRaiseCharacteristic,
          canRaiseSkill, characteristicCost, levelThreshold,
@@ -49,7 +52,6 @@ const panelArtNode = document.querySelector("#ui-panel-art");
 const panelCellsNode = document.querySelector("#ui-panel-cells");
 const viewNode = document.querySelector("#ui-view");
 const beltNode = document.querySelector("#ui-belt");
-const frameBottomNode = document.querySelector("#ui-frame-bottom");
 const bagNode = document.querySelector("#bag-slots");
 const windowNode = document.querySelector("#ui-window");
 const windowSlotsNode = document.querySelector("#equip-slots");
@@ -62,10 +64,16 @@ const talkNode = document.querySelector("#ui-talk");
 const tradeNode = document.querySelector("#ui-trade");
 const weightNode = document.querySelector("#inventory-weight");
 
-//: Зажат ли Shift — модификатор «добавить к выбору» (в движке 0x849608).
-const keyHeld = { shift: false };
-window.addEventListener("keydown", (event) => { keyHeld.shift = event.shiftKey; });
-window.addEventListener("keyup", (event) => { keyHeld.shift = event.shiftKey; });
+//: Зажатые модификаторы. В движке это два отдельных флага главного цикла:
+//: 0x849608 «добавить к выбору» по клавише 0x10 (Shift) и 0x8495AC
+//: «заговорить» по клавише 0x11 (Ctrl) — VA 0x438A00:44.
+const keyHeld = { shift: false, ctrl: false };
+function keyHeldFrom(event) {
+  keyHeld.shift = event.shiftKey;
+  keyHeld.ctrl = event.ctrlKey;
+}
+window.addEventListener("keydown", keyHeldFrom);
+window.addEventListener("keyup", keyHeldFrom);
 
 let onChange = () => {};
 let scale = 1;
@@ -76,7 +84,7 @@ function info() { return world.map?.interface ?? null; }
 
 function screen() {
   return info()?.screen ?? { width: 1024, height: 768, panel_width: 140,
-                             view_width: 884, view_height: 709, frame_bottom: 709 };
+                             view_width: 884, view_height: 709 };
 }
 
 // Пояс из движка (VA 0x43096C): ряд на строке 639, двенадцать ячеек 70x70
@@ -86,14 +94,74 @@ function belt() {
                            first_x: 168, cells: 12, left_x: 140, right_x: 1023 };
 }
 
-export function beltCells() { return belt().cells ?? 12; }
+//: Ширина стрелок ряда: слева 28, справа 27 (INTERF.RES, VA 0x43096C).
+function beltArrows() {
+  const set = info()?.belt?.arrows;
+  return (set?.left?.width ?? 28) + (set?.right?.width ?? 27);
+}
+
+// СКОЛЬКО ЯЧЕЕК ПОМЕЩАЕТСЯ — НЕ БОЛЬШЕ ДВЕНАДЦАТИ, НО МОЖЕТ БЫТЬ МЕНЬШЕ.
+//
+// В игре их всегда двенадцать: экран 1024x768, и ряд от кромки панели до
+// правого края рассчитан ровно на них. У нас окно любой формы, и когда оно
+// уже четырёх третей, двенадцать ячеек в общем масштабе в проём не лезут —
+// ряд вылезал на панель. Считаем, сколько шагов поместится в проёме, и
+// показываем столько; до остальных мешок листается стрелками, как и прежде.
+export function beltCells() {
+  const geometry = belt();
+  const most = geometry.cells ?? 12;
+  const pitch = geometry.pitch ?? 69;
+  const room = (viewNode?.clientWidth ?? 0) / (scale || 1) - beltArrows();
+  if (!(room > 0)) return most;
+  return Math.max(1, Math.min(most, Math.floor(room / pitch)));
+}
+
+//: Ниже какой концентрации снадобье считается слабым (VA 0x432303 и
+//: 0x432324): «Масло» и класс 93 хотят десять, «Эликсир Мудрости» — шесть.
+const WEAK_BELOW = { 87: 10.0, 92: 6.0, 93: 10.0 };
 
 // Подсказка предмета — те же поля, что печатает игра (VA 0x4315A0): урон
 // или броня, вес в килограммах, цена, дальность и требование.
-function describe(name) {
+// ВЛАДЕЛЬЦА СПРАШИВАЕМ У ВЫЗЫВАЮЩЕГО. Концентрация зелья — это float +0x04
+// САМОЙ ЗАПИСИ предмета, и движку всё равно, у кого она в руках. У нас
+// экземплярные поля живут картами владельца, поэтому владельца надо назвать:
+// в окне обмена вещь принадлежит собеседнику, а не игроку. Здесь всегда
+// стоял `panelUnit()`, то есть игрок, — и любое зелье на чужом прилавке
+// показывало «концентрация 0.00», хотя в паке у него честные 5.0 и 6.0.
+function describe(name, owner = panelUnit()) {
   const item = actorItem(name);
   if (!item) return "";
   const parts = [item.name];
+  //: Экземплярные поля вещи: в открытом обмене они лежат в его складе (туда
+  //: `tradeOpen` собирает обе стороны по ссылке записи), иначе — у владельца.
+  const traded = trade.open ? trade.details?.[name] : null;
+  // СНАДОБЬЕ ОПИСЫВАЕТСЯ ИНАЧЕ (VA 0x4322A1).
+  //
+  // Признак — ОТРИЦАТЕЛЬНАЯ ЦЕНА в записи класса: движок читает знаковое
+  // поле +0x12 и при минусе дописывает к названию концентрацию:
+  //
+  //     mov eax, [eax + 0x45db00]; sar eax, 0x10; test eax, eax
+  //     jge пропустить
+  //       strcat(буфер, ", концентрация ")
+  //       fld dword [запись + 4]; sprintf(врем, "%5.2f", крепость)
+  //
+  // Минус стоит ровно у восьми варимых зелий (85…92: бальзам, яд, масло,
+  // противоядие, брага, зелье, чистая слеза, эликсир), и цену движок им НЕ
+  // печатает вовсе — ветка кончается весом. Мы же выводили сырое поле, и в
+  // подсказке Яда стояло «цена -11».
+  //
+  // Сама концентрация — тот же float +0x04 записи предмета, что у оружия
+  // служит прочностью; у нас оба живут в `bagStrength`, как и в движке.
+  if (item.price < 0) {
+    const value = (name === mixing.name && typeof mixing.strength === "number")
+      ? mixing.strength
+      : (traded?.strength ?? owner?.bagStrength?.[name] ?? 0);
+    parts.push(`концентрация ${value.toFixed(2)}`);
+    const need = WEAK_BELOW[item.index];
+    if (need !== undefined && value < need) parts.push("недостаточная концентрация");
+    parts.push(`вес ${(item.weight / 1000).toFixed(2)} кг`);
+    return parts.join(" · ");
+  }
   if (item.power) parts.push(`${item.slot === "hand" || item.slot === "ranged"
     ? "урон" : "броня"} ${item.power}`);
   parts.push(`вес ${(item.weight / 1000).toFixed(2)} кг`, `цена ${item.price}`);
@@ -101,17 +169,94 @@ function describe(name) {
   if (item.requires && item.requirement) {
     parts.push(`требует ${item.requires} ${item.requirement}`);
   }
+  // ЧТО ВЕЩЬ ДАЁТ. Слово прибавок (+0x0E записи) — пять значений по три
+  // бита, и величину каждому даёт таблица (VA 0x41C494). Неопознанная магия
+  // молчит: пока стоит старший бит, прибавок нет вовсе, и это канон —
+  // `enchantBonuses` возвращает пусто.
+  //
+  // Показываем и в мешке, и на чужом прилавке: до этой строки судить об
+  // украшении можно было, только купив его и надев.
+  const word = traded?.enchant ?? owner?.bagEnchant?.[name] ?? 0;
+  for (const [field, value] of Object.entries(enchantBonuses(word))) {
+    parts.push(`${bonusName(field)} +${value}`);
+  }
   return parts.join(" · ");
 }
 
-function iconNode(name) {
+// ИМЯ ПРИБАВКИ ВМЕСТО НОМЕРА ПОЛЯ. В подсказке стояло сырое число, и игрок
+// видел «6 +1» — а это Выносливость.
+//
+// Номера полей у чар единые с требованиями вещей и считаются С ЕДИНИЦЫ:
+// `FUN_0041AAD8` разрешает их так же — 0 уровень, 1…6 байты +0xCC…+0xD1
+// (Харизма, Ловкость, Интеллект, Обучаемость, Сила, Выносливость), а дальше
+// вычисляемые. У чар сверх шестёрки идут три поля самой записи юнита, и они
+// названы в паке: 7 броня (+0x42), 8 сила удара (+0x44), 9 точность (+0x46).
+const BONUS_EXTRA = { 7: "Броня", 8: "Удар", 9: "Точность" };
+
+function bonusName(field) {
+  const number = Number(field);
+  const names = hero.data?.rules?.progression?.characteristics?.names ?? [];
+  if (number >= 1 && number <= names.length) return names[number - 1];
+  return BONUS_EXTRA[number] ?? `поле ${number}`;
+}
+
+// ЦВЕТ ЗНАЧКА ВЕЩИ — перенос FUN_0042FF20. Движок не рисует значок как есть:
+// он подбирает вещи палитру и красит её ПЕРЕД отрисовкой (зовут из разбора
+// мешка, VA 0x42BFE8 и 0x43096C). Порядок проверок такой:
+//
+//     не может надеть (FUN_00418648)      -> FUN_0044293F(0x18, 0, 0)  красный
+//     опознана:
+//         байт +1 отрицателен И слово чар (маска 0x7FFF) ноль -> без краски
+//         иначе                            -> FUN_0044293F(0, 0x0C, 0)  зелёный
+//     не опознана (вещь[+0x0F] бит 0x80)   -> FUN_0044293F(0x0F, 0x0F, 0) жёлтый
+//
+// ЖЁЛТЫЙ В ОБЫЧНОЙ ИГРЕ НЕ ПОКАЗЫВАЕТСЯ, и это не наша недоделка. Тело
+// `FUN_00418648` целиком лежит под `if ((вещь[+0x0F] & 0x80) == 0)` — то есть
+// неопознанная вещь не проходит саму проверку «можно ли надеть» и красится
+// КРАСНЫМ раньше, чем разбор дойдёт до жёлтой ветки. Открыть её может только
+// флаг `0x849620`, который снимает проверку целиком. Мы повторяем это как
+// есть: у нас `requirementMet` тоже отвергает неопознанное первой строкой.
+//
+// Ровно этого и не хватало игроку: у торговца всё выглядело одинаково, и
+// понять, что вещь не надеть по характеристикам, можно было только купив её.
+//
+//: Сама КРАСКА в движке табличная: `0x4429 3F` выбирает три строки заранее
+//: посчитанных таблиц (0x4BEA2C красная, 0x479D50 зелёная, 0x474950 синяя,
+//: плюс «вычитающие» близнецы), а `0x441DF9` гоняет через них каждый из трёх
+//: пятибитных каналов палитры. Таблиц в паке пока нет, поэтому здесь оттенок
+//: приближённый — ВЫБОР состояния канонический, а сам цвет ещё нет.
+function itemTint(name, owner = panelUnit()) {
+  if (!name || !owner) return null;
+  if (!requirementMet(name, owner)) return "unusable";
+  const traded = trade.open ? trade.details?.[name] : null;
+  const word = traded?.enchant ?? owner.bagEnchant?.[name] ?? 0;
+  const dormant = world.map?.hero?.rules?.jewellery?.enchant?.dormant ?? 0x8000;
+  if (word & dormant) return "unknown";
+  return word ? "special" : null;
+}
+
+function iconNode(name, owner = panelUnit()) {
   const icon = actorItem(name)?.icon;
   if (!icon) return null;
   const image = document.createElement("img");
   image.src = contentUrl(icon.path);
   image.alt = name;
+  const tint = itemTint(name, owner);
+  // ЦВЕТ — ЭТО ЦВЕТ, А НЕ ПОДПИСЬ. Здесь стояло `image.title = ITEM_TINTS[tint]`,
+  // и всплывающая подсказка над значком говорила игроку «зелёный» или
+  // «красный» вместо описания вещи: своя подсказка у картинки перебивает
+  // подсказку ячейки, в которой она лежит. Никакой такой подписи в движке
+  // нет — там `FUN_0042FF20` только подбирает вещи палитру перед отрисовкой
+  // значка, и весь смысл передаётся самим цветом. Название вещи ставит
+  // ячейка (`describe`), и мешать ему нельзя.
+  if (tint) image.classList.add(`item-${tint}`);
   return image;
 }
+
+//: Мерки пары касаний — те же, что на карте (input.js): срок и допуск по
+//: месту, потому что пальцем во второй раз в ту же точку не попадают.
+const TAP_GAP_MS = 400;
+const TAP_SLIP = 24;
 
 function cell({ x, y, width, height, name = null, title = "", art = null,
                 onClick = null, onDoubleClick = null, onDrop = null,
@@ -131,11 +276,47 @@ function cell({ x, y, width, height, name = null, title = "", art = null,
   }
   const icon = name && iconNode(name);
   if (icon) node.append(icon);
-  if (onClick) node.addEventListener("click", () => { onClick(); refresh(); onChange(); });
+  //: Модификаторы берём из САМОГО щелчка, а не только из клавиатуры: мышью
+  //: можно нажать Ctrl или Shift и не дать окну ни одного keydown — скажем,
+  //: зажав их до того, как страница получила фокус.
+  if (onClick) {
+    node.addEventListener("click", (event) => {
+      keyHeldFrom(event);
+      onClick(event);
+      refresh();
+      onChange();
+    });
+  }
   if (onDoubleClick) node.addEventListener("dblclick", () => { onDoubleClick(); });
   if (onDrop) {
     node.addEventListener("contextmenu", (event) => {
       event.preventDefault();
+      onDrop();
+      refresh();
+      onChange();
+    });
+    // ДВОЙНОЕ КАСАНИЕ — ТА ЖЕ ПРАВАЯ КНОПКА. На телефоне второй кнопки нет
+    // вовсе: Android иногда даёт `contextmenu` по долгому нажатию, iPhone не
+    // даёт никогда, — и применить вещь было нечем.
+    //
+    // Пару считаем сами, теми же мерками, что и на карте (input.js): два
+    // касания подряд, в срок и в одно место. Событию `dblclick` доверять
+    // нельзя — по касаниям браузеры шлют его как придётся.
+    //
+    // ВЕЩЬ СНАЧАЛА ВОЗВРАЩАЕМ. Первое касание уже успело взять её в руку
+    // (это обычный щелчок по ячейке), и применять было бы нечего: отменяем
+    // перенос, вещь ложится назад, и только потом идёт применение.
+    let последнее = 0;
+    let точка = { x: 0, y: 0 };
+    node.addEventListener("pointerdown", (event) => {
+      const пара = event.timeStamp - последнее < TAP_GAP_MS &&
+        Math.abs(event.clientX - точка.x) < TAP_SLIP &&
+        Math.abs(event.clientY - точка.y) < TAP_SLIP;
+      последнее = пара ? 0 : event.timeStamp;
+      точка = { x: event.clientX, y: event.clientY };
+      if (!пара) return;
+      event.preventDefault();
+      if (carrying()) carryCancel();
       onDrop();
       refresh();
       onChange();
@@ -186,12 +367,12 @@ const ACTIONS = {
       // стоящего на месте (VA 0x4111E8 смотрит только его). Кнопка его и
       // переключает: идут следом или ждут там, где стоят.
       const bit = orderModes().follow;
-      const идут = mates.every((mate) => (mate.orderByte ?? 0) & bit);
+      const following = mates.every((mate) => (mate.orderByte ?? 0) & bit);
       for (const mate of mates) {
-        setMode(mate, bit, !идут);
+        setMode(mate, bit, !following);
         mate.path = [];
       }
-      status(идут ? `Отряд ждёт на месте: ${mates.length}`
+      status(following ? `Отряд ждёт на месте: ${mates.length}`
                   : `Отряд идёт за тобой: ${mates.length}`);
     },
   },
@@ -317,12 +498,17 @@ function renderWorldMap() {
 //: а пока курсор не на значке — имя той, где стоит отряд.
 let mapHover = 0;
 
+// ПОДПИСЬ КАРТЫ. Имя показывается только у ИЗВЕСТНОГО места — решает это
+// `locationName` (worldmap.js), общая для подписи, наведения и прихода.
+// Здесь имя бралось прямо из номера клетки, и над неоткрытой локацией
+// писалось её настоящее название.
 function mapTitle() {
   const rules = worldMap.rules;
   if (!rules) return world.map?.name ?? "";
   const here = mapHover || (worldMap.row === null ? 0
     : worldMap.cells[worldMap.row][worldMap.col] & 0xFF);
-  return rules.names?.[here] || world.map?.name || "";
+  if (!here) return world.map?.name || "";
+  return locationName(here);
 }
 
 function drawWorldMap(picture) {
@@ -460,8 +646,7 @@ function enterHere() {
   let number = markerVisible(cell) ? (cell & 0xFF) : 0;
   if (!number) number = (cell >> 16) & 0xFF;
   if (!number) number = spare;
-  const name = worldMap.rules.names?.[number] || `карта ${number}`;
-  status(`Входим: ${name}`);
+  status(`Входим: ${locationName(number)}`);
   world.onTravel?.(number);
 }
 
@@ -476,7 +661,7 @@ function worldMapClick(event) {
   //: Строка состояния — наша: движок в этом случае молчит.
   if (!worldMap.onMap) {
     const under = markerAt(point.x, point.y);
-    const name = under && (worldMap.rules.names?.[under] || `карта ${under}`);
+    const name = under && locationName(under);
     status(name ? `${name} — чтобы идти, выйдите из локации`
                 : "Отсюда карту можно только смотреть: выйдите краем локации");
     return;
@@ -545,14 +730,19 @@ function nearestEnemy() {
   return best;
 }
 
-// Ряд пояса занимает всю ширину окна мира: 28 (левая стрелка) + 12*69 +
-// 27 (правая) = 883 при ширине окна 884. Окно браузера шире или уже, чем
-// 884 в масштабе высоты, поэтому ряд считается от фактической ширины окна
-// мира — так он всегда точно ложится между его кромками, как в игре.
-function beltScale() {
-  const view = screen().view_width || 884;
-  return (viewNode?.clientWidth || view) / view;
-}
+// ПОЯС ЖИВЁТ В ОБЩЕМ МАСШТАБЕ, А НЕ РАСТЯГИВАЕТСЯ ПО ОКНУ.
+//
+// Ряд у движка один и тот же: 28 точек левой стрелки, двенадцать ячеек шагом
+// 69, 27 правой — от кромки панели (140) до края экрана (1023), ровно 884
+// (VA 0x43096C). Ячеек всегда двенадцать, это канон.
+//
+// Раньше ряд считался от ФАКТИЧЕСКОЙ ширины окна, чтобы лечь между кромками
+// вплотную. Но окно браузера редко бывает 4:3, и ряд от этого разъезжался:
+// ячейки выходили не квадратными, а на телефоне в альбомной ориентации ряд
+// становился ещё и вдвое выше положенного — там ширина к высоте куда больше
+// четырёх третей, и множитель по ширине оказывался вдвое крупнее общего.
+// Теперь масштаб один на всю рамку, а сам ряд стоит по центру окна.
+function beltScale() { return scale; }
 
 function layout() {
   const data = info();
@@ -563,24 +753,22 @@ function layout() {
   panelNode.style.width = `${panelWidth}px`;
   const frameWidth = Math.round((data?.frame?.width ?? box.width) * scale);
   const frameHeight = Math.round((data?.frame?.height ?? box.height) * scale);
-  // Нижняя полоса рамки — её же строки с 709-й до низа экрана, взятые
-  // правее панели и повторённые по ширине (текстура там однородная).
-  const bandTop = box.frame_bottom ?? 709;
-  const band = Math.round((box.height - bandTop) * scale);
-  frameBottomNode.style.height = `${band}px`;
+  // НИЖНЕЙ ПОЛОСЫ РАМКИ У НАС НЕТ. В игре под окном мира идёт лента кожи со
+  // строки 709 до низа экрана — украшение, ничего на ней не лежит. Мы её
+  // убрали: окно мира занимает всю высоту, и это пятьдесят девять точек по
+  // мерке игры, которых на телефоне очень не хватает.
   if (data?.frame) {
-    const url = `url("${contentUrl(data.frame.path)}")`;
-    panelArtNode.style.backgroundImage = url;
+    panelArtNode.style.backgroundImage = `url("${contentUrl(data.frame.path)}")`;
     panelArtNode.style.backgroundSize = `${frameWidth}px ${frameHeight}px`;
-    frameBottomNode.style.backgroundImage = url;
-    frameBottomNode.style.backgroundSize = `${frameWidth}px ${frameHeight}px`;
-    frameBottomNode.style.backgroundPosition =
-      `${-panelWidth}px ${-Math.round(bandTop * scale)}px`;
-    frameBottomNode.style.backgroundRepeat = "repeat-x";
   }
-  // Ряд ячеек стоит на нижней кромке окна мира — сразу над полосой рамки.
-  beltNode.style.height = `${Math.round(belt().height * beltScale())}px`;
-  beltNode.style.bottom = `${band}px`;
+  //: Ряд ячеек стоит на самой нижней кромке окна мира: полосы под ним больше
+  //: нет, и отступать не от чего. Ширина — по числу поместившихся ячеек, а
+  //: прижат ряд к кромке панели, как в игре.
+  const пояс = belt();
+  beltNode.style.width =
+    `${Math.round((beltArrows() + beltCells() * (пояс.pitch ?? 69)) * scale)}px`;
+  beltNode.style.height = `${Math.round(belt().height * scale)}px`;
+  beltNode.style.bottom = "0px";
 }
 
 // Здоровье показывает сам портрет (VA 0x4305A4): верхняя часть рисуется
@@ -595,6 +783,13 @@ function portraitTint(poisoned) {
   return (poisoned ? set?.poisoned ?? PORTRAIT_TINT.poisoned
                    : set?.hurt ?? PORTRAIT_TINT.hurt);
 }
+// ЗДОРОВЬЕ ИЗМЕНИЛОСЬ — ПЕРЕРИСОВАТЬ. В движке ровно так: каждое место,
+// правящее `+0x4E`, зовёт FUN_004305A4 само (0x41C944, 0x414DF0, 0x41FDD0,
+// 0x41D954, 0x4277F4, 0x413894 и три ветки разговора). Своего расписания у
+// панели нет — потому и рассинхрона нет. Наш `healthSet` (effects.js) зовёт
+// это, и портрет с подписью пересчитываются в тот же миг.
+world.onHealth = () => refresh();
+
 const portraitCache = new Map();
 
 // Портрет спутника — тот же спрайт, только по его номеру лица: движок
@@ -659,6 +854,29 @@ function portraitFace(data, actor, face = null) {
   return url;
 }
 
+// СВОБОДНАЯ ПОЛОСА ПАНЕЛИ — от низа портретов отряда до первой кнопки.
+//
+// В таблице раскладки движка (0x460EB4) шестнадцать записей: девять портретов
+// и семь кнопок. Между ними остаётся полоса — у стартовых героев это y 424…501,
+// сто сорок на семьдесят семь, — и в таблице её НЕТ: попадание мыши там движок
+// не считает вовсе (VA 0x43AFE3 возвращает только номера записей). То есть
+// герб на ней — чистое украшение рамки, и место ничем не занято.
+//
+// Границы берём из самой таблицы, а не числами: сместится раскладка — уедет и
+// полоса, без правок здесь.
+function panelGap(panel) {
+  let top = 0;
+  let bottom = Infinity;
+  for (const rect of panel) {
+    if (rect.name.startsWith("party_")) top = Math.max(top, rect.y + rect.height);
+    if (rect.name.startsWith("button_")) bottom = Math.min(bottom, rect.y);
+  }
+  if (!top || !Number.isFinite(bottom) || bottom - top < 20) return null;
+  return { x: 0, y: Math.round(top * scale),
+           width: Math.round((screen().panel_width ?? 140) * scale),
+           height: Math.round((bottom - top) * scale) };
+}
+
 function renderPanel() {
   const data = info();
   if (!data?.panel) return;
@@ -698,7 +916,16 @@ function renderPanel() {
                                   `здоровье ${healthShown(hero.health, healthDivisor())}`
                                   + ` из ${healthShown(hero.maxHealth ?? 1600, healthDivisor())}`]
                             .filter(Boolean).join(", "),
-                          onClick: () => { selectUnit(hero, keyHeld.shift); refresh(); },
+                          // С ВЕЩЬЮ В РУКЕ портрет не выбирает, а применяет
+                          // (VA 0x421690:292 -> 0x41F55C): для того, чья
+                          // панель открыта, это «использовать на нём».
+                          onClick: () => {
+                            if (carrying()) {
+                              if (carryActor() === hero) carryApplyTo(hero);
+                              else carryPlaceBag(-1, hero);
+                            } else selectUnit(hero, keyHeld.shift);
+                            refresh();
+                          },
                           onDoubleClick: () => { centreOn(hero); render(); } });
       // Портрет героя — ПО ЕГО ЛИЦУ, а не по картинке, запечённой в пак:
       // движок берёт спрайт «лицо + 261» (VA 0x430631) для любого юнита, и
@@ -727,7 +954,24 @@ function renderPanel() {
         title: member ? `${member.name}, уровень ${member.level}` : "место отряда",
         // Клик по портрету выбирает юнита, с Shift — добавляет к выбору
         // (VA 0x423F80: без модификатора список сначала очищается).
-        onClick: mate ? () => { selectUnit(mate, keyHeld.shift); refresh(); } : null,
+        // А с вещью в руке портрет спутника — это ПЕРЕДАЧА: движок кладёт
+        // вещь ему в мешок через 0x423218 с индексом −1, то есть в первую
+        // свободную ячейку (VA 0x421690:301).
+        // CTRL ПО ПОРТРЕТУ — ЗАГОВОРИТЬ, а не выбрать: в движке это та же
+        // ветка, что и Ctrl по юниту в мире, — приказ 0x22 игроку с номером
+        // соотрядника целью (VA 0x421690:349, разбор попадания 0x43AEF0 по
+        // таблице панели 0x460EB4). Без неё до спутника, зашедшего в дом или
+        // застрявшего за спинами, было не докликаться вовсе, а через этот
+        // разговор его назначают на должность в деревне.
+        onClick: mate ? () => {
+          if (carrying()) {
+            if (carryActor() === mate) carryApplyTo(mate);
+            else carryPlaceBag(-1, mate);
+          } else if (!(keyHeld.ctrl && orderTalkTo(mate))) {
+            selectUnit(mate, keyHeld.shift);
+          }
+          refresh();
+        } : null,
         // Двойной щелчок ведёт камеру к юниту. Это НАШЕ добавление: в
         // движке камеру наводят только на игрока, а до спутника доходят
         // краевой прокруткой.
@@ -744,6 +988,38 @@ function renderPanel() {
       }
       nodes.push(node);
     }
+  }
+  // ВЫХОД В МЕНЮ — НАША КНОПКА, канону она неизвестна: в движке меню
+  // открывается своей клавишей, и места на панели под него нет.
+  //
+  // Своей картинки не рисуем: герб уже лежит в самой рамке (спрайт 3), а
+  // золотая обводка по наведению у ячеек панели общая. Клавиша Esc делает то
+  // же самое — обе дороги сходятся в `world.openMenu`, то есть поднимают
+  // накладку. Страницу не уводит ни одна: это стоило бы полной перезагрузки
+  // пака и карты (gamemenu.js).
+  const gap = panelGap(data.panel);
+  if (gap) {
+    // Класс НАРОЧНО не `menu`: в menu.css так зовётся плита стартового меню
+    // (`translate: -50% 0`), а он подгружается вместе с накладкой и накрыл бы
+    // эту кнопку, уведя её на половину ширины влево.
+    const node = cell({ ...gap, title: "Меню (Esc)", className: "to-menu",
+                        onClick: () => world.openMenu?.() });
+    // ПЛАШКА — НАШ СПРАЙТ, не из пака: в игровых ресурсах такой кнопки нет,
+    // и место ей в клиенте, а не среди данных игры. Рисунок повторяет герб,
+    // запечённый в рамку, и ложится ровно поверх него — подмены не видно.
+    // Ради неё всё и затевалось: часть рамки не подсветишь и не вдавишь, а
+    // отдельную картинку — сколько угодно (styles.css).
+    node.style.backgroundImage = 'url("/menu-button.png")';
+    node.style.backgroundSize = "100% 100%";
+    // ПОВТОР ГАСИМ ЯВНО. У ячейки рамка в пиксель, фон размеряется по
+    // внутренней коробке, а рисуется по внешней — и при повторе (значение по
+    // умолчанию!) под рамкой выглядывала соседняя плитка: слева тёмный правый
+    // край картинки, справа светлый левый. `cell` ставит `no-repeat` только
+    // тем, кто пришёл через `art`, а мы кладём фон сами.
+    node.style.backgroundRepeat = "no-repeat";
+    //: И размеряем по ВНЕШНЕЙ коробке, чтобы пиксель рамки не съедал край.
+    node.style.backgroundOrigin = "border-box";
+    nodes.push(node);
   }
   panelCellsNode.replaceChildren(...nodes);
 }
@@ -764,6 +1040,59 @@ export function beltScroll(step) {
   return true;
 }
 
+// ПОЯС ПРЯЧЕТСЯ ПО Ё/~ — перенос ветки клавиши из FUN_00437FF8 (строка 220):
+//
+//     else if ((клавиша == 0xC0) && (режим_экрана == 0)) {
+//         [0x849514] = [0x840B94];                  // панель — первому выбранному
+//         if ([0x840B94] == 0) { [0x849618] = 0; [0x8495D8] = 0; }   // СКРЫТЬ
+//         else if (номер выбранного == [0x8495D8]) {                  // тот же — СКРЫТЬ
+//             [0x849618] = 0; [0x8495D8] = 0;
+//         } else {                                                     // другой — ПОКАЗАТЬ
+//             [0x849714] = 0;   // смещение пояса в начало
+//             [0x849668] = 0;   // и пометку гнезда смешивания долой
+//             FUN_0043096C(выбранный, 0);
+//         }
+//     }
+//
+// 0xC0 — это VK_OEM_3, клавиша Ё на нашей раскладке и ~ на латинской; ветка
+// живёт только в режиме экрана 0, то есть в самой игре, а не в меню и не в
+// окнах. То есть Ё — не «скрыть», а ПЕРЕКЛЮЧАТЕЛЬ: пояс уже показывает мешок
+// этого юнита — прячем; показывает чужой или не показан — показываем его и
+// сбрасываем смещение.
+//: Чей мешок на поясе — наш [0x8495D8]. `undefined` значит «пояс показан и
+//: следует за панелью» (обычное состояние экрана: движок держит [0x849618]
+//: поднятым с самого начала), `null` — игрок его спрятал.
+let beltOwner;
+
+export function beltHidden() { return beltOwner === null; }
+
+export function beltToggle() {
+  const unit = panelUnit();
+  //: Показывает мешок этого же юнита — прячем; спрятан или чужой — показываем.
+  if (beltOwner === null || (unit && beltOwner !== undefined && beltOwner !== unit)) {
+    beltOwner = unit ?? undefined;
+    beltFirst = 0;
+    mixingTake();
+  } else {
+    beltOwner = null;
+  }
+  refresh();
+  return beltOwner !== null;
+}
+
+// ПРАВАЯ КНОПКА ПО МИРУ пустой рукой (VA 0x422AFC -> 0x420644). Движок
+// сбрасывает ровно две вещи: смещение пояса (0x849714) и пометку гнезда
+// смешивания (0x849668). Сама вещь из гнезда никуда не девается — она всё
+// это время лежит в мешке, гнездо только помечало её.
+//
+// Панель персонажа движок тут же возвращает игроку (0x849514 = игрок). У нас
+// панель ВЫВОДИТСЯ из выбора (`panelUnit`), поэтому отдельного указателя
+// нет, и трогать выбор я не стал: в разборе 0x422AFC его никто не чистит.
+export function panelToHero() {
+  beltFirst = 0;
+  mixingTake();
+}
+
 // Движок сам прокручивает пояс к первой свободной ячейке, когда предмет
 // попадает за его край (VA 0x43834C).
 export function beltFollow() {
@@ -773,6 +1102,13 @@ export function beltFollow() {
 }
 
 function renderBelt() {
+  // Спрятанный пояс просто не показывается — и не закрывает нижнюю часть
+  // карты. ЧИСТИТЬ ЕГО НЕЛЬЗЯ: ячейки лежат в дочернем узле `bagNode`, и
+  // `replaceChildren()` на поясе вырезал его из DOM целиком. Пояс после
+  // этого «возвращался» пустой рамкой, а нарисованное уходило в узел,
+  // которого на странице больше нет.
+  if (beltHidden()) { beltNode.hidden = true; return; }
+  beltNode.hidden = false;
   const data = info();
   const geometry = belt();
   const k = beltScale();
@@ -799,9 +1135,11 @@ function renderBelt() {
         width - (data?.belt?.arrows?.right?.width ?? 27) * k, 1,
         beltLimit() !== beltFirst);
 
-  for (let slot = 0; slot < geometry.cells; slot += 1) {
+  for (let slot = 0; slot < beltCells(); slot += 1) {
     const index = beltFirst + slot;
-    const name = bag[index] ?? null;
+    // Помеченная гнездом вещь читается как пустая ячейка (VA 0x420890).
+    const held = bag[index] ?? null;
+    const name = mixingHides(held) ? null : held;
     nodes.push(cell({
       x: Math.round(origin + slot * geometry.pitch * k),
       y: Math.round((height - size) / 2),
@@ -812,7 +1150,10 @@ function renderBelt() {
         if (carrying()) carryPlaceBag(index);
         else if (name) carryTake("bag", index);
       },
-      onDrop: () => dropFromBag(index, panelUnit()),
+      // Правая кнопка ПРИМЕНЯЕТ, а не бросает (VA 0x422AFC): надеть, выпить
+      // или — если вещь в руке — отменить перенос. Бросок на землю в движке
+      // делается щелчком по миру, а не по ячейке.
+      onDrop: () => carryUse(index, panelUnit()),
     }));
   }
   bagNode.replaceChildren(...nodes);
@@ -864,7 +1205,11 @@ function renderWindow() {
         : rect.wearable
         ? () => { if (carrying()) carryPlaceSlot(rect.slot); else carryTake(rect.slot, -1); }
         : null,
-      onDrop: rect.wearable ? () => dropFromSlot(rect.slot, panelUnit()) : null,
+      // Правая кнопка по НАДЕТОМУ в оригинале не делает ничего: её разбор
+      // (VA 0x422AFC) знает только мир и список мешка, гнёзд снаряжения в
+      // его switch нет. Единственное, что остаётся, — отмена переноса, если
+      // вещь в руке; ею и занимается carryUse с несуществующей ячейкой.
+      onDrop: rect.wearable ? () => carryUse(-1, panelUnit()) : null,
     }));
   }
   // Мешка в этом окне нет и в игре: окно снаряжения на 638 пикселей ровно
@@ -882,22 +1227,77 @@ function renderTrade() {
   tradeNode.hidden = false;
   const view = viewNode.getBoundingClientRect();
   const game = gameNode.getBoundingClientRect();
-  const k = Math.min(scale, view.width / (screen().view_width ?? 884));
+  // ЭКРАН ОБМЕНА ВПИСЫВАЕТСЯ В ПРОЁМ ЦЕЛИКОМ И ВСТАЁТ ПО ЦЕНТРУ.
+  //
+  // В игре он занимает всё окно мира — там оно всегда 884x709. У нас окно
+  // любой формы, и прежний расчёт брал масштаб самой игры: на телефоне это
+  // давало коробку вчетверо меньше проёма, прижатую в угол, — отсюда и
+  // ощущение, что всё разбежалось. Берём наибольший масштаб, при котором
+  // раскладка целиком помещается по обеим сторонам, и центруем остаток.
+  const ширина = screen().view_width ?? 884;
+  const высота = screen().view_height ?? 709;
+  const k = Math.min(view.width / ширина, view.height / высота);
   const originX = screen().panel_width ?? 140;
-  tradeNode.style.left = `${view.left - game.left}px`;
-  tradeNode.style.top = "0px";
-  tradeNode.style.width = `${Math.round((screen().view_width ?? 884) * k)}px`;
-  tradeNode.style.height = `${Math.round((screen().view_height ?? 709) * k)}px`;
+  tradeNode.style.left =
+    `${Math.round(view.left - game.left + (view.width - ширина * k) / 2)}px`;
+  tradeNode.style.top = `${Math.round((view.height - высота * k) / 2)}px`;
+  tradeNode.style.width = `${Math.round(ширина * k)}px`;
+  tradeNode.style.height = `${Math.round(высота * k)}px`;
+  // РАЗМЕР БУКВ ТОЖЕ ОТ МАСШТАБА. Коробки кнопок и чисел считаются с `k`, а
+  // шрифт стоял намертво в пятнадцать точек: на маленьком окне надписи
+  // вылезали из кнопок, на большом тонули в них. Отдаём множитель в стиль
+  // одним свойством, а сами числа остаются в таблице стилей.
+  tradeNode.style.setProperty("--trade-k", String(k));
   const nodes = [];
   const cellSize = data.cell;
+  // СТРЕЛКИ ЛИСТАНИЯ. Ряд вмещает девять ячеек из сорока двух (`visible` и
+  // `slots` раскладки), и без них до остального мешка не добраться вовсе —
+  // на это и жаловались. Свои коды у них есть (`codes.left` 0x1D и
+  // `codes.right` 0x1E), а прямоугольников в exe нет: они и не нужны, потому
+  // что ПРЯМОУГОЛЬНИК РЯДА ИХ УЖЕ СОДЕРЖИТ. Арифметика сходится до байта:
+  //
+  //     288 + 28 + 8*69 + 70 + 27 = 965 = правый край ряда
+  //     ^     ^     ^      ^       ^
+  //     x   левая  восемь  ширина  правая
+  //         стрелка шагов  ячейки  стрелка
+  //
+  // Поэтому ячейки начинаются не от края ряда, а после левой стрелки —
+  // раньше они стояли от самого края, и справа оставалась пустая полоса.
+  //
+  // Спрайты те же, что у пояса (18/19 и 20/21 — `screen_layout.arrows`),
+  // оттуда их и берём: второго набора в паке нет и заводить его незачем.
+  const стрелки = info()?.belt?.arrows ?? null;
+  const шагов = (column) => Math.max(0, (trade.columns[column]?.length ?? 0) - data.visible);
+  const пролистать = (column, step) => {
+    const было = trade.scroll[column] ?? 0;
+    const стало = Math.min(Math.max(0, было + step), шагов(column));
+    if (стало === было) return;
+    trade.scroll[column] = стало;
+    refresh();
+  };
   for (const column of data.order) {
     const row = data.columns[column];
     const first = trade.scroll[column] ?? 0;
+    const слева = стрелки?.left?.width ?? 28;
+    const справа = стрелки?.right?.width ?? 27;
+    const стрелка = (art, x, step, живая, подпись) => {
+      if (!art) return;
+      nodes.push(cell({
+        x: Math.round((x - originX) * k),
+        y: Math.round((row.y + (row.height - art.height) / 2) * k),
+        width: Math.round(art.width * k), height: Math.round(art.height * k),
+        art, className: живая ? "" : "disabled", title: подпись,
+        onClick: живая ? () => пролистать(column, step) : null,
+      }));
+    };
+    стрелка(стрелки?.left, row.x, -1, first > 0, "левее");
+    стрелка(стрелки?.right, row.x + row.width - справа, 1,
+            first < шагов(column), "правее");
     for (let step = 0; step < data.visible; step += 1) {
       const index = first + step;
       const name = trade.columns[column][index] ?? null;
       nodes.push(cell({
-        x: Math.round((row.x - originX + step * cellSize.pitch) * k),
+        x: Math.round((row.x + слева - originX + step * cellSize.pitch) * k),
         y: Math.round(row.y * k),
         width: Math.round(cellSize.width * k),
         height: Math.round(cellSize.height * k),
@@ -1145,19 +1545,19 @@ export function toggleWindow(open = windowNode.hidden) {
 export function toggleJournal(open = journalNode.hidden) {
   journalNode.hidden = !open;
   if (open) {
-    const записи = dialogJournal();
+    const entries = dialogJournal();
     journalListNode.textContent = "";
-    if (!записи.length) {
+    if (!entries.length) {
       // Пустой журнал в начале игры — это КАНОН: в QUESTS.RES бит 0x80 не
       // взведён ни у одного из трёхсот квестов.
-      const пусто = document.createElement("p");
-      пусто.textContent = "Записей пока нет";
-      journalListNode.append(пусто);
+      const blank = document.createElement("p");
+      blank.textContent = "Записей пока нет";
+      journalListNode.append(blank);
     }
-    for (const запись of записи) {
-      const строка = document.createElement("p");
-      строка.textContent = запись.text;
-      journalListNode.append(строка);
+    for (const journalEntry of entries) {
+      const paragraph = document.createElement("p");
+      paragraph.textContent = journalEntry.text;
+      journalListNode.append(paragraph);
     }
   }
   refresh();
@@ -1192,6 +1592,9 @@ export function refresh() {
   renderTrade();
   renderWorldMap();
   renderTalk();
+  // Вещь в руке видна поверх всего экрана, а не только над миром: перенос в
+  // движке — режим курсора, панели ему не помеха.
+  carryCursorSync();
   if (weightNode) weightNode.textContent = `вес ${inventoryWeight().toFixed(2)} кг`;
 }
 

@@ -4,9 +4,11 @@ import { world } from "./world.js";
 import { context, drawBrightImage, layeredFrame } from "./viewport.js";
 import { drawHeroAtDepth, hero, heroBodyFrame, roster } from "./hero.js";
 import { renderUnit, units } from "./units.js";
-import { actorFrame } from "./actor.js";
+import { actorFrame, UNIT_SORT_BIAS } from "./actor.js";
 import { renderInsideShadows } from "./shadows.js";
 import { buildingFrames } from "./buildings.js";
+import { drawPile, lootInside } from "./loot.js";
+import { furnitureOf } from "./furniture.js";
 
 export function drawFrame(object, frame, bright = false) {
   const frameX = object.position.x + frame.offset_x;
@@ -52,6 +54,15 @@ export function drawObject(object) {
   // ПОЛ В ДОМЕ НИКОГДА НЕ ТЕМНЕЕТ: он всегда дневной яркости.
   const brightMain = layeredFrame && Boolean(object.lighting?.main_static_palette);
   drawFrame(object, frames.main, brightMain);
+  // ОБСТАНОВКА — сразу после пола. В движке проход нутра постройки рисует
+  // гнёзда зоны первыми, до куч на полу и до людей (VA 0x424514:113-131), а
+  // сам проход стоит между главным кадром и стенами (VA 0x425AA8:30).
+  // Точка у гнезда своя, абсолютная, поэтому смещения кадра нулевые.
+  for (const nest of furnitureOf(object.record_slot)) {
+    if (!nest.frame) continue;
+    drawFrame({ position: nest.position },
+              { ...nest.frame, offset_x: 0, offset_y: 0 });
+  }
   // ВНУТРИ ПОСТРОЙКИ рисуются ПОСЛЕ пола — иначе он их накрывает. Правило
   // общее для всех юнитов, а не только для игрока: в движке проход
   // содержимого постройки (VA 0x425AA8) перебирает всех, у кого клетка
@@ -62,17 +73,34 @@ export function drawObject(object) {
   // яркость (VA 0x424514 → 0x43F260, 0x440788), а уже потом рисует людей.
   // В общем проходе сцены эти тени рисовать бесполезно — он идёт раньше
   // построек, и пол их накрывает.
+  // Кучи на полу этой постройки — сразу после пола, до стен и крыши.
+  for (const pile of lootInside(object.record_slot)) drawPile(pile);
   const inside = [];
-  if (heroInside) inside.push({ actor: hero, frame: heroBodyFrame() });
+  if (heroInside) inside.push({ actor: hero, frame: heroBodyFrame(), player: true });
   for (const unit of units) {
     if (unit.insideSlot === object.record_slot) {
       inside.push({ actor: unit, frame: actorFrame(hero.data, unit) });
     }
   }
-  renderInsideShadows(inside);
-  if (heroInside) drawHeroAtDepth();
-  for (const unit of units) {
-    if (unit.insideSlot === object.record_slot) renderUnit(unit);
+  // Тень кладём туда же, куда лёг ПОЛ: светлый кадр уходит мимо слоя, прямо
+  // на кадр, и тень обязана идти за ним — иначе её поднимет заливка фильтра
+  // суток и вместо тени выйдет светлое серое пятно (см. shadows.js).
+  renderInsideShadows(inside, brightMain);
+  // ВНУТРИ ПОСТРОЙКИ ТОЖЕ ПО ГЛУБИНЕ. Проход содержимого не рисует юнитов
+  // подряд: он раскладывает их по ТАБЛИЦЕ СТРОК (0x84F53C, 2000 записей по
+  // 16 байт, переполнение в 0x85723C) и ключом берёт НИЗ СПРАЙТА — экранный
+  // Y плюс высота холста (VA 0x424514:43, `local_14 + юнит[+0x54]`), а потом
+  // идёт по строкам сверху вниз. Это ровно тот же ключ, что у общего прохода
+  // сцены, — у человека низ холста приходится на ноги плюс шесть.
+  //
+  // Здесь герой рисовался ПЕРВЫМ, а жители за ним в порядке списка, поэтому
+  // любой стоящий в доме житель закрывал героя собой — даже тот, что стоит
+  // дальше по изометрии.
+  const depth = (entry) => Math.round(entry.actor.y) + UNIT_SORT_BIAS;
+  inside.sort((one, two) => depth(one) - depth(two));
+  for (const entry of inside) {
+    if (entry.player) drawHeroAtDepth();
+    else renderUnit(entry.actor);
   }
   // Стены и крыша — обычный блиттер по палитре текущего времени суток.
   if (frames.walls) drawFrame(object, frames.walls);

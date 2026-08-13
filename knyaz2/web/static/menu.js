@@ -12,11 +12,31 @@
 //   СЛОТЫ СОХРАНЕНИЙ — канон по смыслу: движок пишет KONUNG2.SA<N>, здесь
 //   это отдельные ключи хранилища браузера.
 //
-//   СЛОЖНОСТЬ — канон: множитель опыта считается как (значение + 2), а
-//   стартовые деньги умножаются на 5 при двойке и на 10 при четвёрке.
+//   СЛОЖНОСТЬ — канон наполовину. В движке она множит только опыт и имеет
+//   три ступени (VA 0x413110, 0x438A00); здесь ступеней пять, у верхних
+//   вместо прибавки штраф, и она же множит стартовые деньги. Числа и весь
+//   разбор канона — в difficulty.js.
 //
 //   ГРОМКОСТЬ — наша: оригинал держит её в KONUNG2.CFG, и до разбора того
 //   файла числа здесь свои.
+
+//: Таблица ступеней общая с игрой: и подпись здесь, и множители там читают
+//: один и тот же файл, чтобы обещанное меню совпадало с игрой.
+import { DIFFICULTY, DIFFICULTY_DEFAULT, difficultyHint } from './difficulty.js';
+
+// МЕНЮ ЖИВЁТ В ДВУХ МЕСТАХ: своей страницей и накладкой поверх игры. Разница
+// только в трёх пунктах, и узнаётся она по разметке — на странице игры есть
+// `#game`. Игровых модулей отсюда не видно и видеть не нужно: наружу мы
+// говорим событиями, их ловит gamemenu.js.
+const inGame = Boolean(document.getElementById('game'));
+//: Ответ игры возвращается в `detail`: рассылка события синхронная, значит
+//: сразу после неё поле уже заполнено. Нужно это «Сохранить»: без ответа
+//: меню бодро рапортовало об успехе даже когда запись не удалась.
+const tell = (name) => {
+  const ответ = {};
+  document.dispatchEvent(new CustomEvent(`menu:${name}`, { detail: ответ }));
+  return ответ;
+};
 
 const menu = document.getElementById('menu');
 const items = [...menu.querySelectorAll('.menu__item')];
@@ -44,7 +64,11 @@ const slotKey = (index) => (index === 0 ? ACTIVE_SAVE : `${ACTIVE_SAVE}.s${index
 const NEW_GAME = 'knyaz2.newgame';
 const SETTINGS = 'knyaz2.settings';
 
-const DEFAULT_SETTINGS = { difficulty: 0, music: 55, sound: 80 };
+//: Все три удобства подняты по умолчанию: игра сначала должна быть удобной,
+//: а канон — по желанию. Сутки тоже идут, как в оригинале.
+const DEFAULT_SETTINGS = { difficulty: DIFFICULTY_DEFAULT, music: 55, sound: 80,
+                           follow: true, run: true, fullscreen: true,
+                           daynight: true };
 
 function readJson(key, fallback = null) {
   try {
@@ -90,6 +114,15 @@ function showScreen(name) {
 
 for (const node of document.querySelectorAll('[data-back]')) {
   node.addEventListener('click', () => { playClick(); showScreen(null); });
+}
+
+//: Обычные кнопки на экранах — не пункты меню: у тех своя разметка спрайтами,
+//: свой обход стрелками и свой список `items`. Их зовём напрямую по действию.
+for (const node of document.querySelectorAll('.screen [data-action]')) {
+  node.addEventListener('click', () => {
+    playClick();
+    ACTIONS[node.dataset.action]?.();
+  });
 }
 
 // ---- сохранения -----------------------------------------------------------
@@ -154,7 +187,14 @@ function renderSlots(mode) {
       const text = localStorage.getItem(slotKey(index));
       if (!text) return;
       // Загрузка: кладём выбранное сохранение туда, откуда его читает игра.
-      try { localStorage.setItem(ACTIVE_SAVE, text); } catch { /* переполнено */ }
+      // МОЛЧА НЕ ПРОХОДИМ МИМО: здесь стояло `catch { /* переполнено */ }`, и
+      // при неудаче игра просто перезагружалась в старую партию, а игрок думал,
+      // что загрузил выбранную. Хуже того — прежняя запись оставалась поверх.
+      try { localStorage.setItem(ACTIVE_SAVE, text); }
+      catch {
+        say('Не вышло загрузить: хранилище переполнено или данные сайта запрещены.');
+        return;
+      }
       localStorage.removeItem(NEW_GAME);
       location.href = '/index.html';
     });
@@ -167,20 +207,63 @@ function renderSlots(mode) {
 const difficultyNode = document.getElementById('opt-difficulty');
 const musicNode = document.getElementById('opt-music');
 const soundNode = document.getElementById('opt-sound');
+const followNode = document.getElementById('opt-follow');
+const runNode = document.getElementById('opt-run');
+const fullscreenNode = document.getElementById('opt-fullscreen');
+const daynightNode = document.getElementById('opt-daynight');
+
+//: Список ступеней строится один раз из общей таблицы.
+for (const [at, step] of DIFFICULTY.entries()) {
+  const option = document.createElement('option');
+  option.value = String(at);
+  option.textContent = step.name;
+  difficultyNode.append(option);
+}
 
 function paintSettings() {
   difficultyNode.value = String(settings.difficulty);
   musicNode.value = String(settings.music);
   soundNode.value = String(settings.sound);
-  // Канонические следствия сложности показываем прямо в подписи, чтобы
-  // выбор не был вслепую: опыт множится на (значение + 2), а стартовые
-  // деньги — на 5 при двойке и на 10 при четвёрке.
-  const money = { 2: ' · денег на старте ×5', 4: ' · денег на старте ×10' };
+  // Следствия ступени показываем прямо в подписи, чтобы выбор не был
+  // вслепую. Числа берутся из difficulty.js — там же, откуда их читает игра.
   document.getElementById('opt-difficulty-hint').textContent =
-    `опыт ×${settings.difficulty + 2}${money[settings.difficulty] ?? ''}`;
+    difficultyHint(settings.difficulty);
   document.getElementById('opt-music-hint').textContent = `${settings.music}%`;
   document.getElementById('opt-sound-hint').textContent = `${settings.sound}%`;
+  followNode.checked = Boolean(settings.follow);
+  document.getElementById('opt-follow-hint').textContent = settings.follow
+    ? 'держит выбранного; портрет переносит взгляд'
+    : 'как в оригинале: курсор у края окна';
+  const runs = settings.run !== false;
+  runNode.checked = runs;
+  document.getElementById('opt-run-hint').textContent = runs
+    ? 'приказ идти — всегда бегом'
+    : 'как в оригинале: шаг, двойной щелчок — бег';
+  // Полный экран просится уже в игре, на первое касание. На iPhone браузер
+  // откажет — там во весь экран уходят только с ярлыка на домашнем экране.
+  const full = settings.fullscreen !== false;
+  fullscreenNode.checked = full;
+  document.getElementById('opt-fullscreen-hint').textContent = full
+    ? 'в игре: во весь экран и набок, если браузер даст'
+    : 'играть в окне браузера';
+  // Смена дня и ночи — галочка самого движка (KONUNG2.CFG, VA 0x4295D8):
+  // снятая держит вечный день.
+  const сутки = settings.daynight !== false;
+  daynightNode.checked = сутки;
+  document.getElementById('opt-daynight-hint').textContent = сутки
+    ? 'как в оригинале: утро, день, вечер, ночь'
+    : 'всегда позднее утро';
   music.volume = settings.music / 100;
+}
+
+//: Галочка хранится булевым, а не числом: игра читает её как есть.
+function bindToggle(node, key, after) {
+  node.addEventListener('change', () => {
+    settings[key] = node.checked;
+    writeJson(SETTINGS, settings);
+    paintSettings();
+    after?.();
+  });
 }
 
 function bindSetting(node, key, after) {
@@ -195,7 +278,10 @@ function bindSetting(node, key, after) {
 // ---- пункты ---------------------------------------------------------------
 
 const ACTIONS = {
+  // В ИГРЕ «Продолжить» просто закрывает накладку: страницу перезагружать
+  // незачем, мир никуда не девался. Со стартовой страницы — как было.
   continue: () => {
+    if (inGame) { tell('continue'); return; }
     localStorage.removeItem(NEW_GAME);
     location.href = '/index.html';
   },
@@ -208,10 +294,65 @@ const ACTIONS = {
     writeJson(NEW_GAME, { world: 2, create: true });
     location.href = '/index.html';
   },
+  // «Загрузить» и «Новая игра» требуют другого мира целиком — им
+  // перезагрузка нужна по существу, и они уходят на страницу игры.
   load: () => { renderSlots('load'); showScreen('slots'); },
-  save: () => { renderSlots('save'); showScreen('slots'); },
+  //: В игре сперва просим её записать текущее состояние, иначе раскладывать
+  //: по местам было бы нечего или досталось бы вчерашнее.
+  save: () => {
+    //: Ответ игры проверяем: раньше «Сохранить» молча открывало список мест
+    //: даже когда запись не удалась, и игрок уходил уверенный, что сохранился.
+    if (inGame && tell('save').ok === false) {
+      say('Записать не вышло — хранилище переполнено или данные сайта запрещены.');
+      return;
+    }
+    renderSlots('save');
+    showScreen('slots');
+  },
+  // ВЫГРУЗКА И ЗАГРУЗКА ФАЙЛОМ.
+  //
+  // Хранилище браузера чужое и ненадёжное: его сносит «очистить данные сайта»,
+  // его не бывает в приватном окне, и оно СВОЁ у каждого адреса — партия с
+  // локального сервера на боевом не видна. Файл на диске от этого не зависит и
+  // заодно переносит игру между машинами. Проверку самого сохранения не
+  // дублируем: её владелец — save.js, он и откажется от негодного при загрузке.
+  export: () => {
+    const text = localStorage.getItem(ACTIVE_SAVE);
+    if (!text) { say('Сохранять нечего — игра ещё не записана.'); return; }
+    const метка = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    const ссылка = document.createElement('a');
+    ссылка.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+    ссылка.download = `knyaz2-${метка}.json`;
+    ссылка.click();
+    URL.revokeObjectURL(ссылка.href);
+    say(`Выгружено в файл ${ссылка.download}.`);
+  },
+  import: () => {
+    const выбор = document.createElement('input');
+    выбор.type = 'file';
+    выбор.accept = '.json,application/json';
+    выбор.addEventListener('change', async () => {
+      const файл = выбор.files?.[0];
+      if (!файл) return;
+      const text = await файл.text();
+      try { JSON.parse(text); }
+      catch { say('Это не файл сохранения: не разбирается.'); return; }
+      try {
+        const прежнее = localStorage.getItem(ACTIVE_SAVE);
+        if (прежнее) localStorage.setItem(`${ACTIVE_SAVE}.prev`, прежнее);
+        localStorage.setItem(ACTIVE_SAVE, text);
+      } catch {
+        say('Не вышло записать: хранилище переполнено или данные сайта запрещены.');
+        return;
+      }
+      localStorage.removeItem(NEW_GAME);
+      location.href = '/index.html';
+    });
+    выбор.click();
+  },
   options: () => { paintSettings(); showScreen('options'); },
   exit: () => {
+    if (inGame) { tell('exit'); return; }
     window.close();                       // сработает, только если вкладку открыл скрипт
     say('Закройте вкладку, чтобы выйти.');
   },
@@ -231,7 +372,8 @@ function usable(item) {
   // «Сохранить» работает, когда есть текущая игра: в игру выходят по Esc,
   // и она пишет своё состояние ПЕРЕД уходом в меню — отсюда и раскладываем
   // его по местам, как движок пишет KONUNG2.SA<N>.
-  if (action === 'save') return Boolean(readJson(ACTIVE_SAVE));
+  //: В идущей игре сохранять можно всегда: состояние запишет она сама.
+  if (action === 'save') return inGame || Boolean(readJson(ACTIVE_SAVE));
   if (action === 'continue') return Boolean(slotInfo(0));
   if (action === 'load') return anySave();
   return Boolean(ACTIONS[action]);
@@ -289,8 +431,18 @@ refreshItems();
 select(items.findIndex(enabled), { focus: false });
 
 document.addEventListener('keydown', (event) => {
+  // В ИГРЕ КЛАВИШИ НАШИ, ТОЛЬКО ПОКА НАКЛАДКА ОТКРЫТА. Модуль остаётся в
+  // документе и после закрытия, и без этой проверки он ловил бы стрелки и
+  // Esc посреди игры.
+  if (inGame && document.getElementById('game-menu')?.hidden !== false) return;
   if (openScreen) {
-    if (event.key === 'Escape') { showScreen(null); event.preventDefault(); }
+    if (event.key === 'Escape') {
+      showScreen(null);
+      event.preventDefault();
+      //: Дальше по цепочке Esc не пускаем: у игры он свой, и накладка
+      //: закрылась бы вместе с этим экраном.
+      event.stopPropagation();
+    }
     return;
   }
   // ESC ИЗ ГЛАВНОГО МЕНЮ ВОЗВРАЩАЕТ В ИГРУ. Так делает движок: в состоянии
@@ -302,6 +454,8 @@ document.addEventListener('keydown', (event) => {
   // ESC просто говорит об этом, а не уводит в пустоту.
   if (event.key === 'Escape') {
     event.preventDefault();
+    //: В игре Esc просто закрывает накладку — уходить со страницы незачем.
+    if (inGame) { event.stopPropagation(); tell('continue'); return; }
     if (readJson(ACTIVE_SAVE)) {
       playClick();
       localStorage.removeItem(NEW_GAME);
@@ -343,11 +497,19 @@ sound.addEventListener('click', () => setMusic(sound.getAttribute('aria-pressed'
 bindSetting(difficultyNode, 'difficulty');
 bindSetting(musicNode, 'music');
 bindSetting(soundNode, 'sound', () => playClick());
+bindToggle(followNode, 'follow', () => playClick());
+bindToggle(runNode, 'run', () => playClick());
+bindToggle(fullscreenNode, 'fullscreen', () => playClick());
+bindToggle(daynightNode, 'daynight', () => playClick());
 paintSettings();
 
+// В ИГРЕ СВОЙ ТРЕК МЕНЮ НЕ ЗАВОДИМ. Накладка открывается поверх идущей игры,
+// и подменять её музыку на менюшную — значит потом ещё и гасить эту менюшную
+// при закрытии. Кнопкой «♪» включить по-прежнему можно.
+if (inGame) sound.setAttribute('aria-pressed', 'false');
 // Браузер не пускает звук до первого действия пользователя, поэтому пробуем
 // сразу, а при отказе ждём любого касания клавиши или мыши.
-music.play().then(() => sound.setAttribute('aria-pressed', 'true')).catch(() => {
+else music.play().then(() => sound.setAttribute('aria-pressed', 'true')).catch(() => {
   const wake = () => { setMusic(true); document.removeEventListener('pointerdown', wake);
                        document.removeEventListener('keydown', wake); };
   document.addEventListener('pointerdown', wake, { once: false });

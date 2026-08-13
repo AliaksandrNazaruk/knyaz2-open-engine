@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <!-- viewport-fit=cover: под вырезом и скруглениями телефона кадр идёт
+       до самого края, а отступы безопасной зоны берёт на себя CSS. -->
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Knyaz2 — опыт с соприсутствием</title>
+  <link rel="icon" href="data:,">
+  <!-- Ярлык на домашнем экране открывает игру во весь экран и набок: на
+       iPhone это ЕДИНСТВЕННЫЙ доступный способ, там ни requestFullscreen,
+       ни блокировки поворота нет (см. fullscreen.js). -->
+  <!-- Расширение .json намеренно: nginx не знает типа .webmanifest и отдал бы
+       файл как поток байт, а браузер вправе такой манифест отвергнуть. -->
+  <link rel="manifest" href="/manifest.json">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <!-- Экран игры: рамка интерфейса из INTERF.RES, окно мира в её проёме.
+       Раскладка та же, что в оригинале: панель слева 140 пикселей, окно
+       мира 884, пояс полосой под ним. -->
+  <div id="game">
+    <div id="ui-panel">
+      <div id="ui-panel-art"></div>
+      <div id="ui-panel-cells"></div>
+    </div>
+    <div id="ui-view">
+      <canvas id="world" aria-label="Карта игрового мира"></canvas>
+      <!-- пояс: ряд ячеек мешка со стрелками, стоит на нижней кромке окна
+           мира (строки 639..708 экрана игры) поверх самого мира -->
+      <div id="ui-belt"><div id="bag-slots"></div></div>
+    </div>
+    <!-- карта мира: спрайт 4 во весь проём окна -->
+    <div id="ui-map" hidden>
+      <span class="ui-map-title"></span>
+    </div>
+    <!-- разговор: реплика жителя и варианты ответа -->
+    <div id="ui-talk" hidden>
+      <div class="ui-talk-who"></div>
+      <div class="ui-talk-text"></div>
+      <div class="ui-talk-options"></div>
+    </div>
+    <!-- торговый экран: четыре ряда ячеек, две кнопки и шесть чисел -->
+    <div id="ui-trade" hidden></div>
+    <div id="ui-window" hidden>
+      <div id="equip-slots"></div>
+      <button id="ui-window-close" type="button" title="закрыть">×</button>
+    </div>
+    <!-- журнал заданий: записи состояния квестов с взведённым битом 0x80 -->
+    <div id="ui-journal" hidden>
+      <div id="ui-journal-list"></div>
+      <button id="ui-journal-close" type="button" title="закрыть">×</button>
+    </div>
+  </div>
+
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">KNYAZ2 · OPEN ENGINE</p>
+      <h1 id="map-title">Загрузка мира…</h1>
+    </div>
+    <div class="status-block">
+      <span id="status">Читаю content pack</span>
+      <span id="zoom">100%</span>
+      <span id="inventory-weight"></span>
+    </div>
+  </header>
+
+  <aside class="panel">
+    <h2>Browser-0</h2>
+    <dl id="stats">
+      <div><dt>Земля</dt><dd>—</dd></div>
+      <div><dt>Объекты</dt><dd>—</dd></div>
+      <div><dt>Коллизии</dt><dd>—</dd></div>
+    </dl>
+    <p>Тяните карту мышью. Колесо меняет масштаб относительно курсора.</p>
+    <p id="cursor">Мировая точка: —</p>
+    <fieldset class="debug-controls">
+      <legend>Диагностика рендера</legend>
+      <label><input id="combat-stance" type="checkbox"> боевая стойка</label>
+      <label><input id="show-roofs" type="checkbox" checked> крыши (диагностика)</label>
+      <label><input id="debug-ground" type="checkbox"> клетки земли</label>
+      <label><input id="debug-objects" type="checkbox"> порядок объектов</label>
+    </fieldset>
+    <fieldset class="debug-controls">
+      <legend>Звук</legend>
+      <label>трек
+        <select id="audio-track"><option value="">— тишина —</option></select>
+      </label>
+      <button id="audio-toggle" type="button">▶ играть</button>
+    </fieldset>
+    <fieldset class="debug-controls">
+      <legend>Время суток</legend>
+      <label><input id="clock-run" type="checkbox" checked> часы идут</label>
+      <label><input id="clock-moon" type="checkbox" checked> лунная ночь</label>
+      <label><input id="dynamic-shadows" type="checkbox" checked> живые тени (расширение)</label>
+      <label><input id="ambient-fx" type="checkbox" checked> атмосфера: листва и птицы</label>
+      <input id="clock-time" type="range" min="0" max="21599" value="0" step="1">
+      <span id="clock-label">день</span>
+    </fieldset>
+    <pre id="debug-info">Наведите курсор на карту</pre>
+  </aside>
+
+  <!-- Экран загрузки: одна картинка на все переходы, полоса хода внизу.
+       Показывается ДО того, как пойдут заявки на файлы локации (loadscreen.js). -->
+  <!-- БЕЗ `hidden`: экран должен стоять с первого кадра, ещё до разбора
+       модулей, и уйти только когда сцена готова. -->
+  <div id="load-screen" role="status">
+    <div id="load-progress" class="waiting"><i></i></div>
+    <span id="load-label">Загрузка…</span>
+  </div>
+
+  <!-- ПОВЕРНИТЕ ТЕЛЕФОН. Показывается только на сенсорном экране в книжной
+       ориентации и целиком на CSS: там, где браузер не даёт запереть поворот
+       (Safari на iPhone не умеет этого вовсе), просить приходится словами.
+       Раскладка игры родом из 1024x768, и в книжной она нечитаема. -->
+  <div id="turn-phone" role="status">
+    <p>Поверните телефон<span>игра рассчитана на широкий экран</span></p>
+  </div>
+
+
+  <!-- МЕНЮ ПОВЕРХ ИГРЫ. Пустое вместилище: настоящее меню втягивается сюда
+       из menu.html при первом Esc (gamemenu.js), поэтому разметка одна на два
+       места и разъехаться ей негде. Уводит страницу только «Выход». -->
+  <div id="game-menu" hidden></div>
+
+  <div id="error" role="alert" hidden></div>
+  <script type="module" src="/app.js"></script>
+  <!-- ОПЫТ С СОПРИСУТСТВИЕМ, И ТОЛЬКО ЗДЕСЬ. Обычная игра на /index.html
+       этот модуль не грузит вовсе и работает ровно как прежде. -->
+  <script type="module" src="/mp-boot.js"></script>
+</body>
+</html>

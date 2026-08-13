@@ -1,21 +1,22 @@
 // Атмосфера — наше процедурное расширение поверх движка.
 import { ambientNode } from "./dom.js";
 import { world } from "./world.js";
-import { context, view, visibleWorld } from "./viewport.js";
+import { context, visibleWorld, withMainContext } from "./viewport.js";
 
-// Атмосфера — процедурные частицы без новых ресурсов: летящая листва и
-// дым из труб на общем ветру, ползущие тени облаков, редкие стайки птиц.
-// Всё рисуется после объектов и до фильтра дня/ночи, поэтому ночью эффекты
-// темнеют вместе со сценой.
+// Атмосфера — процедурные частицы без новых ресурсов: летящая листва на
+// ветру и редкие стайки птиц. Рисуется после объектов и до фильтра
+// дня/ночи, поэтому ночью листва темнеет вместе со сценой.
+//
+// Дым из труб и тени облаков отсюда убраны 12.08.2026 по просьбе тестеров.
+// В оригинале нет ни того, ни другого: труб движок не знает вовсе, а
+// ползущие пятна облаков читались как блики и спорили с настоящим светом
+// (light.js) и настоящими тенями (shadows.js) — а те сняты с движка.
 export const ambient = {
   lastTick: 0,
   ticksPerSecond: 24,
   wind: { x: -0.6, y: 0.2, phase: 0 },
   leaves: [],
   nextLeafAt: 0,
-  smoke: [],
-  chimneys: [],                // {x, y, nextPuffAt}
-  clouds: [],
   birds: [],
   nextFlockAt: 8,
   time: 0,
@@ -23,24 +24,13 @@ export const ambient = {
 
 export const LEAF_COLORS = ["#b5651d", "#c77b28", "#8f4f16", "#a8621e", "#d18a2d"];
 
+// Смена карты: частицы живут в мировых координатах, и старые на новой карте
+// оказываются где попало — список чистится целиком.
 export function ambientInit() {
-  ambient.clouds = [];
-  for (let i = 0; i < 3; i += 1) {
-    ambient.clouds.push({
-      x: 600 + i * 1400 + Math.random() * 600,
-      y: 400 + Math.random() * 2200,
-      radius: 280 + Math.random() * 160,
-      vx: 9 + Math.random() * 6,
-      vy: 2 + Math.random() * 3,
-    });
-  }
-  ambient.chimneys = world.objects
-    .filter((object) => object.frames?.roof)
-    .map((object) => ({
-      x: object.bounds.draw_x + object.bounds.width * 0.52,
-      y: object.bounds.draw_y + object.bounds.height * 0.10,
-      nextPuffAt: Math.random() * 2,
-    }));
+  ambient.leaves = [];
+  ambient.birds = [];
+  ambient.nextLeafAt = ambient.time;
+  ambient.nextFlockAt = ambient.time + 8;
 }
 
 export function ambientTick(now) {
@@ -87,36 +77,6 @@ export function ambientTick(now) {
   }
   ambient.leaves = ambient.leaves.filter((leaf) => leaf.life < leaf.ttl);
 
-  // дым: клубы из труб видимых изб
-  for (const chimney of ambient.chimneys) {
-    if (chimney.x < visible.left || chimney.x > visible.right ||
-        chimney.y < visible.top || chimney.y > visible.bottom) continue;
-    if (t > chimney.nextPuffAt && ambient.smoke.length < 110) {
-      chimney.nextPuffAt = t + 0.7 + Math.random() * 0.9;
-      ambient.smoke.push({
-        x: chimney.x + (Math.random() - 0.5) * 3,
-        y: chimney.y,
-        life: 0,
-        ttl: 4.2 + Math.random() * 1.8,
-        seed: Math.random() * Math.PI * 2,
-      });
-    }
-  }
-  for (const puff of ambient.smoke) {
-    puff.life += dt;
-    puff.x += (ambient.wind.x * 26 + Math.sin(puff.seed + puff.life * 2) * 4) * dt;
-    puff.y -= (16 + 4 * Math.sin(puff.seed)) * dt;
-  }
-  ambient.smoke = ambient.smoke.filter((puff) => puff.life < puff.ttl);
-
-  // тени облаков ползут по миру
-  for (const cloud of ambient.clouds) {
-    cloud.x += cloud.vx * dt;
-    cloud.y += cloud.vy * dt;
-    if (cloud.x - cloud.radius > 4800) cloud.x = -cloud.radius;
-    if (cloud.y - cloud.radius > 3100) cloud.y = -cloud.radius;
-  }
-
   // птицы: редкий пролёт стайки
   if (t > ambient.nextFlockAt && ambient.birds.length === 0) {
     ambient.nextFlockAt = t + 26 + Math.random() * 28;
@@ -146,31 +106,6 @@ export function ambientTick(now) {
 export function renderAmbient(visible) {
   if (!ambientNode.checked) return;
 
-  // тени облаков — мягкие пятна на всей сцене
-  for (const cloud of ambient.clouds) {
-    if (cloud.x + cloud.radius < visible.left || cloud.x - cloud.radius > visible.right ||
-        cloud.y + cloud.radius < visible.top || cloud.y - cloud.radius > visible.bottom) continue;
-    const gradient = context.createRadialGradient(
-      cloud.x, cloud.y, cloud.radius * 0.15, cloud.x, cloud.y, cloud.radius);
-    gradient.addColorStop(0, "rgba(8, 10, 14, 0.13)");
-    gradient.addColorStop(0.7, "rgba(8, 10, 14, 0.08)");
-    gradient.addColorStop(1, "rgba(8, 10, 14, 0)");
-    context.fillStyle = gradient;
-    context.fillRect(cloud.x - cloud.radius, cloud.y - cloud.radius,
-      cloud.radius * 2, cloud.radius * 2);
-  }
-
-  // дым
-  for (const puff of ambient.smoke) {
-    const k = puff.life / puff.ttl;
-    const radius = 2.6 + k * 7.5;
-    const alpha = 0.27 * (1 - k * k);
-    context.fillStyle = `rgba(216, 216, 222, ${alpha.toFixed(3)})`;
-    context.beginPath();
-    context.arc(puff.x, puff.y, radius, 0, Math.PI * 2);
-    context.fill();
-  }
-
   // листва
   for (const leaf of ambient.leaves) {
     const fade = Math.min(1, leaf.life * 2, (leaf.ttl - leaf.life) * 1.5);
@@ -184,13 +119,27 @@ export function renderAmbient(visible) {
   }
   context.globalAlpha = 1;
 
-  // птицы и их тени
+  // Птицы и их тени.
+  //
+  // ТЕНЬ КЛАДЁТСЯ МИМО СЛОЯ СЦЕНЫ, и это не украшательство. Слой, в котором
+  // идут объекты, пуст на просвет, а фильтр суток заливает его целиком: над
+  // полупрозрачным пятном заливка сама становится изображением, и вместо
+  // тёмной тени выходит СВЕТЛОЕ пятно. Ровно та же ловушка описана у
+  // полупрозрачной копии героя (scene.js) и у тени в помещении
+  // (shadows.js::stampMask). Отсюда и «белые тени у птиц»: они появлялись
+  // только тогда, когда кадр собирается послойно, то есть при включённом
+  // фильтре и живом локальном свете. Настоящие тени движок кладёт на уже
+  // отфильтрованный кадр (проход 0x440788) — кладём туда же.
   for (const bird of ambient.birds) {
+    withMainContext(() => {
+      context.save();
+      context.fillStyle = "rgba(10, 10, 12, 0.14)";
+      context.beginPath();
+      context.ellipse(bird.x - 34, bird.y + 68, 11, 4.2, 0, 0, Math.PI * 2);
+      context.fill();
+      context.restore();
+    });
     const flap = Math.sin(bird.wing);
-    context.fillStyle = "rgba(10, 10, 12, 0.14)";
-    context.beginPath();
-    context.ellipse(bird.x - 34, bird.y + 68, 11, 4.2, 0, 0, Math.PI * 2);
-    context.fill();
     context.strokeStyle = "rgba(24, 22, 20, 0.85)";
     context.lineWidth = 2.6;
     context.beginPath();

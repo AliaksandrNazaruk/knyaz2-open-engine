@@ -15,16 +15,55 @@
 // Догорело до шестой ступени — место очищается, и деревня строит заново.
 import { world } from "./world.js";
 import { preload } from "./content.js";
+import { heroStampBuilding } from "./hero.js";
 
 function rules() { return world.map?.hero?.rules?.buildings ?? null; }
 
+// ВХОД НА КАРТУ: объект берёт ступень у СВОЕГО МЕСТА, а не у пака.
+//
+// Так делает и движок. `0x43DF48` (строки 222-231) идёт по местам поселения
+// (`+0x18`, шаг 8, число `slots_a + slots_b + 7`) и каждому месту с
+// неотрицательным видом переставляет картинку его объекта:
+//
+//     *(int *)(&DAT_00834768 + место[2] * 0x24) =
+//          (*(int *)(&DAT_0045D844 + вид * 0x10) >> 0x10) + ступень
+//
+// То есть ведущая запись — место, а объект лишь показывает его ступень.
+// Номер объекта лежит в самом месте (`+2`, у нас поле `object`), но нам
+// удобнее обратная связь: у объекта проставлен `village_slot`.
+//
+// Запись поселения при этом ПЕРЕЖИВАЕТ уход с карты (см. village.js), а
+// `village_state` из пака — лишь начальное значение первого визита.
 export function buildingsSetup() {
   const set = rules();
+  const places = world.map?.village?.buildings ?? [];
   for (const object of world.objects ?? []) {
     if (!object.states) continue;
+    const place = object.village_slot == null ? null
+      : places.find((row) => row.slot === object.village_slot);
+    if (place) {
+      object.state = place.state ?? 0;
+      object.timer = place.timer ?? 0;
+      continue;
+    }
     object.state = object.village_state ?? set?.states?.ready ?? 3;
     object.timer = 0;
   }
+}
+
+// Место поселения повторяет за своим объектом. В движке этого нет: там
+// ступень и счётчик живут ТОЛЬКО в записи места (+0x19 и +0x1E), а объект
+// карты лишь показывает их картинкой (0x4171CC). У нас две копии, и
+// расходиться им нельзя — по записи места отвечают условия разговора 4
+// «постройка есть» и 6 «можно заложить».
+function placeFollow(object) {
+  const place = (world.map?.village?.buildings ?? [])
+    .find((entry) => entry.slot === object.village_slot);
+  if (!place) return false;
+  place.state = object.state;
+  place.timer = object.timer;
+  place.built = Boolean(object.state || object.timer);
+  return true;
 }
 
 // Какой вид у постройки — из списка поселения по её месту.
@@ -79,6 +118,13 @@ export function buildingsTick(workers = 0) {
     const building = object.state < ready;
     if (building && workers < 1) continue;
     object.timer -= 1;
+    // СЧЁТЧИК ПИШЕМ В МЕСТО КАЖДЫЙ ТАКТ, а не только на смене ступени. В
+    // движке копии нет вовсе: счётчик живёт в самой записи места (+0x1E), и
+    // условия разговора читают её. У нас копии две, и пока счётчик до конца
+    // стройки оставался в объекте, место стояло с тем сроком, что положил
+    // обработчик 40, — староста продолжал предлагать заложить то, что уже
+    // строится.
+    placeFollow(object);
     if (object.timer > 0) continue;
     object.state += 1;
     changed = true;
@@ -86,6 +132,15 @@ export function buildingsTick(workers = 0) {
     else if (object.state > ready && object.state < ashes) {
       object.timer = kindOf(object)?.burn_step ?? 1;
     }
+    // СТУПЕНЬ ПИШЕМ И В ЗАПИСЬ МЕСТА. В движке она одна: байт +0x19 записи
+    // поселения, а объект карты рисуется по ней же. У нас копии две, и пока
+    // ступень жила только в объекте, деревня не замечала построенного —
+    // условие разговора 4 «есть ли постройка» отвечало нет и на готовой
+    // казарме. «Есть» движок решает по двум полям: ступень или срок
+    // ненулевые (VA 0x434AF0).
+    // Клетки постройки открываются и закрываются по её ступени (0x43F178).
+    heroStampBuilding(object, ready);
+    placeFollow(object);
     // дошли до «стоит» или до пепелища — счётчик не заводится
     preload(Object.values(object.states[String(object.state)] ?? {})
       .map((frame) => frame.asset));

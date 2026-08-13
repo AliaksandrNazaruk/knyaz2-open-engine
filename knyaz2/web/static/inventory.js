@@ -409,34 +409,10 @@ export function dropOnGround(name, actor = hero, state = null) {
   return true;
 }
 
-export function dropFromBag(index, actor = hero) {
-  const name = bagTake(index, actor);
-  if (!name) return false;
-  if (dropOnGround(name, actor)) return true;
-  bagInsert(name, index, actor);
-  return false;
-}
-
-export function dropFromSlot(slot, actor = hero) {
-  const name = actor.equipment[slot];
-  if (!name) return false;
-  actor.equipment[slot] = null;
-  enchantToBag(name, enchantFromSlot(slot, actor), actor);
-  poisonToBag(name, poisonFromSlot(slot, actor), actor);
-  if (slot === "ammo") {
-    countToBag(name, actor.ammoCount ?? ammoStack(actor), actor);
-    actor.ammoCount = null;
-  }
-  weaponModeRefresh(actor);
-  if (dropOnGround(name, actor)) return true;
-  actor.equipment[slot] = name;
-  enchantToSlot(slot, enchantFromBag(name, actor), actor);
-  poisonToSlot(slot, poisonFromBag(name, actor), actor);
-  if (slot === "ammo") actor.ammoCount = countFromBag(name, actor);
-  weaponModeRefresh(actor);
-  return false;
-}
-
+// Бросков «прямо из ячейки» здесь больше нет. В движке правая кнопка
+// (VA 0x422AFC) вещь ПРИМЕНЯЕТ, а на землю она попадает только через руку:
+// взяли и щёлкнули по миру. Обе функции обслуживали нашу выдуманную
+// правую кнопку и с её уходом остались без единого вызова.
 // Подобранное идёт в мешок, а не сразу в руки: надеть — отдельное действие,
 // как в игре.
 export function pickUp(name, actor = hero) {

@@ -45,6 +45,14 @@ def resolve_request(path: str, web_root: Path,
 
 class _Handler(BaseHTTPRequestHandler):
     server_version = "Knyaz2DevServer/0.1"
+    #: Держим соединение. По умолчанию `BaseHTTPRequestHandler` отвечает
+    #: HTTP/1.0 и закрывает сокет после каждого ответа, а вход на карту это
+    #: шестьсот с лишним файлов — локально мерилось время установки соединений,
+    #: а не наша очередь. Боевой сервер отдаёт по h2/h3, где соединение одно;
+    #: с keep-alive локальный замер хотя бы сопоставим с ним.
+    #: Требование HTTP/1.1 — точная длина тела в каждом ответе; она здесь есть
+    #: в обеих ветках `_serve`, а `send_error` проставляет её сам.
+    protocol_version = "HTTP/1.1"
 
     def __init__(self, *args, web_root: Path, content_root: Path, **kwargs) -> None:
         self.web_root = web_root

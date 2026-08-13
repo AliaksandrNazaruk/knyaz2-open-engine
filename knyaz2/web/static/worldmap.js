@@ -177,9 +177,55 @@ export function reveal(row, col) {
   }
 }
 
-//: Открыть локацию по сюжету (VA 0x436908): снять с её значка туман.
+// ЧТО ИГРОК ЗНАЕТ О МЕСТЕ — отдельная таблица, а не флаг клетки.
+//
+// `FUN_00436908(номер)` делает ДВЕ вещи, и это разные вещи:
+//
+//     *(u8 *)(0x8442A0 + номер) = 1;      // «место мне известно»
+//     ... найти клетку с этим номером, поднять бит 0x40, снять 0x80 ...
+//
+// Первое — таблица знания, второе — туман над значком. Подпись под курсором
+// смотрит именно ПЕРВОЕ (VA 0x420E88, код попадания 0x42):
+//
+//     if (*(char *)(место + 0x8442A0) == '\0')  «Неизвестное место»
+//     else                                       имя из 0x4616D4[место]
+//
+// Порт знал только про туман, а имя брал из номера клетки без всяких
+// проверок — и на глобальной карте писалось «Черный Бор» над местом, где
+// игрок ни разу не был и куда его ещё не пустил сюжет.
+export const UNKNOWN_PLACE = "Неизвестное место";
+
+//: Наш `0x8442A0`. Заполняется тем же, чем в движке, — открытием локации.
+const known = new Set();
+
+export function locationKnown(number) { return known.has(Number(number)); }
+
+// Имя места для показа. Единственное место, где решается «называть или нет»:
+// его зовут и подпись карты, и наведение на значок, и приход в клетку.
+export function locationName(number) {
+  const n = Number(number);
+  if (!n) return UNKNOWN_PLACE;
+  if (!known.has(n)) return UNKNOWN_PLACE;
+  return worldMap.rules?.names?.[n] || UNKNOWN_PLACE;
+}
+
+export function knownPack() { return [...known]; }
+
+export function knownUnpack(list) {
+  known.clear();
+  for (const n of list ?? []) known.add(Number(n));
+  return known;
+}
+
+//: Новая игра забывает всё: в движке таблица знания лежит в блоке состояния
+//: и перечитывается вместе с ним.
+export function knownReset() { known.clear(); }
+
+//: Открыть локацию по сюжету (VA 0x436908): пометить её известной и снять с
+//: её значка туман.
 export function openLocation(location) {
   const { cells, rules } = worldMap;
+  known.add(Number(location));
   if (!cells) return null;
   for (let row = 0; row < rules.rows; row += 1) {
     for (let col = 0; col < rules.cols; col += 1) {

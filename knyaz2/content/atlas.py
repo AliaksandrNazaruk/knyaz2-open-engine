@@ -38,7 +38,22 @@ class Sheet:
     def __init__(self, name: str, limit: int = SHEET_LIMIT) -> None:
         self.name = name
         self.limit = limit
-        self.image = None
+        #: Свой номер в списке листов. Раньше его искали `list.index` на каждый
+        #: уложенный кадр; при делении наборов по позам листов стало втрое
+        #: больше, и поиск из мелочи превратился в квадрат от числа кадров.
+        self.index = 0
+        # ХОЛСТ НЕ ЗАВОДИТСЯ ЗАРАНЕЕ.
+        #
+        # Здесь стоял `Image.new("RGBA", (4096, 4096))` на каждый лист — 64 МБ
+        # памяти независимо от того, занят лист целиком или на четверть, и
+        # держался он до самой записи. При ста с небольшим листах это уже было
+        # семь гигабайт; деление наборов по позам довело бы счёт до трёхсот
+        # двадцати листов, то есть до двадцати гигабайт, и сборка ушла в своп.
+        #
+        # Кадры теперь просто копятся с их местом, а холст заводится в `save`
+        # РОВНО ПОД ЗАНЯТОЕ. Расход становится равен содержимому листа, а не
+        # его пределу, и от числа листов больше не зависит.
+        self.placements: list[tuple[Any, int, int]] = []
         self.width = 0
         self.height = 0
         self._x = 0
@@ -60,8 +75,6 @@ class Sheet:
         картинкой PIL, поэтому перед укладкой их надо обратить в картинку —
         у них для этого есть ``to_image``.
         """
-        from PIL import Image
-
         if hasattr(sprite, "to_image"):
             sprite = sprite.to_image()
         width, height = sprite.width, sprite.height
@@ -74,9 +87,7 @@ class Sheet:
         self._row = max(self._row, height)
         self.width = max(self.width, x + width)
         self.height = max(self.height, y + height)
-        if self.image is None:
-            self.image = Image.new("RGBA", (self.limit, self.limit), (0, 0, 0, 0))
-        self.image.paste(sprite, (x, y))
+        self.placements.append((sprite, x, y))
         return x, y
 
     def save(self, root: Path, relative: Path) -> dict[str, Any]:
@@ -92,7 +103,11 @@ class Sheet:
 
         target = root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        cropped = self.image.crop((0, 0, self.width, self.height))
+        cropped = Image.new("RGBA", (self.width, self.height), (0, 0, 0, 0))
+        for sprite, x, y in self.placements:
+            cropped.paste(sprite, (x, y))
+        #: Кадры больше не нужны: лист записан и обратно уже не открывается.
+        self.placements = []
         indexed = _to_indexed(cropped)
         if indexed is not None:
             indexed.save(str(target), optimize=True, transparency=0)
@@ -116,6 +131,8 @@ class AtlasWriter:
         #: по листу на палитру — иначе цветов станет больше двухсот пятидесяти
         #: шести и лист придётся писать полноцветным
         self._byPalette: dict[Any, Sheet] = {}
+        #: уже записанные листы: номер -> описание
+        self._written: dict[int, dict[str, Any]] = {}
 
     def add(self, sprite, palette: Any = None) -> dict[str, Any]:
         """Положить кадр и вернуть, где он лежит.
@@ -128,21 +145,40 @@ class AtlasWriter:
             return {}
         current = self._byPalette.get(palette)
         if current is None or not current.fits(sprite.width, sprite.height):
+            #: Полный лист закрыт навсегда: ключ получает следующий, а к этому
+            #: уже никто не вернётся — значит его можно записать и отпустить.
+            if current is not None:
+                self._write(current)
             current = Sheet(f"{self.name}_{len(self.sheets)}", self.limit)
+            current.index = len(self.sheets)
             self.sheets.append(current)
             self._byPalette[palette] = current
         x, y = current.place(sprite)
-        return {"sheet": self.sheets.index(current),
+        return {"sheet": current.index,
                 "x": x, "y": y,
                 "width": sprite.width, "height": sprite.height}
 
+    def seal(self) -> None:
+        """Записать всё открытое: набор кончился, дописывать в него нечего.
+
+        Зовётся между наборами кадров. Без этого лист живёт в памяти до конца
+        сборки, и все наборы разом не помещаются: ровно об это разбилась
+        первая попытка поделить листы по позам.
+        """
+        for sheet in self._byPalette.values():
+            self._write(sheet)
+        self._byPalette.clear()
+
+    def _write(self, sheet: Sheet) -> None:
+        if sheet.index in self._written:
+            return
+        relative = self.folder / f"{self.name}_{sheet.index}.png"
+        self._written[sheet.index] = sheet.save(self.root, relative)
+
     def flush(self) -> list[dict[str, Any]]:
-        """Записать листы на диск и вернуть их описания."""
-        out = []
-        for index, sheet in enumerate(self.sheets):
-            relative = self.folder / f"{self.name}_{index}.png"
-            out.append(sheet.save(self.root, relative))
-        return out
+        """Дописать остатки и вернуть описания листов по порядку номеров."""
+        self.seal()
+        return [self._written[sheet.index] for sheet in self.sheets]
 
 
 def pack(root: Path, folder: Path, name: str,

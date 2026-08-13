@@ -15,6 +15,101 @@ html, body {
   overflow: hidden;
 }
 
+/* ЭКРАН ЗАГРУЗКИ. Картинка широкая (16:9), окно бывает любым, поэтому
+   `cover`: поля по краям на загрузочном экране выглядят браком. Заголовок
+   нарисован по центру и с запасом — при обрезке до 4:3 он остаётся цел.
+   Экран лежит выше игры, но ниже заслонки «поверните телефон».
+
+   КАРТИНКА ЗАДАНА ЗДЕСЬ, А НЕ ИЗ JS, И ЭКРАН ВИДЕН СРАЗУ. Самый долгий кусок
+   у нас не переход между картами, а сам запуск: браузер тянет общий блок пака
+   и лишь потом берётся за локацию. Пока это делается из скрипта, первые
+   секунды игрок смотрит в пустую рамку. Правило в таблице стилей браузер
+   исполняет ещё до разбора модулей, поэтому экран появляется первым же кадром;
+   `hidden` с него снимает не JS, а разметка. */
+#load-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background-color: #05070c;
+  background-image: url("/loading.webp");
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  display: grid;
+  align-content: end;
+  justify-items: center;
+  gap: .7rem;
+  padding-bottom: max(6vh, 1.5rem);
+}
+
+#load-screen[hidden] { display: none; }
+
+#load-progress {
+  width: min(38rem, 62vw);
+  height: 7px;
+  background: rgb(0 0 0 / .6);
+  border: 1px solid rgb(215 183 95 / .45);
+  overflow: hidden;
+}
+
+#load-progress i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, rgb(120 86 30), rgb(255 205 120));
+  transition: width .2s ease;
+}
+
+/* Пока считать нечего — карта ещё только читается — полоса ходит сама, чтобы
+   не выглядеть замершей. */
+#load-progress.waiting i { width: 35%; animation: load-sweep 1.2s ease-in-out infinite; }
+
+@keyframes load-sweep {
+  from { margin-left: -35%; }
+  to { margin-left: 100%; }
+}
+
+#load-label {
+  font-size: clamp(.8rem, 2.2vh, 1.05rem);
+  letter-spacing: .1em;
+  color: rgb(255 174 84);
+  text-shadow: 0 1px 4px #000, 0 0 12px #000;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #load-progress.waiting i { animation: none; }
+  #load-progress i { transition: none; }
+}
+
+/* «ПОВЕРНИТЕ ТЕЛЕФОН» — последний рубеж, когда поворот запереть нечем.
+   Показываем ТОЛЬКО на грубом указателе: в узком окне на настольной машине
+   такая заслонка была бы наглостью, там игрок сам хозяин размеру. */
+#turn-phone { display: none; }
+
+@media (orientation: portrait) and (pointer: coarse) {
+  #turn-phone {
+    display: grid;
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    place-items: center;
+    padding: 2rem;
+    text-align: center;
+    background: #0b0a08;
+  }
+
+  #turn-phone p {
+    margin: 0;
+    display: grid;
+    gap: .7em;
+    font-size: clamp(1.1rem, 5vw, 1.7rem);
+    letter-spacing: .04em;
+    color: rgb(255 174 84);
+  }
+
+  #turn-phone span { font-size: .62em; opacity: .7; letter-spacing: .02em; }
+}
+
 body {
   background:
     radial-gradient(circle at 50% 30%, rgba(116, 96, 57, .2), transparent 45%),
@@ -68,18 +163,11 @@ body {
 
 #ui-view #world { flex: 1 1 auto; min-height: 0; }
 
-/* Нижняя полоса рамки: в игре она идёт со строки 709 до низа экрана. */
-#ui-frame-bottom {
-  position: relative;
-  flex: 0 0 auto;
-  image-rendering: pixelated;
-}
-
 /* Пояс лежит поверх нижней кромки окна мира, а не отодвигает его: в игре
    проём окна 884x709, и ряд ячеек рисуется прямо в нём (VA 0x43096C). */
 #ui-belt {
   position: absolute;
-  left: 0; right: 0;
+  left: 0;
   z-index: 2;
   image-rendering: pixelated;
 }
@@ -102,6 +190,25 @@ body {
 .ui-cell img { width: 100%; height: 100%; object-fit: contain;
                image-rendering: pixelated; }
 .ui-cell.active { border-color: #d7b75f; }
+
+/* Выход в меню — герб на свободной полосе панели. На мыши он ведёт себя как
+   все ячейки: обводка по наведению. На сенсорном экране наведения не бывает,
+   и кнопка ничем себя не выдала бы, — а другого пути в меню без клавиатуры
+   нет, поэтому там обводим её постоянно. */
+@media (pointer: coarse) {
+  .ui-cell.to-menu { border-color: rgba(215, 183, 95, .55); }
+}
+
+/* Плашка живёт своим спрайтом поверх того же герба в рамке, и только поэтому
+   её можно осветлить под указателем и вдавить под нажатием: часть рисунка
+   рамки так не оживишь. */
+.ui-cell.to-menu { transition: filter .12s ease; }
+.ui-cell.to-menu:hover { filter: brightness(1.18); }
+.ui-cell.to-menu:active { filter: brightness(.88); transform: translateY(1px); }
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-cell.to-menu { transition: none; }
+}
 
 /* Разговор: панель поверх нижней части окна мира. */
 #ui-talk {
@@ -250,7 +357,11 @@ dd { margin: 0; color: #efe7d2; font-variant-numeric: tabular-nums; }
 
 #error {
   position: fixed;
-  z-index: 4;
+  /* ВЫШЕ ЭКРАНА ЗАГРУЗКИ. Он висит с первого кадра и до готовой сцены, а
+     падение случается как раз внутри этого срока — с прежним z-index 4
+     сообщение об ошибке оставалось бы под картинкой, и игра выглядела бы
+     просто зависшей. */
+  z-index: 60;
   inset: 50% auto auto 50%;
   transform: translate(-50%, -50%);
   max-width: 620px;
@@ -377,19 +488,31 @@ dd { margin: 0; color: #efe7d2; font-variant-numeric: tabular-nums; }
   font: 600 18px/1 system-ui, sans-serif;
   cursor: pointer;
 }
+/* Буквы экрана обмена живут в том же масштабе, что и его коробки: множитель
+   приходит из раскладки свойством `--trade-k`. Нижний и верхний пределы —
+   чтобы на крошечном окне надпись оставалась читаемой, а на большом мониторе
+   не превращалась в вывеску. */
 #ui-trade .trade-number {
   position: absolute;
   color: #f2d79a;
-  font: 600 15px/1 system-ui, sans-serif;
+  font: 600 clamp(9px, calc(15px * var(--trade-k, 1)), 26px)/1 system-ui, sans-serif;
   text-shadow: 0 1px 2px #000;
+  white-space: nowrap;
 }
+
 #ui-trade .trade-button {
   position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
   background: linear-gradient(#5a4526, #33260f);
   color: #f2d79a;
   border: 1px solid #7a6032;
   border-radius: 4px;
-  font: 600 15px/1 system-ui, sans-serif;
+  font: 600 clamp(9px, calc(15px * var(--trade-k, 1)), 26px)/1 system-ui, sans-serif;
+  white-space: nowrap;
+  overflow: hidden;
   cursor: pointer;
 }
 
@@ -439,7 +562,11 @@ body.creation-open #world, body.creation-open .ui { display: none; }
 .creation__text {
   transform: translateX(-100%);
   color: rgb(255 214 138);
-  font: 500 clamp(8px, 1.6cqw, 15px)/1 "Trebuchet MS", system-ui, sans-serif;
+  /* ПРОПОРЦИОНАЛЬНО КАДРУ. Нижний порог 8px был нашей выдумкой: на узком
+     экране кадр сжимается, а буквы упирались в порог, переставали влезать
+     в свои слоты и наезжали друг на друга. Экран движка — 1024x768 целиком,
+     и текст в нём такая же его доля, как рамки и кнопки. */
+  font: 500 clamp(5px, 1.6cqw, 15px)/1 "Trebuchet MS", system-ui, sans-serif;
   white-space: nowrap;
   pointer-events: none;
   text-shadow: 0 1px 2px #000;
@@ -455,7 +582,7 @@ body.creation-open #world, body.creation-open .ui { display: none; }
   color: rgb(255 214 138);
   background: transparent;
   border: 1px solid transparent;
-  font: 600 clamp(8px, 1.6cqw, 16px)/1 "Trebuchet MS", system-ui, sans-serif;
+  font: 600 clamp(5px, 1.6cqw, 16px)/1 "Trebuchet MS", system-ui, sans-serif;
   cursor: pointer;
   text-shadow: 0 1px 2px #000;
 }
@@ -467,12 +594,14 @@ body.creation-open #world, body.creation-open .ui { display: none; }
 
 .creation__zone.выбран { border-color: rgb(255 214 138 / .9); }
 
-.creation__face {
-  width: 100%;
-  height: 100%;
-  object-fit: none;
-  object-position: left top;
+/* Портрет ВЫБРАННОГО героя — один, в пустой рамке справа (0x462... ->
+   `portrait_at`). Размер задан долей кадра, поэтому он тянется вместе с ним;
+   `object-fit: none` здесь было нельзя — картинка оставалась 76x87 физических
+   пикселей и уезжала от рамки на любом экране шириной не ровно 1024. */
+.creation__portrait {
+  position: absolute;
   image-rendering: pixelated;
+  pointer-events: none;
 }
 
 /* Описание героя движок печатает в рамке слева внизу (0x4622E4…0x4622EC). */
@@ -484,3 +613,30 @@ body.creation-open #world, body.creation-open .ui { display: none; }
   font: 400 clamp(8px, 1.45cqw, 14px)/1.3 "Trebuchet MS", system-ui, sans-serif;
   text-shadow: 0 1px 2px #000;
 }
+
+/* Несомая вещь видна и над панелями: в движке перенос — режим курсора (8),
+   и он рисуется поверх всего экрана. Перебиваем `cursor: pointer` ячеек. */
+#game.carrying,
+#game.carrying * { cursor: var(--carry-cursor) !important; }
+
+/* МЕНЮ ПОВЕРХ ИГРЫ — вместилище для втянутой плиты. Выше игры и экрана
+   загрузки, ниже заслонки «поверните телефон» и окна ошибки: и то и другое
+   важнее. Всё внутреннее рисует menu.css, он же подключается при первом
+   открытии. */
+#game-menu {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  background: #000;
+}
+
+#game-menu[hidden] { display: none; }
+
+/* ЦВЕТ ЗНАЧКА ВЕЩИ (VA 0x42FF20). Движок красит палитру значка перед
+   отрисовкой: красным — то, что нельзя надеть по характеристикам, жёлтым —
+   неопознанное, зелёным — с прибавками. Выбор состояния канонический;
+   сам оттенок пока приближённый — табличная краска движка (0x4BEA2C,
+   0x479D50, 0x474950) в пак ещё не вывезена. */
+.ui-cell img.item-unusable { filter: drop-shadow(0 0 2px #f22) saturate(1.4) hue-rotate(-18deg); }
+.ui-cell img.item-unknown  { filter: drop-shadow(0 0 2px #dd0) brightness(1.15); }
+.ui-cell img.item-special  { filter: drop-shadow(0 0 2px #2d2) brightness(1.1); }

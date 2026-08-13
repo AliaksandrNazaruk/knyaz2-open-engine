@@ -101,22 +101,42 @@ function paint() {
     frame.append(picture);
   }
 
-  // шесть портретов: картинка ставится в левый верхний угол прямоугольника
+  // ШЕСТЬ КЛЕТОК СЛЕВА — ТОЛЬКО ЗОНЫ ВЫБОРА. Лица в них уже НАРИСОВАНЫ НА
+  // ФОНЕ: в блоке 0 файла NEWHERO.RES все шесть портретов вписаны в резные
+  // рамки. Раньше клиент клал поверх них ещё по картинке из блоков 1…6 —
+  // отсюда и двоение, и «разъезжается»: картинка 76x87 рисовалась в своём
+  // натуральном размере, а рамка тянулась процентами от кадра 1024x768.
   const [firstFace, lastFace] = codes.portraits ?? [0, 5];
   for (let code = firstFace; code <= lastFace; code += 1) {
     const rect = rects[code];
-    const shot = data.portraits?.[code - firstFace];
     if (!rect) continue;
     const button = zone(rect, starts[code - firstFace]?.name ?? "герой",
                         () => loadArchetype(code - firstFace));
     if (picked === code - firstFace) button.classList.add("выбран");
-    if (shot) {
-      const picture = document.createElement("img");
-      picture.className = "creation__face";
-      picture.src = contentUrl(shot.path);
-      picture.alt = "";
-      button.append(picture);
-    }
+  }
+
+  // ЯРКИЙ ПОРТРЕТ — ТОЛЬКО У ВЫБРАННОГО, И В ЕГО ЖЕ КЛЕТКЕ.
+  //
+  // Сверил пиксельно: блоки 1…6 файла NEWHERO.RES совпадают с фоном ровно
+  // на местах клеток, смещение (0,0). Разница только в яркости — в фоне
+  // лица ПРИГЛУШЕНЫ (средняя разница 10…16 из 255). Значит фон рисует шесть
+  // тусклых лиц, а движок кладёт поверх яркое, и только одно: выбранное.
+  //
+  // Точка `portrait_at` (547, 75) к этому отношения не имеет — там узор с
+  // драконом, никакой рамки под портрет в фоне нет. Она из соседней таблицы
+  // точек экрана и служит чему-то другому.
+  const shot = data.portraits?.[picked];
+  const spot = rects[firstFace + picked];
+  if (shot && spot) {
+    const picture = document.createElement("img");
+    picture.className = "creation__portrait";
+    picture.src = contentUrl(shot.path);
+    picture.alt = "";
+    picture.style.left = `${(spot[0] / SCREEN_W) * 100}%`;
+    picture.style.top = `${(spot[1] / SCREEN_H) * 100}%`;
+    picture.style.width = `${(shot.width / SCREEN_W) * 100}%`;
+    picture.style.height = `${(shot.height / SCREEN_H) * 100}%`;
+    frame.append(picture);
   }
 
   text("Свободный опыт", NAME_X, FREE_XP_Y);

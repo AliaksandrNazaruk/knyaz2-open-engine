@@ -9,7 +9,8 @@ import { lightActive, nightDarkness, renderLightGlow } from "./light.js";
 import { renderShadows } from "./shadows.js";
 import { drawObject } from "./entities.js";
 import { drawHeroAtDepth, hero, renderHero } from "./hero.js";
-import { renderLoot } from "./loot.js";
+import { drawPile, lootDrawList } from "./loot.js";
+import { UNIT_SORT_BIAS } from "./actor.js";
 import { renderProjectiles } from "./projectiles.js";
 import { renderUnit, renderUnitsOverlay, units } from "./units.js";
 import { renderAmbient } from "./ambient.js";
@@ -113,7 +114,6 @@ export function render() {
   // прохода земли. Тени идут следом: проход VA 0x440788 делит яркость
   // всего нарисованного, включая освещённые клетки. Дальше — новый слой
   // под объекты; светлые кадры внутри него уходят прямо на холст.
-  renderLoot(visible);
   renderProjectiles();
 
   if (layered) {
@@ -132,19 +132,48 @@ export function render() {
   // поверх всей сцены добавляется полупрозрачная копия (список 0x866F5C).
   const heroMode = !hero.data ? "none"
     : hero.insideSlot != null ? "building" : "painter";
-  const heroSortY = Math.round(hero.y) + 6;
+  const heroSortY = Math.round(hero.y) + UNIT_SORT_BIAS;
   let heroDrawn = heroMode !== "painter";
   let heroInBuildingDrawn = false;
   // Ключ глубины юнита — тот же, что у героя: ноги + 6 (VA 0x426D45).
   // Юнита, стоящего в постройке, рисует сама постройка сразу после пола
   // (VA 0x425AA8) — из общего прохода по глубине он исключается, иначе
   // пол лёг бы поверх него.
-  const pending = units
-    .filter((unit) => unit.insideSlot == null)
-    .map((unit) => ({ unit, sortY: Math.round(unit.y) + 6 }))
+  // ЧУЖИЕ ИГРОКИ — В ТОТ ЖЕ ПРОХОД. Их заводит опыт с соприсутствием
+  // (presence.js), и только он: в обычной игре `world.ghosts` пуст, и эта
+  // раскладка ничего не стоит. В список `units` призраки не попадают
+  // намеренно — туда смотрят бой, приказы и память карты.
+  const pending = [...units.filter((unit) => unit.insideSlot == null),
+                   ...(world.ghosts ?? [])]
+    .map((unit) => ({ unit, sortY: Math.round(unit.y) + UNIT_SORT_BIAS }))
     .sort((a, b) => a.sortY - b.sortY);
   let nextUnit = 0;
+  // КУЧИ — В ТОТ ЖЕ ПРОХОД. Ключ глубины у кучи на клетках постройки берётся
+  // от самой постройки: в движке её рисует отрисовщик объекта сразу после
+  // пола (VA 0x00424514), см. lootDrawList.
+  // Хозяин кучи ищется ПО ПЕРЕКРЫТИЮ, а не по номеру места: у объектов
+  // сцены своего номера нет, и связать их с `buildingCells` не через что.
+  // Берём наибольший ключ среди объектов, чья рамка накрывает точку кучи, —
+  // тогда куча ложится сразу за самым «поздним» из них, как её рисует сама
+  // постройка в движке (VA 0x00424514).
+  const coverSortY = (x, y) => {
+    let key = null;
+    for (const object of world.objects ?? []) {
+      const b = object.bounds;
+      if (!b) continue;
+      if (x < b.draw_x || x > b.draw_x + b.width) continue;
+      if (y < b.draw_y || y > b.draw_y + b.height) continue;
+      if (key == null || b.sort_y > key) key = b.sort_y;
+    }
+    return key;
+  };
+  const piles = lootDrawList(visible, null, coverSortY);
+  let nextPile = 0;
   const drawUnitsBefore = (sortY) => {
+    while (nextPile < piles.length && piles[nextPile].sortY <= sortY) {
+      drawPile(piles[nextPile].pile);
+      nextPile += 1;
+    }
     while (nextUnit < pending.length && pending[nextUnit].sortY <= sortY) {
       renderUnit(pending[nextUnit].unit);
       nextUnit += 1;

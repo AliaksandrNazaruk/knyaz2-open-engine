@@ -58,8 +58,37 @@ T_OBJECTS = RecordTable('objects', 0x344E0, 1000, 36, [
 
 T_LIGHT = RecordTable('light', 0x3D184, 16, 32, [])
 
+#: ОБСТАНОВКА ВНУТРИ ОБЪЕКТОВ. Историческое имя `zones` оставлено ради
+#: байт-в-байт совместимости текстового проекта, но это не «зоны»: движок
+#: читает блок в 0x6AE458 (VA 0x43DF48) и рисует его отрисовщиком нутра
+#: объекта (VA 0x00424514) — тридцать объектов по шестнадцать гнёзд:
+#:
+#:     +0x00 u32  спрайт; 0xFFFFFFFF — гнездо пустое
+#:     +0x04 u32  младшие 24 бита — палитра; в СТАРШИЙ байт загрузчик карты
+#:                кладёт номер живого контейнера плюс один
+#:     +0x08 i16  экранный x        +0x0A i16  экранный y
+#:
+#: Через этот старший байт к гнезду и привязывается сундук: у записи кучи
+#: (GAME.N, таблица 0x2C800) байт +0x09 — номер объекта, +0x0A — гнездо.
 T_ZONES = RecordTable('zones', 0x3D384, 30, 192, [])
-ZONE_SUB = 12   # внутри зоны 16 подзаписей по 12 байт
+ZONE_SUB = 12                       # гнездо — 12 байт
+ZONE_OBJECTS, ZONE_SLOTS = 30, 16
+ZONE_EMPTY = 0xFFFFFFFF
+
+
+def interior_slots(kn2) -> dict[tuple[int, int], dict]:
+    """Занятые гнёзда обстановки: (объект, гнездо) -> спрайт и точка."""
+    out = {}
+    for obj in range(ZONE_OBJECTS):
+        for slot in range(ZONE_SLOTS):
+            at = T_ZONES.offset + obj * T_ZONES.size + slot * ZONE_SUB
+            sprite, word = struct.unpack_from('<II', kn2.data, at)
+            if sprite == ZONE_EMPTY:
+                continue
+            x, y = struct.unpack_from('<hh', kn2.data, at + 8)
+            out[(obj, slot)] = {'sprite': sprite, 'palette': word & 0xFFFFFF,
+                                'x': x, 'y': y}
+    return out
 
 
 class KN2Map:

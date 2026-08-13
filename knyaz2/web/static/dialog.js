@@ -21,15 +21,15 @@ import { currentCharacteristics, identifyAll } from "./jewels.js";
 import { bagPut } from "./inventory.js";
 import { nameOfClassAny } from "./questitems.js";
 import { daylight } from "./daylight.js";
-import { village } from "./village.js";
-import { partyHire, units } from "./units.js";
+import { officialRole, village } from "./village.js";
+import { partyHire, partyRelease, unitSendTo, units } from "./units.js";
 import { warbandAlarm, warbands } from "./warband.js";
 import { lootDrop } from "./loot.js";
 import { craftWhetstone } from "./craft.js";
-import { mapSquads, mapStateSquads } from "./mapstate.js";
+import { mapSquads, mapStateJoin, mapStateSquads } from "./mapstate.js";
 import { openLocation } from "./worldmap.js";
 import { playVoiceLine } from "./sound.js";
-import { orderKinds, orderUnit } from "./orders.js";
+import { deselect, orderKinds, orderUnit } from "./orders.js";
 import { clockPhaseHits } from "./clock.js";
 
 export const dialog = {
@@ -427,13 +427,14 @@ const HANDLERS = {
     const found = villagePlace(argument);
     if (!found) return false;
     // «Постройка есть» движок решает по ДВУМ полям записи места: байту
-    // +0x19 и слову +0x1E; хватает любого ненулевого. Ровно эту пару и
-    // считает поле `built` пака, поэтому больше здесь смотреть нечего.
+    // +0x19 (ступень) и слову +0x1E (счётчик); хватает любого ненулевого.
+    // Читаем их НАПРЯМУЮ, а не поле `built` из пака: пак знает лишь то, что
+    // было при выпечке, а ступень и счётчик меняются по ходу игры.
     //
     // Раньше в ИЛИ стоял ещё и `kind` — байт ВИДА (+0x18). Он заполнен и у
     // непостроенных мест (карта 19, место 1: вид 3, состояние 0), поэтому
     // «постройка есть» отвечало да там, где движок отвечает нет.
-    return Boolean(found.built);
+    return Boolean((found.state ?? 0) || (found.timer ?? 0));
   },
   // 6: МОЖНО ЛИ ЗАЛОЖИТЬ ПОСТРОЙКУ (VA 0x434BC4). То же, что 4, плюс два
   // условия: у места задан вид и в отряде деревни есть достаточно умелый
@@ -454,7 +455,10 @@ const HANDLERS = {
     // отказывает сразу — место без назначения не закладывают.
     const kind = found.kind ?? -1;
     if (kind < 0 || kind > 0x7F) return false;
-    if (found.built) return false;
+    // Место должно быть ПУСТЫМ: обе ветки 0x434BC4 требуют нулей и в ступени,
+    // и в счётчике. Пока стройка идёт, счётчик не ноль — и староста больше не
+    // предлагает заложить то, что уже строится.
+    if ((found.state ?? 0) || (found.timer ?? 0)) return false;
     const set = world.map?.hero?.rules?.buildings;
     const need = set?.kinds?.[String(kind)]?.build_skill ?? 0;
     return villageBuildSkill() >= need;
@@ -694,7 +698,7 @@ const HANDLERS = {
     const skill = unitSkill(dialog.unit, "Знахарство");
     if (skill * 16 <= (hero.health ?? 0)) return true;
     growSkill(dialog.unit, "Знахарство");
-    hero.health = unitSkill(dialog.unit, "Знахарство") * 16;
+    world.healthSet?.(hero, unitSkill(dialog.unit, "Знахарство") * 16);
     return true;
   },
   55: () => {
@@ -703,7 +707,7 @@ const HANDLERS = {
       const skill = unitSkill(dialog.unit, "Знахарство");
       if (skill * 16 <= (unit.health ?? 0)) continue;
       growSkill(dialog.unit, "Знахарство");
-      unit.health = unitSkill(dialog.unit, "Знахарство") * 16;
+      world.healthSet?.(unit, unitSkill(dialog.unit, "Знахарство") * 16);
     }
     return true;
   },
@@ -727,7 +731,7 @@ const HANDLERS = {
     // аргумент приходит знаковым уже из разбора команд (konung2/quests.py)
     let health = (hero.health ?? 0) + argument * 16;
     if (health >= cap + 1) health = cap;
-    hero.health = health;
+    world.healthSet?.(hero, health);
     if (health < 1) { hero.alive = false; heroDie(); }
     return true;
   },
@@ -737,7 +741,7 @@ const HANDLERS = {
     const skill = heroSkill("Знахарство");
     if (skill * 16 > (unit.health ?? 0)) {
       growSkill(hero, "Знахарство");
-      unit.health = heroSkill("Знахарство") * 16;
+      world.healthSet?.(unit, heroSkill("Знахарство") * 16);
     }
     return true;
   },
@@ -897,6 +901,58 @@ const HANDLERS = {
     return true;
   },
 
+  // 43: СДЕЛАТЬ СОБЕСЕДНИКА ЖИТЕЛЕМ (VA 0x4338B0). Это и есть просьба
+  // «Останься здесь, пока я не хочу рисковать тобой» — единственный канонный
+  // способ вывести спутника из отряда, не убивая его.
+  //
+  // Движок по шагам:
+  //
+  //     нет поселения ([0x849538] == 0)          -> ноль, ничего не менять
+  //     отряд деревни полон (+0x1C == +0x1A)     -> ноль
+  //     +0x19 &= 0xBF                             снять «занят работой»
+  //     запись цели (256 байт) в конец отряда деревни, его +0x1C += 1
+  //     +0x1B = отряд деревни, +0x16 = 0          приказа нет вовсе,
+  //                                               вместе с битом 0x10
+  //                                               «за вожаком»
+  //     из отряда игрока вычеркнуть, +0x1C -= 1, сдвинуть хвост
+  //     панель девяти: ушедшего убрать, пустую занять вожаком (0x420644)
+  //
+  // Слот освобождается сам собой: условие 7 сравнивает вместимость по
+  // Харизме с тем же счётчиком бойцов, который только что убавился.
+  //
+  // Мест у деревни ровно столько, сколько отведено её отряду в массиве
+  // юнитов (+0x1A). Запас заложен намеренно и невелик: в Борье 14 занято из
+  // 17. Отказ движок никак не показывает — возврат действия отбрасывается
+  // (0x435F44), поэтому и мы молчим.
+  43: (argument) => {
+    const settlement = world.map?.village;
+    const unit = argument ? unitByNumber(argument) : dialog.unit;
+    if (!settlement || !unit || unit.alive === false) return false;
+    const places = settlement.squad_places ?? 0;
+    const people = settlement.squad_people ?? 0;
+    if (places && people >= places) return false;
+    settlement.squad_people = people + 1;
+    // Запись, по которой юнита поднимать при возвращении. Берём ДО того, как
+    // его вычеркнут из отряда: в паке карты бывшего спутника нет, и без этой
+    // записи он на ней просто не появится. В движке заботы нет вовсе — запись
+    // юнита лежит в общем массиве и переживает всё (см. mapstate.js).
+    const member = (hero.party?.members ?? [])
+      .find((row) => row.index === unit.slot) ?? null;
+    partyRelease(unit);
+    unit.ally = false;
+    if (typeof settlement.side === "number") unit.side = settlement.side;
+    // Приказ обнуляется целиком: без бита «за вожаком» он остаётся стоять,
+    // а любой новый приказ этот бит бы сохранил (0x416574 пишет
+    // `вид | старое & 0xF0`).
+    unit.orderByte = 0;
+    unit.orderKind = 0;
+    unit.orderTarget = null;
+    unit.busy = false;
+    deselect(unit);
+    mapStateJoin(world.map?.legacy?.map_number, unit, member);
+    return true;
+  },
+
   // 44: УВЕСТИ ОТРЯД СОБЕСЕДНИКА С КАРТЫ (VA 0x433C30).
   44: () => squadLeaves(dialog.unit?.side),
 
@@ -972,6 +1028,66 @@ const HANDLERS = {
     return squadLeaves(side);
   },
 
+  // 74: НАЗНАЧИТЬ СОБЕСЕДНИКА НА ДОЛЖНОСТЬ ДЕРЕВНИ (VA 0x435D4C).
+  //
+  // Аргумент — номер должности, и сами реплики его называют: 0 староста,
+  // 1 знахарь, 2 купец, 3 кузнец, 4 воевода («останешься здесь воеводой и
+  // будешь обучать военным навыкам жителей»). Пятёрка должностей лежит по u16
+  // с +0x3D0 записи поселения.
+  //
+  // Движок сначала проверяет, что место свободно, потом заводит жителю запись
+  // в отряде деревни (FUN_004338B0: копия 0x100 байт, если у культуры ещё
+  // есть место) и вписывает её номер в должность. Роль потом читается обратно
+  // перебором той же пятёрки — FUN_00415190 отдаёт «номер места + 1», поэтому
+  // у знахаря роль 2, а у купца 3.
+  //
+  // Без этого действия НИ ОДНА должность не могла быть занята: воеводы нет —
+  // некому обучать в казарме, кузнеца нет — мастерская стоит. Казарма при
+  // этом ни на одной карте и ни в одном мире не построена изначально
+  // (проверено по всем 52 картам и шести GAME.N), её сперва надо возвести.
+  //
+  // ПОРЯДОК ДВИЖКОВЫЙ: сперва проверка, что место свободно, потом переезд
+  // в деревню общим действием 43, и лишь при его успехе — запись должности.
+  // Если деревня переполнена, 0x4338B0 возвращает ноль, и 0x435D4C бросает
+  // всё как было: должность не занимается, спутник остаётся в отряде.
+  74: (post) => {
+    const village = world.map?.village;
+    const unit = dialog.unit;
+    if (!village || !unit || unit.alive === false) return false;
+    if (!(post >= 0 && post < 5)) return false;
+    const officials = village.officials ?? (village.officials = [0, 0, 0, 0, 0]);
+    // Занятую должность движок не перезаписывает — возвращает ноль.
+    if (officials[post]) return false;
+    // Переезд в отряд деревни — тот же 0x4338B0, что и у «Останься здесь».
+    if (!HANDLERS[43](0)) return false;
+    officials[post] = unit.slot;
+    // Поле `role` не трогаем: роль выводится из этого же списка (0x415190),
+    // и держать её вторым источником правды — значит однажды разойтись.
+    // Восемь рабочих байт забиваются 0xFF, а первый получает НОМЕР
+    // ДОЛЖНОСТИ (0x435D4C: `(&DAT_007b3bee)[i] = (char)param_1` сразу после
+    // забивки восьмёрки) — у нас это единственный элемент списка.
+    unit.workplaces = [post];
+    unit.workRest = 0;
+    // Уход из отряда, сторона деревни и снятый приказ — всё это сделал
+    // обработчик 43 выше, как и в движке.
+    //
+    // НА СВОЁ МЕСТО, С ЗАНЯТИЕМ 0x0B (VA 0x435D4C, хвост):
+    //
+    //     (&DAT_007b3b1b)[i] = *(byte *)((int)psVar2 + должность * 4 + 0x21);
+    //     (&DAT_007b3b1d)[i] = (char)psVar2[должность * 2 + 0x11];
+    //     FUN_00416574(юнит, строка, столбец, 0xb);
+    //
+    // Байты +0x21 и +0x22 записи культуры со сдвигом «должность × 4» — это ТА
+    // ЖЕ память, где лежит таблица рабочих мест (записи по четыре байта с
+    // +0x20, поля: вид, строка, столбец, вес). Значит место должности N — это
+    // строка и столбец рабочего места N, и они у нас уже в паке. Без этого
+    // назначенный оставался стоять там, где с ним заговорили.
+    const spot = (village.workplaces ?? []).find((place) => place.slot === post);
+    if (spot) unitSendTo(unit, spot.row, spot.col, 0x0B);
+    else unit.orderByte = 0x0B;
+    return true;
+  },
+
   // 75: НАЗНАЧИТЬ РАБОТУ СОБЕСЕДНИКУ (VA 0x435EA4). Восемь его рабочих мест
   // (+0xE6) очищаются, первым ставится аргумент, и снимается бит 0x40 байта
   // +0x19 — «занят приказом», из-за которого житель стоял бы на месте.
@@ -1016,12 +1132,10 @@ function unitByNumber(number) {
 
 // Должность собеседника: номер его места в списке должностей плюс один
 // (VA 0x415190).
-function dialogRole() {
-  const officials = world.map?.village?.officials ?? [];
-  const index = Number(String(dialog.unit?.id ?? "").replace("unit_", ""));
-  const place = officials.indexOf(index);
-  return place < 0 ? 0 : place + 1;
-}
+//: Роль собеседника — та же выводимая из пятёрки должностей роль
+//: (VA 0x415190). Своей копии здесь больше нет: хозяин один —
+//: `village.js::officialRole`, и он же берёт номер юнита из `slot`.
+function dialogRole() { return officialRole(dialog.unit); }
 
 function runHandler(command) {
   const handler = HANDLERS[command.handler];

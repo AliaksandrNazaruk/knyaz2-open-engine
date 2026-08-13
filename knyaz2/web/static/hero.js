@@ -45,23 +45,9 @@ export const hero = {
   bag: [],                   // подобранное, но не надетое
 };
 
-//: НАША настройка, адреса за ней нет: движок скорости в пикселях за
-//: секунду не знает вовсе — он двигает юнита на подшаг за кадр главного
-//: цикла, и «быстро» там значит «часто». Пока ход перенесён по времени, а
-//: не покадрово, этот множитель заменяет частоту цикла.
-export const SPEED_SCALE = 0.75;
-
-// Кадров на клетку: полный цикл — два шага ног, клетка — один шаг, поэтому
-// половина цикла. У ходьбы 14 кадров, у бега 9 — отсюда и разная скорость,
-// бег быстрее ровно во столько раз, во сколько его цикл короче.
-//
-// Само СООТНОШЕНИЕ взято из данных игры (длины циклов), но деление цикла
-// пополам — наше допущение: в движке шаг кончается не на середине цикла, а
-// когда юнит дошёл до якоря клетки (VA 0x413894 сверяет координаты).
-export function heroStepFrames(pose = hero.pose) {
-  const frames = heroFrames(pose)?.length ?? 14;
-  return Math.max(1, frames / 2);
-}
+//: Кадры шага больше не нужны: время клетки задаёт походка, а не длина
+//: цикла анимации. Прежняя формула «кадры/2 / SPEED_SCALE» была подобранной,
+//: и именно она давала ход втрое-вдевятеро медленнее оригинала.
 
 // Кадры позы для текущего направления.
 export function heroFrames(pose = hero.pose, direction = hero.direction) {
@@ -135,7 +121,15 @@ export function heroSetup(config, map) {
   // и маршрутными клетками, поэтому искать их по параллельным спискам больше
   // не нужно.
   hero.buildingCells = new Map();
-  for (const building of map.buildings ?? []) {
+  // И ПОСТРОЙКИ, И РЕКВИЗИТ СО СВОИМИ КЛЕТКАМИ.
+  //
+  // Здесь перебирались только `map.buildings`, и достроенная казарма из
+  // указателя выпадала: она уезжает в пак реквизитом (постройкой объект
+  // считается по стенам его состояния, а у пустой площадки их нет). Из-за
+  // этого над ней не пряталась крыша — сокрытие идёт по клетке юнита
+  // (VA 0x428282), а её в указателе не было вовсе.
+  for (const building of [...(map.buildings ?? []), ...(map.props ?? [])]) {
+    if (!building.cells) continue;
     const cells = building.cells ?? {};
     const floor = new Set((cells.floor ?? []).map(([row, col]) => heroCellKey(row, col)));
     const routed = new Set((cells.routed ?? []).map(([row, col]) => heroCellKey(row, col)));
@@ -265,6 +259,35 @@ export function heroFree(row, col, mover = null) {
   // уходит (VA 0x416A52), поэтому труп дорогу не держит. Проверка приходит
   // колбэком, чтобы модуль врагов не пришлось импортировать сюда.
   return !hero.occupiedBy?.(row, col, mover);
+}
+
+// ПЕРЕПЕЧАТАТЬ КЛЕТКИ ПОСТРОЙКИ (VA 0x43F178).
+//
+// Движок проходит всю сетку, находит клетки этого объекта по метке «номер
+// объекта + 1» в битах 16…20 и делает ровно одно из двух:
+//
+//     состояние 3 или 4 -> младшие 12 бит В НОЛЬ  (клетка проходима)
+//     иначе             -> младшие 12 бит 0xFFF   (глухая)
+//
+// У нас метка уже разобрана сборщиком в `cells.footprint` объекта, поэтому
+// вместо прохода по сетке идём по его собственному следу.
+//
+// Зовётся это в оригинале ТОЛЬКО из загрузчика карты (0x43DF48:226) — то
+// есть достроенная при игроке постройка открывается лишь после выхода и
+// возвращения. Мы зовём ещё и в миг смены ступени: держать игрока за дверью
+// собственной казармы до перезахода — не то поведение, за которое стоит
+// держаться, и на канон это не влияет, потому что состояние то же самое.
+export function heroStampBuilding(object, ready = 3) {
+  const cells = object?.cells?.footprint;
+  if (!cells?.length || !hero.cells || !hero.grid) return 0;
+  const open = object.state === ready || object.state === ready + 1;
+  let touched = 0;
+  for (const [row, col] of cells) {
+    if (row < 0 || col < 0 || row >= hero.grid.rows || col >= hero.grid.columns) continue;
+    hero.cells[row * hero.grid.columns + col] = open ? 0 : CELL_WALL;
+    touched += 1;
+  }
+  return touched;
 }
 
 // Соседняя клетка по направлению движка: решётка со сдвигом рядов, вертикаль
@@ -575,42 +598,149 @@ function wavePlan(fromRow, fromCol, toRow, toCol) {
   return path;
 }
 
+// НОВЫЙ ПРИКАЗ ПЕРЕТАЙМЛИВАЕТ ХОД НЕМЕДЛЕННО.
+//
+// Выдача приказа — FUN_00416574. Найдя путь, она выбирает блок хода прямо по
+// битам +0x19 (0x80 бег, 0x04 боевая стойка) и зовёт FUN_00416740, а та:
+//
+//     FUN_00429B2C(юнит, блок);          // +0xFD = база − скорость
+//     param_1[0xFB] = '\0';              // счётчик подшагов сброшен
+//     FUN_0043B974(+0x36, +0x3E, +0x12, +0x14);   // якорь на клетку юнита
+//
+// То есть недоигранный шаг НЕ доигрывается: юнит встаёт на свою клетку и
+// начинает следующий уже с новой походкой. Отсюда в оригинале двойной щелчок
+// даёт бег с первой же клетки.
+//
+// У нас длительность шага бралась при его начале и не пересматривалась,
+// поэтому после двойного щелчка герой доигрывал начатую клетку шагом — на
+// ходьбе это до 0.78 с, а на моей прежней неверной модели до 1.09 с.
+//
+// ОТСТУПЛЕНИЕ ОТ КАНОНА, СДЕЛАННОЕ НАМЕРЕННО.
+//
+// В движке сброс безусловный, и это его известный изъян: раздача приказа
+// (FUN_004240BC) шлёт его каждому выбранному на КАЖДЫЙ щелчок, ничего не
+// сверяя с текущей целью, а хвост FUN_00416740 у идущего юнита вдобавок
+// сразу сдвигает +0x12/+0x14 в соседнюю клетку. Отсюда «спам щелчками» гонит
+// персонажа скачками быстрее такта.
+//
+// Чиним условием, которое у самого движка стоит строкой выше — там пересчёт
+// походки сделан ТОЛЬКО при смене блока:
+//
+//     if ((база[текущий] < 1) || (текущий != новый)) FUN_00429B2C(юнит, новый);
+//
+// Распространяем его на сброс и якорь: перетаймливаем, лишь когда блок хода
+// действительно сменился. Повторные щелчки в ту же точку блок не меняют — и
+// скачков нет; двойной щелчок меняет 0x11 на 0x13 — и бег включается сразу.
+export function unitMoveBlock(unit) {
+  const stance = unit.stance ?? hero.stance;
+  const running = Boolean(unit.running);
+  return stance === "combat" ? (running ? 0x07 : 0x01)
+                             : (running ? 0x13 : 0x11);
+}
+
+export function unitRetime(unit) {
+  if (!unit.step) return;
+  if (unit.step.block === unitMoveBlock(unit)) return;
+  //: Клетка юнита — уже КОНЕЧНАЯ клетка начатого шага (её ставит
+  //: unitTryStep, как движок ставит +0x12/+0x14 в FUN_00413894), поэтому
+  //: «якорь на свою клетку» и значит «довести шаг до конца сразу».
+  unit.x = unit.step.toX;
+  unit.y = unit.step.toY;
+  unit.step = null;
+}
+
+//: Развязка без петли: orders.js перетаймливает ход через `world`.
+world.unitRetime = unitRetime;
+
 // Приказ идти в клетку: планируем кусок пути и запоминаем конечную цель,
 // чтобы достроить маршрут, когда кусок кончится.
 export function heroOrderTo(x, y, running = false) {
   if (!hero.data) return false;
   hero.goal = heroCellAt(x, y);
-  hero.running = running;
+  //: Перегруженный не бежит: бит бега ставится с проверкой ноши
+  //: (VA 0x42F22C, см. unitCanRun).
+  hero.running = running && (world.unitCanRun?.(hero) ?? true);
   hero.target = null;
   // Кому позволено стоять на клетке цели — берём из самого приказа: щелчок по
   // врагу, по лежачему и по собеседнику кладёт его в orderTarget ДО вызова
   // (combat.js -> orderUnit), а «просто идти» не кладёт никого.
   hero.goalTarget = hero.orderTarget ?? null;
   hero.path = heroPlanPath(hero.cell, hero.goal, hero, hero.goalTarget);
+  //: Перетаймливает ТОЛЬКО удавшийся приказ: FUN_00416740 стоит в ветке
+  //: «путь найден» (FUN_00416574, `if (iVar2 == 0) ... else ...`), а на
+  //: непроходимую клетку движок вместо этого зовёт остановку 0x416E24.
+  if (hero.path.length) unitRetime(hero);
   return hero.path.length > 0;
 }
 
 // Шаг ЛЮБОГО юнита. В движке шагают все одинаково (VA 0x41615A), поэтому
 // функция берёт юнита, а герой — просто первый из них.
 export function unitTryStep(unit, direction, input) {
+  //: Паук в паузе не шагает вовсе (VA 0x413894:180, см. units.js).
+  if (world.beastPauses?.(unit)) return false;
   // Никогда не шагаем против желаемого вектора (обход стены не пятится).
   const [sx, sy] = hero.data.direction_steps[direction];
   if (sx * input.dx + sy * input.dy <= 0) return false;
   const next = heroNeighbor(unit.cell.row, unit.cell.col, direction);
   if (!heroFree(next.row, next.col, unit)) return false;
   const to = heroAnchor(next.row, next.col);
-  const seconds = tickSeconds();
   unit.step = {
     fromX: unit.x, fromY: unit.y, toX: to.x, toY: to.y,
-    // Длительность шага — ЧИСЛО КАДРОВ его походки: у ходьбы их больше,
-    // чем у бега, оттого бег и быстрее. Отдельной «скорости» в движке нет.
-    time: 0, duration: heroStepFrames(unitMovePose(unit)) * seconds / SPEED_SCALE,
+    direction, time: 0, duration: unitCellTicks(unit) * tickSeconds(),
+    //: Блок хода запоминаем при начале шага — по нему unitRetime и видит,
+    //: сменился ли режим движения (см. там же).
+    block: unitMoveBlock(unit),
   };
   unit.cell = next;                 // юнит на клетке с начала шага (0x423B00)
   unit.direction = direction;
   unitUpdateBuilding(unit);
   return true;
 }
+
+// СКОЛЬКО ТАКТОВ ЗАНИМАЕТ КЛЕТКА.
+//
+// Цепочка движка, снятая по байтам юнита:
+//
+//   FUN_00416C84   — по битам +0x19 выбирает блок хода: 0x80 бег, 0x04
+//                    боевая стойка, отсюда четвёрка 0x11/0x13/0x01/0x07;
+//   FUN_00429B2C   — VA 0x429B3E, кладёт ПОХОДКУ:
+//                      *(char *)(юнит + 0xFD) = 0x45FE90[блок] − юнит[0x1D];
+//   FUN_0041611C   — VA 0x41612B, каждый такт: `inc byte ptr [eax + 0xFB]`;
+//   FUN_00413894   — `if (юнит[0xFD] <= юнит[0xFB])` -> обнулить +0xFB и
+//                    перейти в следующую клетку.
+//
+// То есть КЛЕТКА = база_блока − скорость(+0x1D) тактов. База из 0x45FE90:
+// ходьба мирная 10, бег мирный 4, ходьба боевая 11, бег боевой 5.
+//
+// Проверка независимая: таблица подшагов 0x459AD4/0x459D14 индексируется
+// самой походкой (VA 0x416157: `shl eax, 5` по байту +0xFD), и смещение,
+// умноженное на походку, даёт ровно переход в соседнюю клетку — (±58, 0),
+// (±29, ±16), (0, ±32) — для всех восемнадцати походок таблицы.
+//
+// Число кадров блока (+0xFE) к скорости отношения НЕ имеет: оно крутит
+// спрайты, и когда кадры кончаются, FUN_0041611C возвращает ноль, а блок
+// заводится заново. Прежняя моя модель «клетка = кадры × такт» давала бегу
+// 702 мс вместо 156…312 и потому была неотличима от канонной ходьбы.
+//: Имена баз в паке — те же четыре блока, что выбирает FUN_00416C84.
+const BLOCK_KEYS = { 0x01: "combat_walk", 0x07: "combat_run",
+                     0x11: "walk", 0x13: "run" };
+
+export function unitCellTicks(unit) {
+  const base = hero.data?.rules?.move_block_ticks ?? {};
+  const running = Boolean(unit.running);
+  const key = BLOCK_KEYS[unitMoveBlock(unit)];
+  const ticks = base[key] ?? (running ? 4 : 10);
+  //: Скорость вычитается «как есть», но клетка короче одного такта не
+  //: бывает: счётчик +0xFB прибавляется раз в такт, поэтому даже нулевая
+  //: походка означает переход на первом же такте.
+  return Math.max(1, ticks - (world.unitSpeed?.(unit) ?? 0));
+}
+
+//: ПОДШАГИ мы не рисуем скачками. Движок каждый такт прибавляет к экранной
+//: точке готовое смещение `0x459AD4[походка][направление]`, то есть за такт
+//: юнит прыгает на `клетка / походка`; на бегу со скоростью 2 это два прыжка
+//: по полклетки. Браузер рисует чаще такта, и мы ведём ту же прямую плавно —
+//: длительность и мгновенная средняя скорость совпадают с движком до такта.
 
 export function heroTryStep(direction, input) {
   return unitTryStep(hero, direction, input);
@@ -650,6 +780,24 @@ export function unitMove(unit, dt, { keyboard = false } = {}) {
       if (unitTryStep(unit, direction, { dx: dx || 1e-6, dy: dy || 1e-6 })) {
         unit.path.shift();
         changed = true;
+      } else if (unit.goalTarget && unit.goal &&
+                 next.row === unit.goal.row && next.col === unit.goal.col &&
+                 unit.goalTarget.cell?.row === next.row &&
+                 unit.goalTarget.cell?.col === next.col) {
+        // ДОШЛИ, НАСКОЛЬКО МОЖНО. Клетку цели держит она сама, и шаг в неё
+        // движок разбирает отдельно (VA 0x415090): для НЕ боевого приказа
+        // он возвращает ноль — приказ снимается, а юнит остаётся стоять
+        // рядом, откуда разговор уже достаёт (мерка 7 на 4 клетки,
+        // VA 0x4115AC).
+        //
+        // У нас выходил вечный круг: планировщику занявшего передают, и он
+        // клетку принимает (0x441441 сверяет её с полем цели), а шаг её
+        // отвергает — путь в один шаг строился заново каждый кадр. Пока
+        // разбор приказа стоял под «юнит не шевелится», это было незаметно;
+        // с гейтом по пустому пути юнит замирал у собеседника навсегда.
+        unit.path = [];
+        unit.goal = null;
+        unit.goalTarget = null;
       } else {
         // Путь перекрыт: перестраиваем к той же цели. Провал заканчивает
         // дело — движок снимает приказ (VA 0x416E24), а не пробует снова.
@@ -682,6 +830,8 @@ export function unitMove(unit, dt, { keyboard = false } = {}) {
       }
     }
   }
+  // Остановился — походка забывается: следующий выход в путь бросает её
+  // заново. Пока идёт, она та же, оттого ход и ровный.
   unit.moving = Boolean(unit.step);
   return changed;
 }
@@ -704,7 +854,20 @@ export function heroTick(now, dt) {
   const advance = Math.floor(hero.frameTime / step);
   if (advance > 0) {
     hero.frameTime -= advance * step;
-    const next = hero.frame + advance;
+    // ЗАМАХ ЖДЁТ НА НУЛЕВОМ КАДРЕ, и это единственное замедление во всём
+    // движке: случаи 5/8/9 разбора такта либо убавляют отсчёт +0xFD, либо
+    // двигают кадр (0x413894:365,471). Правило живёт в units.js/attackWait,
+    // здесь только проедаем счётчик. Вне блока действия он не нужен — иначе
+    // недоеденное ожидание застопорило бы ходьбу.
+    if (!world.isMeleePose?.(hero.pose)) hero.attackWait = 0;
+    let ticks = advance;
+    if (hero.attackWait > 0) {
+      const spent = Math.min(ticks, hero.attackWait);
+      hero.attackWait -= spent;
+      ticks -= spent;
+    }
+    if (ticks <= 0) return active || hero.moving || hero.pose === "idle";
+    const next = hero.frame + ticks;
     if (next < frames.length) {
       hero.frame = next;
     } else if (hero.moving) {
@@ -758,8 +921,11 @@ export function unitMovePose(unit) {
 
 function heroMovePose() { return unitMovePose(hero); }
 
-export function heroSetPose(pose) {
-  if (hero.pose === pose) return;
+//: `force` — как 0x416740: поставить блок ЗАНОВО поверх себя, со сбросом
+//: кадра и подшага. Нужно сбиву (поза 2): повторное попадание начинает
+//: реакцию сначала, что видно в замере — кадр 7→0, 5→0, 3→0.
+export function heroSetPose(pose, force = false) {
+  if (hero.pose === pose && !force) return;
   hero.pose = pose;
   hero.frame = 0;
   hero.frameTime = 0;

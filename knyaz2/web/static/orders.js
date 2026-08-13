@@ -168,6 +168,10 @@ export function orderUnit(unit, row, col, kind, target = null) {
   // Отсюда и «мейн пошёл сразу, а отряд добежал до прежнего места».
   unit.path = [];
   unit.goal = null;
+  //: И ПЕРЕТАЙМЛИВАЕТ ХОД. FUN_00416574, найдя путь, зовёт FUN_00416740, а
+  //: та обнуляет счётчик подшагов +0xFB и ставит якорь на клетку юнита —
+  //: начатый шаг не доигрывается со старой походкой (см. unitRetime).
+  world.unitRetime?.(unit);
   world.onOrder?.(unit, kind, row, col, target);
   return true;
 }
@@ -179,9 +183,10 @@ export function orderSelected(row, col, kind, running = false) {
   for (const unit of selection) {
     if (unit.alive === false) continue;
     unit.orderTarget = null;
-    // Режим движения 1 ставит бит бега (VA 0x416641) — двойной щелчок
-    // посылает бежать весь выбор, а не одного героя.
-    unit.running = running;
+    // Двойной щелчок посылает бежать ВЕСЬ выбор, а не одного героя, и
+    // каждому проверяет ношу отдельно: перегруженному бит бега не ставится
+    // (VA 0x42F22C), поэтому он идёт шагом вместе со всеми.
+    unit.running = running && (world.unitCanRun?.(unit) ?? true);
     if (orderUnit(unit, row, col, kind)) given += 1;
   }
   return given;
@@ -218,6 +223,22 @@ export function orderArrived(unit, handlers = {}) {
     const target = unit.orderTarget;
     const row = unit.orderRow ?? unit.cell?.row;
     const col = unit.orderCol ?? unit.cell?.col;
+    // ОБЫСК ИДЁТ ТОЛЬКО ПО ПРИБЫТИИ. Весь разбор приказа в движке стоит под
+    // одной проверкой (VA 0x4115AC:22):
+    //
+    //     if (юнит[+0x12] == юнит[+0x13] && юнит[+0x14] == юнит[+0x15])
+    //
+    // то есть клетка юнита совпала с клеткой назначения. Не совпала — идёт
+    // не разбор, а перестройка пути (0x416574), и её провал СНИМАЕТ приказ
+    // (там же: `if (путь == 0) FUN_00416E24(юнит)`).
+    //
+    // Здесь стоял только гейт «юнит не идёт», и этого мало: путь к клетке
+    // кучи может не построиться вовсе (занята, непроходима, за стеной), и
+    // тогда стоящий на месте герой открывал кучу с другого конца карты.
+    if (unit.cell && (unit.cell.row !== row || unit.cell.col !== col)) {
+      orderClear(unit);
+      return null;
+    }
     orderClear(unit);
     handlers.take?.(unit, target, { row, col });
     return kind;

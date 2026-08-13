@@ -28,7 +28,8 @@ from konung2.interf import (BELT, BELT_ARROWS, BUTTON_ACTIONS, BUTTON_SPRITES,
 from konung2.items import (BAG_SLOTS, GROUND_PILE_SPRITE, REQUIREMENT_STATS,
                            SLOT_FIELDS, ItemClass, read_items)
 from konung2.world import Building, Cell, Entity, MapModel
-from konung2.kn2 import GRID_H, GRID_W, KN2Map, SEC_FLAG, T_DYNAMIC, T_LIGHT
+from konung2.kn2 import (GRID_H, GRID_W, KN2Map, SEC_FLAG, T_DYNAMIC, T_LIGHT,
+                         interior_slots)
 from konung2.paths import BUILD_DIR, PROJECT_DIR, game_file
 from konung2.progress import CHARACTERISTICS
 from konung2.progress import rules as progression_rules
@@ -44,7 +45,9 @@ from konung2.piles import rules as pile_rules
 from konung2.orders import rules as order_rules
 from knyaz2.content.atlas import AtlasWriter
 from konung2.orders import SELECTION_SPRITES
-from konung2.heroes import ANCHOR_X as HERO_ANCHOR_X, ANCHOR_Y as HERO_ANCHOR_Y
+from konung2.heroes import (gait_steps, move_block_ticks,
+                            ANCHOR_X as HERO_ANCHOR_X,
+                            ANCHOR_Y as HERO_ANCHOR_Y)
 from konung2.cells import rules as cell_rules
 from konung2.creatures import rules as creature_rules
 from konung2.worldmap import MAP_SPRITE, PARTY_SPRITE, PLAYER_SPRITE
@@ -53,7 +56,7 @@ from konung2.worldmap import markers as world_markers
 from konung2.worldmap import rules as worldmap_rules
 from konung2.res import ObjectsRes, read_palettes
 from konung2.heroes import (ACTION_BLOCKS, CROSSBOW_GROUP, DEATH_VARIANTS,
-                            DIRECTION_STEPS, DIRECTIONS, GAIT_CELL_FRACTION,
+                            DIRECTION_STEPS, DIRECTIONS,
                             IDLE_CHANCE, LAYER_AT_REST, LAYER_IN_HAND,
                             LAYER_OFF_HAND, LAYER_OFF_REST, LAYER_SHIELD_BACK,
                             SHIELD_KIND, STANCE_BLOCKS, TWO_HAND_GROUP,
@@ -724,6 +727,10 @@ def _encounter_roster(resolve, remember) -> dict[str, Any]:
                 "level": unit["level"], "hostile": True,
                 "venom": unit.get("venom", 0),
                 "breed": unit.get("breed", 0), "body": unit.get("body", 0),
+                # поза расстановки (+0x17) и счётчик подъёмов (+0xEE):
+                # на них держатся «встающие» твари, см. docs/BESTIARY.md
+                "pose": unit.get("pose", 0),
+                "breed_counter": unit.get("breed_counter", 0),
                 "palette": unit.get("palette", 0),
                 "ranged_mode": unit.get("ranged_mode", False),
                 "poison_on": unit.get("poison_on", {}),
@@ -737,7 +744,16 @@ def _encounter_roster(resolve, remember) -> dict[str, Any]:
                     "strength": current.get("Сила", 10),
                     "accuracy": unit.get("accuracy", 60),
                 },
-                "speed": 2, "sight_cells": 10,
+                # Шесть характеристик целиком — см. пояснение у жителей: байты
+                # +0xC0 и +0xCC есть в записи любого юнита.
+                "characteristics": unit.get("characteristics", {}),
+                "current": current,
+                # РАДИУСА ОБЗОРА В ПАКЕ НЕТ. Здесь стояло `sight_cells: 10` —
+                # число, взятое из головы: в данных игры такого поля нет, и в
+                # движке предела расстояния тоже нет ни в одной функции боя.
+                # Бой начинает и кончает ОТРЯД: зона (VA 0x415B20) и 840
+                # пикселей (VA 0x410784). См. docs/COMBAT_SPEC.md, раздел 11.
+                "speed": 2,
                 "skills": unit.get("skills", {}),
                 "equipment": equipment,
                 "equipment_details": {
@@ -803,19 +819,32 @@ def _scenario_body_shapes(numbers: Iterable[int]) -> set[int]:
     return shapes
 
 
-def _spawn_cell(world_model, resident: dict) -> "Cell | None":
+def _spawn_cell(world_model, resident: dict,
+                taken: set | None = None) -> "Cell | None":
     """Куда встанет юнит: канон VA 0x415764.
 
     Центр зоны отряда плюс случайное смещение в её половину, знак каждой
     оси — свой бросок. До ста попыток найти проходимую клетку; не нашлось —
     юнита на карте не будет, как и в движке.
+
+    КЛЕТКА СЧИТАЕТСЯ СВОБОДНОЙ ПО МЛАДШИМ 12 БИТАМ, а в них движок держит и
+    непроходимость (0xFFF), и НОМЕР СТОЯЩЕГО ЮНИТА плюс один: расстановка
+    пишет его туда сама (0x433070, 0x4338B0). Значит уже занятая клетка для
+    следующего юнита не годится. Здесь проверялась одна проходимость земли —
+    и на одиннадцати картах твари вставали друг на друга, до четырёх на
+    клетку; тестер это и назвал «персонажи налазят».
     """
     zone = resident.get("spawn_zone") or {}
     # Бит «координаты в силе» — юнит встаёт ровно туда, где записан
     # (VA 0x43DF9C). Так стоят жители деревень; рассыпают только тех, у
     # кого бит снят, — звериные отряды с нулями в записи.
     if zone.get("keep_cells"):
-        return Cell(int(resident["row"]), int(resident["col"]))
+        #: Записанные координаты в силе — движок ставит ровно туда и чужой
+        #: занятости не смотрит (0x43DF9C). Так стоят жители деревень.
+        cell = Cell(int(resident["row"]), int(resident["col"]))
+        if taken is not None:
+            taken.add((cell.row, cell.col))
+        return cell
     row_from = int(zone.get("row_from", 0))
     row_to = int(zone.get("row_to", 0))
     col_from = int(zone.get("col_from", 0))
@@ -833,8 +862,13 @@ def _spawn_cell(world_model, resident: dict) -> "Cell | None":
         dcol = 0 if half_cols < 2 else picker.randrange(half_cols)
         col = middle_col + (-1 if picker.randrange(2) == 0 else 1) * dcol
         cell = Cell(row, col)
-        if world_model.terrain.passable(cell):
-            return cell
+        if not world_model.terrain.passable(cell):
+            continue
+        if taken is not None and (cell.row, cell.col) in taken:
+            continue
+        if taken is not None:
+            taken.add((cell.row, cell.col))
+        return cell
     return None
 
 
@@ -1057,8 +1091,18 @@ def _hero_rules() -> dict[str, Any]:
             "beast_death_variants": 1,
             # шанс простоя — жребий 1 из N, пока играет стойка (VA 0x416D92)
             "idle_chance": IDLE_CHANCE,
-            # доля клетки за такт по походкам (VA 0x41615A и 0x416C2C)
-            "gait_cell_fraction": {str(k): v for k, v in GAIT_CELL_FRACTION.items()},
+            # СКОЛЬКО ТАКТОВ ЗАНИМАЕТ КЛЕТКА, по блокам хода — таблица
+            # 0x45FE90. Движок кладёт в походку юнита (+0xFD) разность
+            # «база блока минус скорость (+0x1D)» (VA 0x429B3E) и переводит
+            # юнита в следующую клетку, когда счётчик подшагов +0xFB до неё
+            # дорос (VA 0x41612B прибавляет, VA 0x4143xx сравнивает).
+            "move_block_ticks": move_block_ticks(),
+            # Смещения подшагов: таблицы 0x459AD4 (X) и 0x459D14 (Y), по
+            # восемь чисел на походку в порядке W, NW, N, NE, E, SE, S, SW.
+            # Каждый такт движок прибавляет готовое смещение своего
+            # направления, поэтому смещение × походка — это ровно переход в
+            # соседнюю клетку.
+            "gait_steps": gait_steps(),
         },
     }
 
@@ -1145,7 +1189,12 @@ QUEST_ITEM_GROUP = 11
 POTION_ITEM_CLASSES = range(EMPTY_JAR_CLASS, POTION_WISDOM + 1)
 POTION_ITEM_GROUP = 9
 
-CREATURE_POSES = {"stand": 0, "walk": 1, "hit": 2, "death_1": 3, "attack": 5}
+# У твари блоков анимации шесть (0…5), и БЛОК 4 мы не вывозили вовсе — а это
+# ровно та поза, в которой лежат «встающие»: скелеты, ичетики и кикиморы
+# расставлены в мире с `pose == 4` (VA 0x410010 начинает разбор с проверки
+# «поза 4 и кадр 0 — доигрывай анимацию»). Имя своё: в движке блоки безымянны.
+CREATURE_POSES = {"stand": 0, "walk": 1, "hit": 2, "death_1": 3,
+                  "rise": 4, "attack": 5}
 
 
 def _export_creatures(root: Path, wanted) -> dict[str, Any]:
@@ -1244,6 +1293,7 @@ def _export_hero(root: Path, equipment_layers: dict[int, list[int]] | None = Non
 
     heroes = HeroesRes.from_game()
     palette = read_palettes()[0]
+
     out_dir = Path("assets") / "units"
     (root / out_dir).mkdir(parents=True, exist_ok=True)
     # Все кадры героя, его тел и слоёв экипировки идут на ОБЩИЕ ЛИСТЫ —
@@ -1330,6 +1380,11 @@ def _export_hero(root: Path, equipment_layers: dict[int, list[int]] | None = Non
                for direction in range(DIRECTIONS)]
         for name, kind in ACTION_BLOCKS.items()
     }
+    # НАБОР КОНЧИЛСЯ — ЛИСТЫ НА ДИСК. Дальше кадры анимации не добавляются, а
+    # держать их лист в памяти до конца сборки не на что: наборов больше сотни,
+    # и вместе они в память не влезают. Такой же `seal` стоит после каждого
+    # следующего набора.
+    sheets.seal()
     # Тело в чужой палитре: движок красит юнита целиком, подставляя палитру
     # перед блиттером ([0x8A7318], VA 0x426707), — так один набор кадров
     # служит всем. Мы делаем ровно это: те же записи, другая палитра.
@@ -1348,6 +1403,7 @@ def _export_hero(root: Path, equipment_layers: dict[int, list[int]] | None = Non
                 continue
             frames[str(record)] = {**sheets.add(sprite, f"body{body}"),
                                    "offset_x": dx, "offset_y": dy}
+        sheets.seal()
         if frames:
             body_layers[str(body)] = {"layer": BODY_LAYER_BASE + body, "frames": frames}
 
@@ -1368,6 +1424,7 @@ def _export_hero(root: Path, equipment_layers: dict[int, list[int]] | None = Non
             frames[str(record)] = {
                 **sheets.add(sprite, f"body{body}pal{palette_index}"),
                 "offset_x": dx, "offset_y": dy}
+        sheets.seal()
         if frames:
             body_layers[f"{body}:{palette_index}"] = {
                 "layer": BODY_LAYER_BASE + body,
@@ -1385,6 +1442,7 @@ def _export_hero(root: Path, equipment_layers: dict[int, list[int]] | None = Non
             # ложились под `pal{палитра}` и делили лист.
             frames[str(record)] = {**sheets.add(sprite, f"bodypal{palette_index}"),
                                    "offset_x": dx, "offset_y": dy}
+        sheets.seal()
         bodies[str(palette_index)] = {"frames": frames}
 
     # Слои экипировки: тот же кадр, другой слой записи. Ключ — номер записи,
@@ -1407,6 +1465,7 @@ def _export_hero(root: Path, equipment_layers: dict[int, list[int]] | None = Non
                 frame = export_layer(record, layer, palette_index)
                 if frame is not None:
                     frames[str(record)] = frame
+            sheets.seal()
             entry = {"palette": palette_index, "frames": frames}
             equipment[f"{layer}:{palette_index}"] = entry
             if position == 0:
@@ -1505,7 +1564,7 @@ def _cursors(root: Path) -> dict[str, Any]:
     return {**rules(), "images": pictures}
 
 
-def _add_building_states(buildings: list[dict[str, Any]],
+def _add_building_states(documents: list[dict[str, Any]],
                          settlement: dict[str, Any] | None,
                          assets: _AssetExporter) -> None:
     """Дать постройке картинки всех её состояний.
@@ -1516,11 +1575,33 @@ def _add_building_states(buildings: list[dict[str, Any]],
     лежит ресурс той ступени, на которой постройка сейчас, поэтому соседние
     берутся отсчётом от него. Смещения кадров у всех семи одни и те же —
     они и в заголовке карты, и в самом ресурсе совпадают.
+
+    НЕПОСТРОЕННЫЕ МЕСТА ТОЖЕ НУЖНЫ. Здесь стоял отбор ``if entry["built"]``, и
+    пустая площадка оставалась без лестницы состояний и без ссылки на место
+    деревни. Заложить на ней постройку было можно — действие разговора 40
+    ставит срок, — а вырасти ей было нечем: стройку двигает объект карты, а он
+    про своё место ничего не знал. Из-за этого казарму нельзя было построить
+    ни на одной карте, а изначально она не построена нигде.
+
+    ИСКАТЬ НАДО И СРЕДИ РЕКВИЗИТА. Номер объекта в записи поселения сквозной по
+    всей карте: на Борье постройки занимают 0…8, реквизит 9…132, и площадка
+    казармы — это реквизит 9, колодца — реквизит 123. Пока сюда передавали один
+    список построек, такие места не находились вовсе.
+
+    Сопоставление проверено на построенных: ``ресурс объекта`` минус
+    ``спрайт вида + состояние`` даёт ровно 30 у всех семи мест Борья. Отсчёт
+    лестницы идёт от собственного ресурса объекта, поэтому этот сдвиг сюда не
+    входит.
     """
-    from konung2.buildings import STATE_SPRITES
-    entries = {entry["object"]: entry for entry in (settlement or {}).get("buildings", [])
-               if entry.get("built")}
-    for document in buildings:
+    from konung2.buildings import EMPTY_KIND, STATE_SPRITES
+    # ПУСТОЕ МЕСТО В СЧЁТ НЕ ИДЁТ. У вида 0xFF номер объекта нулевой — это
+    # «ничего не назначено», а не объект ноль. Пока такие места попадали в
+    # словарь, пустое место 5 Борья затирало собой дом старосты, который
+    # объектом ноль владеет по-настоящему.
+    entries = {entry["object"]: entry
+               for entry in (settlement or {}).get("buildings", [])
+               if entry.get("kind") != EMPTY_KIND}
+    for document in documents:
         entry = entries.get(document.get("record_slot"))
         if entry is None:
             continue
@@ -1600,7 +1681,12 @@ def _serialize_entity(entity: Entity, assets: _AssetExporter) -> dict[str, Any]:
             "resolved": bool(frames),
         },
     }
-    if isinstance(entity, Building):
+    # Клетки выгружаем и у реквизита, если они у него есть: пустая площадка
+    # под стройку — реквизит (у её состояния нет стен), но след в сетке за ней
+    # закреплён, и без него достроенную казарму не открыть (VA 0x43F178).
+    if getattr(entity, "cells", None) and (entity.cells.footprint
+                                           or entity.cells.floor
+                                           or entity.cells.routed):
         document["cells"] = {
             "footprint": [[cell.row, cell.col] for cell in entity.cells.footprint],
             "floor": [[cell.row, cell.col] for cell in entity.cells.floor],
@@ -1685,11 +1771,43 @@ def _export_map(number: int, project: Path, root: Path,
                        "height": visual["height"]} if visual else None),
         })
 
+    # ОБСТАНОВКА ИНТЕРЬЕРА (docs/CONTAINERS_SPEC.md). Блок 0x3D384 карты:
+    # тридцать объектов по шестнадцать гнёзд, гнездо 12 байт. Формат тот же,
+    # что у раннего прохода оверлеев, и разбирает их движок одним кодом
+    # (VA 0x43DF48:158-172), поэтому и картинка берётся тем же путём.
+    #
+    # Номер зоны — это НОМЕР ЗАПИСИ ОБЪЕКТА карты: VA 0x425AA8:29 считает его
+    # как `(запись − 0x834768) / 0x24` и зовёт отрисовщик нутра. Рисуются
+    # гнёзда между главным спрайтом постройки и её стенами.
+    #
+    # Палитра из файла не годится: загрузчик перезаписывает её палитрой
+    # самого спрайта — ровно как у оверлеев.
+    furniture: list[dict[str, Any]] = []
+    unresolved_furniture = 0
+    for (zone, nest), slot_data in interior_slots(kn2).items():
+        visual = assets.terrain_overlay(slot_data["sprite"])
+        if visual is None:
+            unresolved_furniture += 1
+        furniture.append({
+            "id": f"legacy:{number}:furniture:{zone}:{nest}",
+            "zone": zone,
+            "nest": nest,
+            "resource_slot": int(slot_data["sprite"]),
+            "palette": int(assets.graph.tile_palette(slot_data["sprite"]) or 0),
+            "position": {"x": int(slot_data["x"]), "y": int(slot_data["y"])},
+            "frame": ({"asset": visual["path"], "width": visual["width"],
+                       "height": visual["height"]} if visual else None),
+        })
+    furniture.sort(key=lambda row: (row["zone"], row["nest"]))
+
     buildings = [_serialize_entity(entity, assets) for entity in world.buildings]
+    props = [_serialize_entity(entity, assets) for entity in world.props]
     # Наборы тварей теперь общие на весь пак и лежат в shared.json — здесь
     # их больше нет (см. _creature_sets).
-    _add_building_states(buildings, scenario.get("village"), assets)
-    props = [_serialize_entity(entity, assets) for entity in world.props]
+    #
+    # Лестницу состояний раздаём ПО ОБОИМ спискам: номер объекта в записи
+    # поселения сквозной, и пустые площадки под стройку лежат среди реквизита.
+    _add_building_states([*buildings, *props], scenario.get("village"), assets)
     unresolved = sum(1 for item in (*buildings, *props)
                      if not item["render_debug"]["resolved"])
 
@@ -1764,6 +1882,7 @@ def _export_map(number: int, project: Path, root: Path,
             "policy": "legacy_low12_nonzero_is_blocked",
             "ground": ground,
             "overlays": overlays,
+            "furniture": furniture,
             "underlay": {
                 "policy": "konung2_exe_0x428505_0x4288D4",
                 "tile": underlay_tile or None,
@@ -1799,6 +1918,8 @@ def _export_map(number: int, project: Path, root: Path,
             "underlay_cells": len(underlay_cells),
             "terrain_overlays": len(overlays),
             "unresolved_terrain_overlays": unresolved_overlays,
+            "furniture": len(furniture),
+            "unresolved_furniture": unresolved_furniture,
             "buildings": len(buildings),
             "props": len(props),
             "unresolved_entities": unresolved,
@@ -2156,10 +2277,6 @@ def _export_scenario(source: Path, world: MapModel, root: Path,
         try:
             from konung2.gamefile import ground_items
             for pile in ground_items(number, game_world):
-                # Куча внутри объекта достаётся обыском его самого, а не
-                # лежит на виду — на карту кладём только напольные.
-                if not pile["on_floor"]:
-                    continue
                 names = []
                 details = []
                 pile_details = pile.get("details") or []
@@ -2178,7 +2295,12 @@ def _export_scenario(source: Path, world: MapModel, root: Path,
                 if not names and not pile["money"]:
                     continue
                 cell = Cell(pile["row"], pile["col"])
-                if not world.terrain.passable(cell):
+                # ПРОХОДИМОСТЬ СПРАШИВАЕМ ТОЛЬКО У НАПОЛЬНОЙ. Куча в гнезде
+                # обстановки лежит внутри дома, и до неё доходят не по её
+                # клетке, а щелчком по самому гнезду (VA 0x421690:213). Клетка
+                # у неё всё равно есть — приказ ведёт к ней, — но требовать от
+                # неё проходимости незачем: сундук и стоит у стены.
+                if pile["on_floor"] and not world.terrain.passable(cell):
                     continue
                 anchor = cell.anchor()
                 out.append({
@@ -2188,6 +2310,23 @@ def _export_scenario(source: Path, world: MapModel, root: Path,
                     # экземплярные крепость/чары/отрава вещей кучи (В10)
                     "details": details,
                     "money": pile["money"],
+                    # СПРЯТАННАЯ КУЧА. Знак поля +0x0F записи (GAME.N,
+                    # таблица 0x2C800) — это не долг, а признак «лежит под
+                    # землёй»: такую не видно и не поднять, пока её не
+                    # раскроет Медное зеркало колдуна или не откопает Лопата
+                    # (VA 0x4115AC, проверка FUN_00434F8C(0x20)).
+                    # На игру их девяносто пять на тридцати двух картах.
+                    # Раньше знак терялся, и все тайники лежали на виду.
+                    "buried": pile["buried"],
+                    # ГДЕ КУЧА ЛЕЖИТ. Байт +0x09 записи: 0xFF — на полу,
+                    # иначе номер ЗОНЫ обстановки, а +0x0A — номер гнезда в
+                    # ней. Загрузчик карты по этой паре вписывает номер кучи
+                    # в само гнездо (VA 0x43DF48:344-352), и через него
+                    # сундук и открывается. Подробности —
+                    # docs/CONTAINERS_SPEC.md.
+                    **({} if pile["on_floor"]
+                       else {"zone": int(pile["place"]),
+                             "nest": int(pile["slot"])}),
                     "cell": {"row": cell.row, "col": cell.col},
                     "position": {"x": anchor.x, "y": anchor.y},
                 })
@@ -2230,6 +2369,9 @@ def _export_scenario(source: Path, world: MapModel, root: Path,
             # карте 33, поэтому там двойника и не было.
             residents = [entry for entry in residents
                          if not _in_player_party(entry.get("index"), game_world)]
+            #: Занятые клетки этой карты: движок держит номер стоящего юнита
+            #: в младших 12 битах клетки, и второй туда уже не встанет.
+            taken_cells: set[tuple[int, int]] = set()
             for resident in residents:
                 equipment = {}
                 source_equipment = (resident.get("equipment_classes") or
@@ -2276,7 +2418,7 @@ def _export_scenario(source: Path, world: MapModel, root: Path,
                 # (VA 0x415764) и берёт первую проходимую клетку из ста
                 # попыток. У зверей в GAME.x стоят нули — без зоны они все
                 # оказывались в углу карты.
-                cell = _spawn_cell(world, resident)
+                cell = _spawn_cell(world, resident, taken_cells)
                 if cell is None:
                     continue
                 anchor = cell.anchor()
@@ -2306,6 +2448,10 @@ def _export_scenario(source: Path, world: MapModel, root: Path,
                     # порода и тело: по ним юнит и выглядит собой (VA 0x424200)
                     "breed": resident.get("breed", 0),
                     "body": resident.get("body", 0),
+                    # поза расстановки и счётчик породы: скелеты, ичетики и
+                    # кикиморы лежат в позе 4 и встают своей анимацией
+                    "pose": resident.get("pose", 0),
+                    "breed_counter": resident.get("breed_counter", 0),
                     # отрава на самих вещах: она в записи предмета, не в классе
                     "poison_on": resident.get("poison_on", {}),
                     # чем торговать: деньги, мешок и должность в деревне
@@ -2325,8 +2471,13 @@ def _export_scenario(source: Path, world: MapModel, root: Path,
                         "strength": current.get("Сила", 10),
                         "accuracy": resident.get("accuracy", 60),
                     },
+                    # ШЕСТЬ ХАРАКТЕРИСТИК ЦЕЛИКОМ, а не три из них в `stats`.
+                    # В записи юнита это байты +0xC0 (свои) и +0xCC (с
+                    # прибавками вещей), и они есть у КАЖДОГО: обучение у
+                    # воеводы (0x4181E8) поднимает их обычному жителю.
+                    "characteristics": resident.get("characteristics", {}),
+                    "current": current,
                     "speed": 2,
-                    "sight_cells": 10,
                     # навыки нужны для точности: она считается по владению
                     # тем, чем юнит бьётся (VA 0x41B4CC)
                     "skills": resident.get("skills", {}),
@@ -2372,7 +2523,6 @@ def _export_scenario(source: Path, world: MapModel, root: Path,
             "stats": {key: int(value)
                       for key, value in (entry.get("stats") or {}).items()},
             "speed": int(entry.get("speed", 2)),
-            "sight_cells": int(entry.get("sight_cells", 10)),
             "equipment": equipment,
             **place(entry),
         })
@@ -2411,20 +2561,50 @@ def _export_scenario(source: Path, world: MapModel, root: Path,
     # один проход по отрядам (VA 0x415B20) смотрит их флаги и зону и решает,
     # объявлять ли бой. Сторона юнита (+0x1B) равна номеру отряда, поэтому
     # клиенту хватает этого списка, чтобы связать зверя с его стаей.
-    warbands = []
-    if number is not None:
+    #
+    # ОТРЯДЫ ЗАВИСЯТ ОТ МИРА — как жители и кучи. Здесь стоял мир по
+    # умолчанию, то есть нулевой, и наборы расходились: на карте 23 в мире
+    # Ратибора стоят отряды 1, 30 и 65, а в мире Эйнара — 0, 1, 2, 31 и 66.
+    # Сторона юнита равна НОМЕРУ его отряда (движок прямо индексирует ею
+    # таблицу: `0x4333A4` берёт `+0x1B` юнита), поэтому у Асбада со стороной
+    # 2 отряда просто не находилось — и действие 37 «поднять отряд
+    # собеседника» поднимать было некого. Стражник не нападал.
+    def warbands_of(game_world):
+        if number is None:
+            return []
         try:
             from konung2.gamefile import map_parties
-            warbands = map_parties(number)
+            return map_parties(number, game_world)
         except (OSError, ValueError, IndexError):
-            warbands = []
+            return []
+
+    warbands_by_world = {str(game_world): warbands_of(game_world)
+                         for game_world in range(6)}
+    warbands = warbands_by_world["0"]
 
     # Поселение карты: постройки, люди и казна (запись 0x4A1 байт).
+    #
+    # ЗАПИСЬ СВОЯ В КАЖДОМ МИРЕ. Здесь стояло `village(number)` — то есть
+    # всегда мир 0, ратиборовский. Разница не косметическая: должностные лица
+    # деревни (пятёрка номеров с +0x3D0) в каждом GAME.N другие — на Борье это
+    # [236,237,238,239] у Ратибора против [229,230,231,232] у Александра.
+    #
+    # На них держится маршрутизация разговора: корневая ветвь спрашивает
+    # обработчиком 30 «занимает ли собеседник должность N» (VA 0x435550), и
+    # если номера чужого мира не совпали ни с одним, разговор проваливается в
+    # последнюю ветвь — безусловную. У деревенских это «Я отдохнул и готов
+    # идти за тобой», реплика наёмника. Первый бета-тестер играл Александром и
+    # получил ровно это от всех торговцев Борья.
+    settlements_by_world: dict[str, dict] = {}
     settlement = None
     if number is not None:
         try:
             from konung2.gamefile import village
-            settlement = village(number)
+            for game_world in range(6):
+                record = village(number, game_world)
+                if record:
+                    settlements_by_world[str(game_world)] = record
+            settlement = settlements_by_world.get("0")
         except (OSError, ValueError, IndexError):
             settlement = None
         # Продукция мастерской обязана приехать в пак классами: мастер куёт
@@ -2478,6 +2658,9 @@ def _export_scenario(source: Path, world: MapModel, root: Path,
 
     return {
         "village": settlement,
+        #: То же поселение по мирам: клиент берёт запись мира своего героя,
+        #: а `village` остаётся ратиборовским для старых сейвов и тестов.
+        "village_by_world": settlements_by_world,
         "events": events,
         "exits": exits,
         "encounters": encounters,
@@ -2499,6 +2682,8 @@ def _export_scenario(source: Path, world: MapModel, root: Path,
         "units_by_world": {str(world): entries
                            for world, entries in units_by_world.items()},
         "warbands": warbands,
+        # Отряды выбранного мира; `warbands` остаётся миром 0 для старых клиентов.
+        "warbands_by_world": warbands_by_world,
     }
 
 
@@ -2565,6 +2750,20 @@ def _hero_party(world: int = 0) -> dict[str, Any] | None:
                 **(member.get("equipment_details") or {}),
                 **(member.get("second_details") or {}),
             }
+            # ДЕРЕВО РАЗГОВОРА СПУТНИКА. У него, как у любого юнита, есть
+            # номер диалога в +0xF2, и в паке он ехал — а само дерево нет.
+            # Из-за этого с собственными спутниками нельзя было заговорить
+            # вовсе: Ctrl по ним ничего не давал, а значит и назначить их на
+            # должность в деревне было нельзя — назначение идёт через разговор
+            # (действие 74). Деревья лежат в QUESTS.RES, и номера спутников
+            # (118 у Путяты, 144 у Тура) на картах не встречаются, взять их
+            # оттуда было неоткуда.
+            if member.get("dialog", 0xFF) != 0xFF:
+                try:
+                    from konung2.quests import Dialogs
+                    member["dialog_tree"] = Dialogs.from_game().tree(member["dialog"])
+                except (OSError, ValueError, IndexError, struct.error):
+                    member["dialog_tree"] = None
         return result
     except (OSError, ValueError, IndexError):
         return None

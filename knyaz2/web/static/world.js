@@ -61,6 +61,15 @@ export function loadMap(map) {
   // Подмешиваем общее: карта несёт только своё место прихода героя.
   if (shared.hero) map.hero = { ...shared.hero, ...(map.hero ?? {}) };
   if (shared.creatures && !map.creatures) map.creatures = shared.creatures;
+  // ПОСЕЛЕНИЕ — ЗАПИСЬ СВОЕГО МИРА, как и отряды (см. warband.js). Пятёрка
+  // должностных лиц деревни в каждом GAME.N своя, а на ней держится
+  // маршрутизация разговора: корневая ветвь спрашивает обработчиком 30, кто
+  // из собеседников какую должность занимает. С чужими номерами не совпадает
+  // ни одна ветвь, и разговор сваливается в безусловную — «Я отдохнул и готов
+  // идти за тобой». Подменяем здесь, одним местом на всех читателей.
+  const worldId = String(map.hero?.template?.world ?? 0);
+  const own = map.village_by_world?.[worldId];
+  if (own) map.village = own;
   world.map = map;
   const terrain = map.terrain ?? {};
   world.ground = [...(terrain.ground ?? [])].sort((a, b) => a.row - b.row || a.col - b.col);
@@ -96,6 +105,12 @@ export function loadMap(map) {
 }
 
 // Всё, что нужно догрузить для этой карты.
+//
+// РАДИУСА ЗДЕСЬ НЕТ И НЕ БУДЕТ. Он тут был — `mapAssetsByRadius` делил землю
+// и постройки на «близко» и «потом». Замер показал, что делить нечего: вся
+// земля с домами на худшей карте это 7.9 МБ, а листы актёров — 34 МБ. Радиус
+// экономил бы единицы процентов ценой дыр в земле, поэтому живёт он теперь
+// только в очереди листов (app.js) и только для актёров.
 export function mapAssets(heroAssets = []) {
   return [
     ...heroAssets,
@@ -115,16 +130,6 @@ export function mapAssets(heroAssets = []) {
   ];
 }
 
-// Кадры тварей идут отдельным списком: их тысячи, и ждать их перед первым
-// кадром незачем — карта показывается, а звери проявляются, как приедут.
-export function creatureAssets() {
-  // Кадры тварей теперь на листах — тянем листы, а не файл на кадр.
-  const sheets = (world.map?.creatures?.sheets ?? []).map((sheet) => sheet.path);
-  const loose = Object.values(world.map?.creatures?.sets ?? {}).flatMap((byPalette) =>
-    Object.values(byPalette).flatMap((poses) =>
-      Object.values(poses).flatMap((directions) =>
-        directions.flatMap((frames) =>
-          frames.filter((frame) => frame.sheet === undefined)
-                .map((frame) => frame.path)))));
-  return [...sheets, ...loose];
-}
+// Списка кадров тварей здесь больше нет: их 83 листа на 43.4 МБ, а на карте
+// встречается горстка пород. Нужный лист заказывает `spriteReady`, когда
+// тварь попадает в кадр, — так же, как листы людей.

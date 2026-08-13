@@ -91,6 +91,9 @@ export const view = {
   dragging: false,
   pointerX: 0,
   pointerY: 0,
+  //: Камера привязана к выбранному лицу — настройка игрока, не канон.
+  //: Ставится из settings.js, по умолчанию выключена.
+  follow: false,
 };
 
 // КАМЕРА НЕ ВЫЕЗЖАЕТ ЗА КРАЙ КАРТЫ (VA 0x4291B4 и 0x437CD0 — там дословно
@@ -108,10 +111,44 @@ export const view = {
 // правило пересчитано в центровую форму: видимая половина = width/2/zoom.
 // Порядок веток сохранён: когда карта уже окна, выигрывает первая, и камера
 // прижимается к левому верхнему углу, а не дёргается между границами.
+//: Предел приближения — наш, отрисовочный: движок масштаба не знал вовсе.
+export const ZOOM_LIMIT = { min: 0.1, max: 2.5 };
+
+// НИЖНИЙ ПРЕДЕЛ МАСШТАБА СЧИТАЕТСЯ ПО САМОЙ КАРТЕ.
+//
+// Одному клампу камеры за край не удержать: когда видимая область СТАНОВИТСЯ
+// ШИРЕ КАРТЫ, двигать её уже некуда — как ни ставь, с одной стороны останется
+// пустота. Значит, предел должен стоять на масштабе: видимая ширина
+// `width / zoom` не смеет превысить ширину рамки карты, и так же по высоте.
+// Отсюда пол — наибольшее из двух отношений, но не ниже общего предела.
+//
+// Рамку считает загрузчик карты по крайним непустым клеткам (VA 0x43DF48), и
+// приезжает она в паке как `coordinates.camera` — та же, по которой движок
+// держит камеру.
+export function zoomFit() {
+  const bounds = world.map?.coordinates?.camera ?? null;
+  if (!bounds) return ZOOM_LIMIT.min;
+  const width = (bounds.right ?? 0) - (bounds.left ?? 0);
+  const height = (bounds.bottom ?? 0) - (bounds.top ?? 0x20);
+  if (width <= 0 || height <= 0) return ZOOM_LIMIT.min;
+  return Math.max(ZOOM_LIMIT.min, view.width / width, view.height / height);
+}
+
+export function zoomClamp(value) {
+  return Math.max(zoomFit(), Math.min(ZOOM_LIMIT.max, value));
+}
+
 export function clampCamera() {
   const bounds = world.map?.coordinates?.camera ?? null;
   if (!bounds) return false;
-  const before = `${view.cameraX},${view.cameraY}`;
+  const before = `${view.cameraX},${view.cameraY},${view.zoom}`;
+  // Масштаб поджимаем ПЕРВЫМ: половины вида считаются уже от него, и после
+  // этого «карта уже окна» стать не может — обе ветки ниже работают как
+  // задумано, а не прижимают камеру к углу.
+  const zoomWas = view.zoom;
+  view.zoom = zoomClamp(view.zoom);
+  //: Поджали сами — значит и подпись с процентами обязана это показать.
+  if (view.zoom !== zoomWas) updateZoom();
   const halfW = view.width / 2 / view.zoom;
   const halfH = view.height / 2 / view.zoom;
   const left = bounds.left ?? 0, right = bounds.right ?? 0;
@@ -120,6 +157,28 @@ export function clampCamera() {
   else if (view.cameraX + halfW > right) view.cameraX = right - halfW;
   if (view.cameraY - halfH < top) view.cameraY = top + halfH;
   else if (view.cameraY + halfH > bottom) view.cameraY = bottom - halfH;
+  return before !== `${view.cameraX},${view.cameraY},${view.zoom}`;
+}
+
+// КАМЕРА ЗА ВЫБРАННЫМ ЛИЦОМ — НАША НАСТРОЙКА, А НЕ КАНОН.
+//
+// В движке камеру двигают ровно два места: курсор у края экрана (VA 0x437CD0)
+// и наведение при загрузке карты (VA 0x4291B4). Сама за героем она не ходит
+// никогда — идущий персонаж спокойно уходит за край окна.
+//
+// На телефоне не работает ни то, ни другое: курсора у края не бывает, средней
+// кнопки — нашей замены краевой прокрутке — тоже нет. Поэтому по желанию
+// игрока камера просто держит выбранного в середине окна, как в Diablo II.
+// Плавность берётся даром: юнит и так едет между клетками по долям такта, а
+// кламп не пускает камеру за край карты — тем же правилом, что и в движке.
+export function cameraFollow(target) {
+  if (!view.follow) return false;
+  const x = target?.x, y = target?.y;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+  const before = `${view.cameraX},${view.cameraY}`;
+  view.cameraX = x;
+  view.cameraY = y;
+  clampCamera();
   return before !== `${view.cameraX},${view.cameraY}`;
 }
 
@@ -207,6 +266,9 @@ export function resize() {
   view.dpr = Math.max(1, window.devicePixelRatio || 1);
   canvas.width = Math.round(view.width * view.dpr);
   canvas.height = Math.round(view.height * view.dpr);
+  //: Окно выросло — прежний масштаб мог стать слишком мелким для карты.
+  //: Сюда же приходит поворот телефона и вход в полный экран.
+  clampCamera();
 }
 
 export function visibleWorld() {

@@ -5,6 +5,7 @@
 import { clockLabelNode, clockMoonNode, clockRunNode, clockTimeNode } from "./dom.js";
 import { clock } from "./clock.js";
 import { world } from "./world.js";
+import { DAY_FIXED, dayNightRuns } from "./settings.js";
 
 // ПОСТОЯННОЕ ОСВЕЩЕНИЕ КАРТЫ (таблица 0x4617B0, семь карт из 53).
 //
@@ -125,6 +126,14 @@ export function daylightSet(time) {
 // суток больше нет.
 export function clockTick(now) {
   daylight.lastTick = now;
+  // СУТКИ ВЫКЛЮЧЕНЫ — ДЕРЖИМ ВЕЧНОЕ ПОЗДНЕЕ УТРО. В движке это делает та же
+  // галочка настроек: при нулевом `_DAT_008495B4` расчёт освещения первым же
+  // условием отдаёт уровень ноль и никуда дальше не идёт (VA 0x4295D8).
+  if (!dayNightRuns()) {
+    if (daylight.time === DAY_FIXED) return false;
+    daylightSet(DAY_FIXED);
+    return true;
+  }
   if (!clockRunNode.checked || !daylightCurve().length) return false;
   if (!clock.elapsed) return false;
   const before = daylight.levels;

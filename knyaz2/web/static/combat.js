@@ -7,8 +7,18 @@
 //   3. броня цели:  своя (unit+0xF4) плюс сила одежды, доспеха и щита
 //                   (VA 0x41A414: поля +0x5A, +0x5C и +0x5E)
 //   4. урон:        max(0, сила * 0.7 - броня) + сила * 0.3
-//   5. итог:        round(урон / выносливость(unit+0xD1) + 1) * 16
+//   5. итог:        ТРУНК( (урон / выносливость(unit+0xD1) + 1) * 16 )
 //   6. здоровье:    i16 unit+0x4E; если здоровья не больше урона — смерть
+//
+// ПОРЯДОК В ПЯТОМ ШАГЕ ВАЖЕН, и раньше он был записан здесь неверно («round
+// (...) * 16»). Дизассемблер 0x41C02C-0x41C05C: `fdivp; fld1; faddp; fmul
+// qword [0x450150]; call 0x442BF0; fistp` — сперва делят на выносливость,
+// прибавляют единицу, УМНОЖАЮТ на шестнадцать и лишь в самом конце усекают к
+// нулю. Итог поэтому шестнадцати НЕ кратен: живой замер дал 24, 25, 26, 54,
+// 56, 63, 68, 71, 76, 79, 89, 95, 99 — и все они больше или равны 16, как и
+// требует формула при нулевом уроне. Сам код (ниже) всегда считал верно.
+// Константы прочитаны из exe: 0x450138 = 0.1, 0x450140 = 0.7, 0x450148 = 0.3,
+// 0x450150 = 16.
 //
 // Сила удара — поле +0x04 класса предмета (VA 0x41A59E), дальность боя —
 // поле +0x10 (VA 0x414C01): у ближнего оружия 1 клетка, у составного лука
@@ -19,22 +29,26 @@
 import { world } from "./world.js";
 import { actorAttackPose, actorFrames, actorItem, actorItemName, actorReach,
          actorWeapon } from "./actor.js";
-import { hero, heroCellAt, heroFree, heroOrderTo, heroPlayAction, heroSetPose,
-         heroDie } from "./hero.js";
+import { hero, heroAnchor, heroCellAt, heroFree, heroOrderTo, heroPlayAction,
+         heroSetPose, heroDie } from "./hero.js";
 import { actorInstanceMaps, canStrike, cellRange, unitAt, unitDamage,
-         units } from "./units.js";
+         units, withinReach } from "./units.js";
 import { unitFighting, warbandDeclare, warbandPlayerAttacks, warbandSwing,
          warbands } from "./warband.js";
 import { isSelected, orderArrived, orderClear, orderKinds, orderSelected,
          orderWaitTalk, selectionFallback,
          orderUnit, select, selection, withinTalk } from "./orders.js";
 import { projectileFire, projectilesTick } from "./projectiles.js";
-import { loot, lootNear, lootTake } from "./loot.js";
-import { tradeOpen } from "./trade.js";
 import { roundHalfEven } from "./round.js";
+import { loot, lootHidden, lootInNest, lootNear, lootTake } from "./loot.js";
+import { furnitureAt } from "./furniture.js";
+import { tradeOpen } from "./trade.js";
+//: Округление сопроцессора здесь больше не нужно: все расчёты боя движок
+//: заканчивает усечением (0x442BF0), см. docs/COMBAT_SPEC.md, раздел 9б.
+//: `roundHalfEven` остаётся верным для торговли, зелий и сроков работ.
 import { identifyRoll } from "./jewels.js";
 import { ammoSpend, ammoStack, weaponModeRefresh } from "./inventory.js";
-import { healthMax, poisonAdd, weaponPoison } from "./effects.js";
+import { healthMax, healthSet, poisonAdd, weaponPoison } from "./effects.js";
 import { buildingAtCell, buildingIgnite } from "./buildings.js";
 import { carryDrop, carrying } from "./carry.js";
 import { bonusAccuracy, bonusArmour, bonusStrike,
@@ -50,12 +64,14 @@ const ARMOUR_PART = 0.7;
 const DIRECT_PART = 0.3;
 const DAMAGE_SCALE = 16;
 
-//: Такт ударов — наш: движок отмеряет его тиками анимации, а не секундами.
-const HERO_COOLDOWN = 0.7;
+//: ОТДЕЛЬНОГО ТАКТА УДАРОВ У ГЕРОЯ НЕТ — он такой же юнит. Темп задаёт блок
+//: замаха: 12 кадров по одному за такт плюс обратный отсчёт +0xFD на нулевом
+//: кадре (0x413894:365,471 и 0x416B50, владелец правила — attackWait в
+//: units.js). Мид-замах и без того закрыт проверкой `acting`, так что стоявшая
+//: здесь HERO_COOLDOWN = 0.7 просто добавляла паузу поверх канонной.
 
 export const combat = {
   target: null,        // враг, к которому идём
-  cooldown: 0,
   pickup: null,        // предмет, к которому идём
   pendingHit: null,
   log: [],             // последние события боя, для отладки
@@ -92,7 +108,11 @@ export function statsOf(actor, distance = 0, hand = "main") {
   if (actor.beast) {
     const beast = rules?.beast_accuracy ?? { factor: 0.5, base: 100 };
     const dexterity = stats.parry ?? 0;
-    stats.accuracy = Math.round(
+    // ТРУНК, А НЕ ОКРУГЛЕНИЕ (VA 0x41AE16). Движок перед `fistp` зовёт
+    // 0x442BF0, а тот ставит режим сопроцессора «к нулю» (старший байт
+    // контрольного слова 0x1F, RC=11) и делает `frndint` — то есть отсекает
+    // дробную часть. См. docs/COMBAT_SPEC.md, раздел 9б.
+    stats.accuracy = Math.trunc(
       beast.base - (beast.base - dexterity * beast.factor) * beast.factor);
     return stats;
   }
@@ -135,7 +155,8 @@ export function weaponAccuracy(actor, distance = 0) {
   let value = skills[index] ?? 0;
   const reach = weapon?.range_cells ?? 0;
   if (ranged && distance && reach) {
-    value = Math.round(value - distance * (rules.range_penalty ?? 0.3) / reach);
+    //: Тоже трунк (VA 0x41AEA7), а не округление — тот же 0x442BF0.
+    value = Math.trunc(value - distance * (rules.range_penalty ?? 0.3) / reach);
   }
   return value;
 }
@@ -158,6 +179,22 @@ export function offHandAccuracy(actor) {
   }
   const both = skills[hero.data?.rules?.attack_by_item?.melee?.skill ?? 1] ?? 0;
   return Math.trunc(both * (skills[index] ?? 0) / 100);
+}
+
+// БОЙ НЕ ПЕРЕЕЗЖАЕТ С КАРТЫ НА КАРТУ. Здесь лежат прямые ссылки на юнитов:
+// цель, начатый замах и намеченная куча. Юниты новой карты — другие объекты,
+// и без сброса первый же кадр доводил бы удар по тому, кого мы покинули, а
+// герой бежал бы к его прежним пикселям.
+//
+// В движке отдельного сброса не нужно: цель боя живёт в тех же полях приказа
+// (`+0x10` и младшая половина `+0x16`), а расстановка отряда на новой карте
+// гасит их всем — и вожаку тоже (`юнит[+0x16] &= 0xF0`, VA 0x415238:67 и 133).
+// У нас эти поля разнесены по двум модулям, поэтому и сброса два: приказ
+// чистит `partyRegroup`, ссылки боя — эта функция.
+export function combatDropTargets() {
+  combat.target = null;
+  combat.pendingHit = null;
+  combat.pickup = null;
 }
 
 export function combatSetup() {
@@ -183,10 +220,7 @@ export function combatSetup() {
   // его «полностью здоровым» 640 из 640.
   hero.maxHealth = healthMax();
   hero.alive = true;
-  combat.target = null;
-  combat.pickup = null;
-  combat.cooldown = 0;
-  combat.pendingHit = null;
+  combatDropTargets();
   combat.log = [];
   world.armourOf = armourOf;
   // Приход по приказу — общий путь для героя и спутников (VA 0x4115AC).
@@ -213,7 +247,7 @@ export function combatSetup() {
   // движок только пересчитывает юнита и смотрит, не умер ли он.
   world.onPoisonDamage = (unit, poison) => {
     if (unit === hero) {
-      hero.health = Math.max(0, hero.health - poison);
+      healthSet(hero, hero.health - poison);
       if (hero.health <= 0) { hero.alive = false; heroDie(); }
       combat.log.push(`отрава: герой теряет ${poison}`);
       return;
@@ -237,8 +271,35 @@ export function combatSetup() {
   // поднимать героя, не сбросив её, — значит оставить его без ударов.
   if (!hero.data?.animations?.[hero.stance]?.[hero.pose]) heroSetPose("stand");
   // Юнит бьёт свою цель: чужой — героя или спутника, свой — врага.
-  world.onUnitStrike = (unit) => {
+  // РУКА ПРИХОДИТ ОТ КАДРА. Таблица 0x45FE90 у одноручного замаха даёт два
+  // кадра: 7 — гнездо 0, 9 — гнездо 4. Бить обеими руками разом, как делал
+  // `meleeStrikes`, теперь нельзя — вышло бы по четыре удара за замах.
+  world.onUnitStrike = (unit, hand = "main") => {
     const target = unit.target ?? hero;
+    // БРОСОК КИКИМОРЫ (VA 0x41BB10, ветка породы 0x53). Она единственная,
+    // кому оружие для снаряда не нужно вовсе: условие запуска — «порода 0x53
+    // ИЛИ в руке что-то есть». Её снаряд собирается по своим правилам:
+    //
+    //     отрава  = её собственная (+0xF6)
+    //     точность = ЛОВКОСТЬ как есть (+0xCD), а не расчёт 0x41ADD8
+    //     дальность = 0x28, константой, а не из таблицы классов
+    //     сила    = ROUND(Сила(+0xD0) * 0.04 * здоровье(+0x4E) * 0.0625)
+    //
+    // Формулу силы Ghidra съела (FPU), снята дизассемблером 0x41BC21-0x41BC3D:
+    // fild [Сила]; fmul 0.04; fild [здоровье]; fmulp; fmul 0.0625; fistp.
+    // При полном здоровье 1600 это ровно «Сила × 4», а раненая кидает слабее.
+    //
+    // Движок пускает снаряд на кадре 8 её анимации, у нас — в общий миг
+    // удара (кадр «всего − 2»): разница в пару кадров и не видна.
+    if (kikimoraSpits(unit) && target) {
+      const current = currentCharacteristics(unit);
+      projectileFire(unit, target, current[1] ?? 0,
+        { range_cells: KIKIMORA_RANGE },
+        { strength: kikimoraStrength(unit, current), venom: unit.venom ?? 0,
+          side: unit.side ?? 0 });
+      combat.log.push(`${unit.name} кидается`);
+      return "бросок";
+    }
     // Стрельба: удар не приходит мгновенно — сначала летит стрела
     // (VA 0x41BB10 создаёт снаряд, а урон считается, когда он долетел).
     if (unit.rangedMode && unit.equipment?.ranged && target) {
@@ -261,7 +322,7 @@ export function combatSetup() {
       combat.log.push(`${unit.name} стреляет`);
       return "выстрел";
     }
-    const result = meleeStrikes(unit, target);
+    const result = strike(unit, target, { hand });
     combat.log.push(`${unit.name} -> ${target === hero ? "герой" : target.name}: ${result}`);
     if (target !== hero && !target.alive) combat.log.push(`${target.name} убит`);
     return result;
@@ -303,7 +364,10 @@ function mightTerm(actor, scale) {
   const strength = actor.characteristics
     ? (currentCharacteristics(actor)[4] ?? 0)
     : (actor.stats?.strength ?? 0);
-  return roundHalfEven(strength * scale * (actor.health ?? 0) *
+  //: Трунк (VA 0x41A82D, 0x41A930, 0x41A96F — все три ветки силы). Здесь
+  //: стоял roundHalfEven: он верен для голого `fistp`, но в бою перед ним
+  //: идёт 0x442BF0 с режимом «к нулю».
+  return Math.trunc(strength * scale * (actor.health ?? 0) *
     (set?.health ?? 0.0625));
 }
 
@@ -338,6 +402,22 @@ export function strengthOf(actor, hand = "main") {
 // Дальность боя — из того же предмета: 1 клетка мечом, 15 составным луком.
 // Разбор общий с юнитами и живёт в actor.js, чтобы обе стороны боя мерили
 // дальность одинаково (в движке это один код для всех, VA 0x414AF8).
+//: Порода Кикиморы и дальность её броска — константа 0x28 из 0x41BB10.
+const BREED_KIKIMORA = 0x53;
+const KIKIMORA_RANGE = 0x28;
+
+//: Кидается ли эта тварь: только Кикимора, и оружие ей не нужно.
+function kikimoraSpits(unit) {
+  return ((unit?.breed ?? 0) & 0x7F) === BREED_KIKIMORA;
+}
+
+//: Сила её броска (0x41BC21: Сила * 0.04 * здоровье * 0.0625, округление
+//: движковым ROUND к чётному).
+function kikimoraStrength(unit, current) {
+  const strength = current[4] ?? 0;
+  return roundHalfEven(strength * 0.04 * (unit.health ?? 0) * 0.0625);
+}
+
 export function reachOf(actor) { return actorReach(actor); }
 
 // Снять прочность с надетой вещи и, если она кончилась, сломать её.
@@ -455,7 +535,7 @@ export function strike(attacker, defender,
     const open = parryRules?.directions
       ?.[defender.direction ?? 0]?.[attacker.direction ?? 0];
     if ((open === undefined || open !== 0) &&
-        chance() <= roundHalfEven(
+        chance() <= Math.trunc(
           defenderStats.parry * (parryRules?.melee_scale ?? 0.5))) {
       sfxHit(defender, "parry");
       return "парировано";
@@ -478,7 +558,10 @@ export function strike(attacker, defender,
   const strength = shot ? shot.strength : strengthOf(attacker, hand);
   const armour = armourOf(defender);
   const raw = Math.max(0, strength * ARMOUR_PART - armour) + strength * DIRECT_PART;
-  const damage = Math.round((raw / Math.max(1, defenderStats.toughness) + 1) * DAMAGE_SCALE);
+  // ТРУНК (VA 0x41C2DC у ближнего, 0x41C057 у выстрела). Формула и все три
+  // константы сверены с командами: `fmul 0.7 / fsub броня / fcompp -> 0`,
+  // затем `+ сила*0.3`, `/ стойкость`, `+1`, `*16` и 0x442BF0.
+  const damage = Math.trunc((raw / Math.max(1, defenderStats.toughness) + 1) * DAMAGE_SCALE);
   sfxHit(defender, "hit");
   applyDamage(defender, damage, attacker);
   // Отрава прибавляется к цели тем же ударом: движок кладёт её в глобаль
@@ -495,21 +578,12 @@ export function strike(attacker, defender,
   return venom ? `урон ${damage}, отрава +${venom}` : `урон ${damage}`;
 }
 
-// Ближний размен за одну анимацию. Блок 9 «удар двумя руками» бьёт ДВАЖДЫ:
-// основной рукой на кадре 7 и второй на кадре 9 (VA 0x412480, оба полубайта
-// константы 0x45FE98); у остальных блоков ударный кадр один (0x45FE90).
-// Порт резолвит оба удара в своей точке анимации, второй — своим броском
-// точности (offHandAccuracy) и силой предмета щитового гнезда.
-export function meleeStrikes(attacker, defender) {
-  const first = strike(attacker, defender);
-  if (defender.alive === false) return first;
-  if (actorAttackPose(hero.data, attacker) !==
-      (hero.data?.rules?.attack_by_item?.melee?.second_hand_free ?? "attack_one_hand")) {
-    return first;
-  }
-  const second = strike(attacker, defender, { hand: "off" });
-  return `${first}; второй рукой: ${second}`;
-}
+//: РАЗМЕНА «ОБЕИМИ РУКАМИ РАЗОМ» БОЛЬШЕ НЕТ. Стоявший здесь `meleeStrikes`
+//: наносил оба удара в одной точке анимации, и правило «блок 9 бьёт дважды»
+//: жило ВТОРЫМ владельцем — рядом с таблицей кадров. Теперь рука приходит от
+//: кадра (STRIKE_FRAME в units.js): 7 — гнездо 0, 9 — гнездо 4, и вызывающий
+//: сам зовёт `strike` нужной рукой. Замер подтвердил разнос по кадрам, а не
+//: одновременность: между двумя ударами одного замаха ровно два такта.
 
 // Порог реакции на удар (В6 разгадан): 0x41C194 возвращает −1 при уроне
 // меньше 0x30 («слабый»), 0 при обычном и 1 при смертельном; вызывающий
@@ -520,15 +594,19 @@ const HIT_REACTION = 0x30;
 
 function applyDamage(defender, damage, attacker = null) {
   if (defender === hero) {
-    hero.health = Math.max(0, hero.health - damage);
+    healthSet(hero, hero.health - damage);
     if (hero.health <= 0) {
       hero.alive = false;
       // крик смерти (0x429B2C, наборы 3/0xB/0xC) — герой мимо units.setPose
       sfxDeathCry(hero);
       heroDie();
-    } else if (damage >= HIT_REACTION && hero.data?.animations?.actions?.hit &&
-               !hero.data.animations.actions[hero.pose]) {
-      heroSetPose("hit");
+    } else if (damage >= HIT_REACTION && hero.data?.animations?.actions?.hit) {
+      // СБИВАЕТ И ПОСРЕДИ ЗАМАХА. Здесь стояло условие «только если герой
+      // ничем не занят», и оттого замах героя не прерывался НИКОГДА. В
+      // движке 0x413894:442 зовёт 0x416740(жертва, 2) без единой проверки:
+      // код 0 из 0x41C194 — и реакция ставится поверх чего угодно, со
+      // сбросом кадра. Замер: 23 сбива из 27 оборвали замах на кадре 5-6.
+      heroSetPose("hit", true);
       sfxHurtCry(hero);          // реакция на удар (набор 2)
     }
     return;
@@ -536,11 +614,59 @@ function applyDamage(defender, damage, attacker = null) {
   unitDamage(defender, damage, attacker);
 }
 
+// CTRL ПО СВОЕМУ — «ПОДОЙТИ И ЗАГОВОРИТЬ».
+//
+// Разбор щелчка смотрит на флаг 0x8495AC, и это Ctrl: главный цикл ставит
+// его по виртуальной клавише 0x11, а Shift (0x10) поднимает другой флаг,
+// 0x849608 — «добавить к выбору» (VA 0x438A00:44). С зажатым Ctrl движок
+// вместо выбора пишет ИГРОКУ приказ 0x22 и номер этого юнита целью, то есть
+// игрок идёт к нему разговаривать.
+//
+// ДВЕ ДОРОГИ, ОДИН КОД. В движке это две ветки одной функции разбора
+// щелчка, и обе пишут одно и то же:
+//
+//     щелчок по юниту В МИРЕ (VA 0x421690:279)
+//         if (0x8495AC) { игрок[+0x16] = 0x22; игрок[+0x10] = номер; }
+//     щелчок по ПОРТРЕТУ на панели (VA 0x421690:349)
+//         if (0x8495AC) { игрок[+0x16] = 0x22; игрок[+0x10] = номер; }
+//
+// Портрет доходит сюда так: попадание ищется по таблице прямоугольников
+// панели (VA 0x43AEF0 -> 0x43B5F8 по таблице 0x460EB4, шестнадцать записей),
+// и портрет отряда даёт код `место * 0x100 + 1`, а пустое место — −1
+// (сверка с числом бойцов отряда, +0x1C). Младший байт кода меньше двух —
+// это и есть «портрет», дальше ветка та же.
+//
+// Через этот разговор спутника и назначают на должность в деревне: действие
+// 74 работает с собеседником.
+export function orderTalkTo(who, running = false) {
+  if (!who || who === hero || !hero.alive) return false;
+  if (!(who.ally || who.side === hero.side)) return false;
+  if (!hasTalk(who) || hero.stance === "combat") return false;
+  orderUnit(hero, who.cell?.row, who.cell?.col, orderKinds().talk, who);
+  // Байт приказа движок пишет ЦЕЛИКОМ: 0x22, а не одну младшую половину
+  // (VA 0x421690:280). Старший разряд 0x20 значит «иду по приказу».
+  hero.orderByte = 0x22;
+  orderWaitTalk(who);
+  // ИДЁМ В КЛЕТКУ СОБЕСЕДНИКА, а не рядом с ней. Здесь во всех трёх
+  // подходах — разговор со своим, обыск лежачего и разговор с чужим —
+  // стояло `who.y + 40`, то есть точка на сорок пикселей ниже. Она
+  // бывает непроходимой, и тогда пути нет вовсе: замер на карте 23 дал
+  // 0 шагов к точке `+40` при 10 шагах в саму клетку.
+  //
+  // Движок целится именно в клетку: приказ 0x22 несёт номер цели в
+  // `+0x10`, путь строит `0x416574`, а занятую клетку пропускает
+  // `0x441441` по сверке с этим полем. Остановка выходит сама собой —
+  // шаг в занятую клетку разбирает `0x415090`, и для приказа НЕ боевого
+  // вида он возвращает ноль: приказ снимается, юнит встаёт рядом.
+  heroOrderTo(who.x, who.y, running);
+  return true;
+}
+
 // Приказ по клику: враг — бить, лежащий предмет — поднять, иначе идти.
 // Щелчок по миру. Порядок проверок — из движка (VA 0x421690, ветка кода
 // 0): несомая вещь, свой, лежачий, чужой, куча, пустая клетка. Ничего
 // своего в этом порядке нет.
-export function orderAt(x, y, running = false, add = false) {
+export function orderAt(x, y, running = false, add = false, talk = false) {
   if (!hero.alive) return false;
   const kinds = orderKinds();
   // Несём вещь: щелчок по миру её роняет, и ложится она в клетку самого
@@ -552,6 +678,9 @@ export function orderAt(x, y, running = false, add = false) {
   const cell = heroCellAt(x, y);
   const who = unitAt(x, y, true);
   if (who) {
+    // CTRL ПО СВОЕМУ — ЗАГОВОРИТЬ, А НЕ ВЫБРАТЬ (VA 0x421690:279).
+    // Та же ветка ловит и щелчок по портрету на панели — см. orderTalkTo.
+    if (talk && orderTalkTo(who, running)) return true;
     // Свой — это ВЫБОР, а не приказ (VA 0x41ECB8 -> 0x423F80).
     if (who === hero || who.ally) {
       select(who, add);
@@ -566,7 +695,7 @@ export function orderAt(x, y, running = false, add = false) {
         orderUnit(unit, who.cell?.row, who.cell?.col, kinds.take, who);
       }
       if (!isSelected(hero)) return true;
-      heroOrderTo(who.x, who.y + 40, running);
+      heroOrderTo(who.x, who.y, running);
       return true;
     }
     // Чужой с разговором — подойти и заговорить. Разговор в движке ведёт
@@ -578,7 +707,7 @@ export function orderAt(x, y, running = false, add = false) {
       // Собеседник останавливается СРАЗУ, а не когда игрок дойдёт: движок
       // кладёт ему приказ 0x0C в тот же миг (VA 0x410A08, случай 2).
       orderWaitTalk(who);
-      heroOrderTo(who.x, who.y + 40, running);
+      heroOrderTo(who.x, who.y, running);
       return true;
     }
     // Иначе это враг: бьют все выбранные, и герой среди них — только если
@@ -610,6 +739,20 @@ export function orderAt(x, y, running = false, add = false) {
       return true;
     }
   }
+  // СУНДУК ПОД МЫШЬЮ. Гнездо обстановки с кучей — тот же приказ «обыскать»,
+  // только цель у него ОТРИЦАТЕЛЬНАЯ (номер кучи), а клетка берётся из самой
+  // записи кучи (VA 0x421690:213 -> 0x41F518). Проверка стоит здесь же, где
+  // в движке: после несомой вещи и до разбора пустой клетки.
+  const chest = furnitureAt(x, y);
+  if (chest?.pile?.cell) {
+    combat.target = null;
+    orderSelected(chest.pile.cell.row, chest.pile.cell.col, kinds.take, running);
+    if (!isSelected(hero)) return true;
+    orderUnit(hero, chest.pile.cell.row, chest.pile.cell.col, kinds.take,
+              chest.pile);
+    const at = heroAnchor(chest.pile.cell.row, chest.pile.cell.col);
+    return heroOrderTo(at.x, at.y, running);
+  }
   // Куча под мышью — идём к ней и обыскиваем.
   const pile = lootNear(x, y);
   if (pile) {
@@ -617,7 +760,18 @@ export function orderAt(x, y, running = false, add = false) {
     orderSelected(pile.cell?.row, pile.cell?.col, kinds.take, running);
     if (!isSelected(hero)) return true;
     orderUnit(hero, pile.cell?.row, pile.cell?.col, kinds.take, pile);
-    return heroOrderTo(pile.x, pile.y, running);
+    // ИДЁМ В КЛЕТКУ КУЧИ, А НЕ В ЕЁ ПИКСЕЛИ. Приказ несёт клетку (+0x13 и
+    // +0x15), и путь движок строит именно к ней (0x416574) — пиксели кучи в
+    // расчёт не идут вовсе.
+    //
+    //: Проверено: сегодня это ничего не меняет. Сборщик кладёт куче
+    //: `position` РОВНО якорем её клетки (builder.py, `piles_of`), и на всех
+    //: 1960 кучах пака пересчёт пикселей обратно в клетку даёт ту же клетку.
+    //: Правка снимает зависимость от этого совпадения: разойдись они хоть
+    //: раз — и герой доходил бы до соседней клетки, а куча всё равно
+    //: открывалась.
+    const at = heroAnchor(pile.cell.row, pile.cell.col);
+    return heroOrderTo(at.x, at.y, running);
   }
   // ПУСТАЯ КЛЕТКА. Приказ «идти» уходит только на клетку, младшие 12 бит
   // которой нулевые: там либо номер стоящего юнита, либо 0xFFF «глухая».
@@ -643,7 +797,8 @@ function heroStrike(unit) {
   const pose = actorAttackPose(hero.data, hero);
   if (!heroPlayAction(pose)) return false;
   sfxSwing(hero);              // звук замаха ставится с анимацией (0x429B2C)
-  combat.cooldown = HERO_COOLDOWN;
+  // Стрельбе отсчёт не положен — у неё свой случай разбора такта, без +0xFD.
+  hero.attackWait = pose.startsWith("shoot") ? 0 : (world.attackWait?.(hero) ?? 1);
   combat.pendingHit = { unit, pose, declared: false };
   return true;
 }
@@ -663,8 +818,31 @@ function resolvePendingHit() {
     pending.declared = true;
     warbandSwing(hero, pending.unit, units);
   }
-  if (hero.frame < Math.floor(frames.length / 2)) return;
-  combat.pendingHit = null;
+  // КАДР УДАРА — ТАБЛИЦА ДВИЖКА (0x45FE90 + блок позы, см. STRIKE_FRAME в
+  // units.js), а не середина анимации: у замаха с щитом это кадр 5, у
+  // двуручного и одноручного — 7, у выстрела «всего − 6». Середина блока из
+  // двенадцати кадров дала бы шестой, и удар уходил бы позже, чем в
+  // оригинале. Незнакомую позу по-прежнему бьём серединой.
+  //
+  // РУК У ЗАМАХА МОЖЕТ БЫТЬ ДВЕ, и каждая бьёт СВОИМ кадром: у одноручного
+  // это 7 (гнездо 0) и 9 (гнездо 4). Поэтому замах не закрывается первым же
+  // ударом — он ведёт список уже отработавших рук и кончается, когда отдали
+  // все. Замер: такт 543611 «#424 −97» на кадре 7 и 543613 «#424 −25» на
+  // кадре 9 — один замах, одна жертва, две руки.
+  const hits = world.strikeFrames?.(hero.pose, frames.length) ?? [];
+  const plan = hits.length ? hits
+    : [{ frame: Math.floor(frames.length / 2), hand: "main" }];
+  pending.done = pending.done ?? [];
+  for (const step of plan) {
+    if (hero.frame < step.frame || pending.done.includes(step.hand)) continue;
+    pending.done.push(step.hand);
+    heroStrikeWith(pending, step.hand);
+  }
+  if (pending.done.length >= plan.length) combat.pendingHit = null;
+}
+
+// Один удар одной рукой — тело прежнего resolvePendingHit.
+function heroStrikeWith(pending, hand) {
   if (pending.unit.alive) {
     if (hero.rangedMode && hero.equipment?.ranged) {
       // Без стрел выстрела нет: движок тратит по одной на кадр выстрела
@@ -682,7 +860,7 @@ function resolvePendingHit() {
       combat.log.push(`герой стреляет, стрел ${hero.ammoCount ?? 0}`);
       return;
     }
-    const result = meleeStrikes(hero, pending.unit);
+    const result = strike(hero, pending.unit, { hand });
     combat.log.push(`герой -> ${pending.unit.name}: ${result}`);
     // Опыт за убитого начисляет сам strike — убийце, в миг смерти.
     if (combat.log.length > 40) combat.log.shift();
@@ -715,7 +893,6 @@ function directionTo(from, to) {
 }
 
 export function combatTick(dt) {
-  if (combat.cooldown > 0) combat.cooldown = Math.max(0, combat.cooldown - dt);
   // Долетевшая стрела бьёт цель по тем же правилам, что и рука.
   if (projectilesTick(dt, (shot) => {
     // Зажигательная стрела не бьёт, а поджигает — и деревня в любом случае
@@ -738,7 +915,13 @@ export function combatTick(dt) {
 
   // Приказ дошёл: движок смотрит младшую половину байта приказа и решает
   // — заговорить, обыскать или ничего (VA 0x4115AC).
-  if (hero.orderKind && !hero.moving) {
+  //
+  // ГЕЙТ — ПУСТОЙ МАРШРУТ, а не «юнит не шевелится». В движке весь разбор
+  // стоит под `*юнит == -1`, то есть буфер шагов исчерпан. У нас маршрут
+  // лежит списком, и `moving` поднимается лишь на следующем такте: между
+  // выдачей приказа и первым шагом герой ещё «стоит», хотя дорога уже
+  // построена. Без `path` разбор успевал отработать в этой щели.
+  if (hero.orderKind && !hero.moving && !hero.path?.length) {
     // Разговор начинается из игрового цикла, а не из щелчка, поэтому
     // интерфейс будит сам обработчик прихода.
     unitArrived(hero);
@@ -750,28 +933,56 @@ export function combatTick(dt) {
 
   const distance = distanceCells(hero, target);
   const acting = Boolean(hero.data?.animations?.actions?.[hero.pose]);
-  if (distance <= reachOf(hero)) {
+  // Соседство, а не мерка расстояния: у изометрической сетки сосед с севера
+  // отличается на две строки, и `cellRange` даёт для него двойку. Движок
+  // ближнюю цель берёт перебором восьми направлений (VA 0x4107EC), см.
+  // `withinReach` в units.js. Без этого герой, стоящий строго над врагом,
+  // не бил его и упирался в занятую клетку.
+  if (withinReach(hero, target, distance, reachOf(hero))) {
     if (hero.moving) heroOrderTo(hero.x, hero.y);
+    // ВПЛОТНУЮ ЛУК УБИРАЕТСЯ САМ, и герой тут не исключение — у юнитов это
+    // уже сделано (units.js, тот же порог). В движке переход не отдельная
+    // логика, а побочный эффект решения ударить рукой: флаг стрельбы живёт в
+    // байте +0xEE (его ставит 0x412FF4: `+0xEE = (+0x50 && +0x5A) ? 1 : 0`,
+    // то есть «есть боеприпас и есть метательное»), а выбор ближнего замаха
+    // 0x416B50 первой же строкой пишет туда ноль.
+    //
+    // Без этого герой с луком у самого носа врага не делал НИЧЕГО: стрелять
+    // ближе трёх клеток нельзя, а на меч он не переходил. Замер оригинала: все
+    // пять переходов лук → одноручный случились, когда враг был на дальности 1.
+    const closeCells = hero.data?.rules?.accuracy?.ranged_min_cells ?? 3;
+    if (hero.rangedMode && distance < closeCells) hero.rangedMode = false;
     // Стрелять можно НЕ ВСЕГДА: движок проверяет одно и то же для всех —
     // не ближе трёх клеток и чистая линия огня (VA 0x414AF8: `if (iVar2 < 3)
     // return 0xffffffff` и марш по клеткам траектории с отказом на глухой).
     // Приказ атаки игрока идёт тем же путём юнитов, поэтому герой не
     // исключение: раньше он стрелял в упор и сквозь стены, тратя стрелы.
     if (!canStrike(hero, target, distance)) return false;
-    if (!acting && combat.cooldown <= 0) {
+    if (!acting) {
       hero.direction = directionTo(hero, target);
       heroStrike(target);
       return true;
     }
     return false;
   }
-  // Далеко — идём к цели. Целимся не в саму клетку врага: живой юнит её
-  // занимает, и маршрут туда не строится в принципе.
+  // ДАЛЕКО — ИДЁМ В САМУ КЛЕТКУ ЦЕЛИ, как ходят юниты и как ходит движок.
+  //
+  // Здесь стояло «целимся не в саму клетку врага: живой юнит её занимает, и
+  // маршрут туда не строится в принципе», и герой отправлялся в точку за 52
+  // пикселя до врага. Обоснование было неверным, и это стоило игроку самого
+  // боя: замер на карте 23, герой (121,39), Асбад (121,36) —
+  //
+  //     путь в промежуточную клетку (121,37)   0 шагов, её просто нет
+  //     путь прямо в клетку цели               5 шагов
+  //
+  // Планировщик занятую клетку принимает, если ему передать того, кто её
+  // занял, — а `heroOrderTo` уже кладёт туда `hero.orderTarget`, который
+  // щелчок по врагу проставил. Ровно то же делает движок: приказ 0x61 пишет
+  // номер цели в `+0x10`, `0x416574` строит путь В КЛЕТКУ ЦЕЛИ, `0x441441`
+  // сверяет занявшего с этим полем и пропускает, а шаг в занятую клетку
+  // `0x415090` переводит в удар `0x416B50`.
   if (!acting && !hero.moving) {
-    const dx = hero.x - target.x;
-    const dy = hero.y - target.y;
-    const length = Math.hypot(dx, dy) || 1;
-    heroOrderTo(target.x + (dx / length) * 52, target.y + (dy / length) * 52, true);
+    heroOrderTo(target.x, target.y, true);
     return true;
   }
   return false;
@@ -789,9 +1000,21 @@ export function unitArrived(unit) {
   return orderArrived(unit, {
     talk: (_, target) => { dialogStart(target); world.onTalk?.(target); },
     take: (who, target, at) => {
-      // Куча ищется ПО КЛЕТКЕ, как в движке (VA 0x4149F8): в приказе её
-      // не хранят, поэтому полагаться на сохранённую цель нельзя.
-      const found = target ?? (at ? pileAtCell(at.row, at.col) : null);
+      // КУЧА ИЩЕТСЯ ПО КЛЕТКЕ, как в движке (VA 0x4149F8): в приказе её не
+      // хранят вовсе — раздача приказа обнуляет `+0x10` (0x4240BC), — и дойдя,
+      // юнит перебирает кучи, сравнивая строку и столбец со своими.
+      //
+      // Здесь стояло `target ?? поиск по клетке`, то есть ровно наоборот:
+      // сохранённая цель ПЕРЕБИВАЛА поиск. Пока клетка сходилась, разницы не
+      // было, но стоило приказу дожить до разбора с чужой клеткой — и куча
+      // открывалась с любого расстояния. Теперь клетка решает, а цель годится
+      // только своя: до сундука и бочки по клетке не добраться (у них
+      // `+0x09 != 0xFF`, см. pileAtCell), поэтому для них цель и оставлена —
+      // но лишь тогда, когда она лежит В ТОЙ ЖЕ клетке, куда шли.
+      const byCell = at ? pileAtCell(at.row, at.col) : null;
+      const sameCell = target?.cell && at
+        && target.cell.row === at.row && target.cell.col === at.col;
+      const found = byCell ?? (sameCell ? target : null);
       if (!found) return;
       if (found.items) openPile(found, who);
       else openBody(found, who);
@@ -800,10 +1023,33 @@ export function unitArrived(unit) {
 }
 
 // Куча в клетке — перебор куч со сравнением строки и столбца (VA 0x4149F8).
+//
+// СПРЯТАННУЮ отдаём только с ЛОПАТОЙ. В движке (VA 0x4115AC) ветка обыска
+// по клетке отказывает так:
+//
+//     если клетка помечена (бит 0x20) и куча спрятана (+0x0F < 0)
+//        и FUN_00434F8C(0x20) == 0     // Лопаты в мешке нет
+//     -> контейнер «не найден»
+//
+// Класс 0x20 — «Лопата». Без неё тайник не откапывается, даже если игрок
+// стоит ровно на нём.
 function pileAtCell(row, col) {
   if (row == null || col == null) return null;
-  return loot.find((pile) => !pile.taken && pile.items?.length &&
+  //: Куча в гнезде обстановки по клетке НЕ находится: `FUN_004149F8` сверяет
+  //: `+0x09 == 0xFF` и берёт только напольные. До сундука добираются щелчком
+  //: по нему самому, и его номер приезжает целью приказа.
+  const found = loot.find((pile) => !pile.taken && pile.items?.length &&
+    !lootInNest(pile) &&
     pile.cell?.row === row && pile.cell?.col === col) ?? null;
+  if (found && lootHidden(found) && !hasShovel()) return null;
+  return found;
+}
+
+//: Есть ли Лопата в мешке — перенос FUN_00434F8C(0x20): движок перебирает
+//: сорок две ячейки и сравнивает КЛАСС вещи с заданным.
+function hasShovel(actor = hero) {
+  const shovel = hero.data?.rules?.craft?.shovel_class ?? 32;
+  return (actor.bag ?? []).some((name) => actorItem(name)?.index === shovel);
 }
 
 export function openPile(pile, finder = hero) {
@@ -813,8 +1059,21 @@ export function openPile(pile, finder = hero) {
     pile.enchant[index] = identifyRoll(hero, word);
   }
   if (pile.money) {
-    hero.money = (hero.money ?? 0) + pile.money;
-    combat.log.push(`из кучи: ${pile.money} монет`);
+    // ДЕНЬГИ БЕРУТСЯ ПО МОДУЛЮ. В движке (VA 0x4115AC) это
+    //
+    //     iVar3 = FUN_00442B7E(контейнер[+0x0F]);   // а FUN_00442B7E — abs()
+    //     *(int *)(_DAT_0084951C + 0x26) += iVar3;  // деньги игроку
+    //
+    // Отрицательное число в поле денег значит «клад зарыт»: обыскать такой
+    // можно только с Лопатой в мешке (класс 0x20, проверка FUN_00434F8C).
+    // Без модуля клад отнимал бы монеты.
+    //
+    // ОГОВОРКА ЧЕСТНАЯ: в поставочных данных отрицательных денег НЕТ ни в
+    // одной из 2052 записей всех шести миров, так что это защита от чужих
+    // сейвов и правок, а не починка видимой ошибки.
+    const taken = Math.abs(pile.money);
+    hero.money = (hero.money ?? 0) + taken;
+    combat.log.push(`из кучи: ${taken} монет`);
     pile.money = 0;
   }
   select(finder);

@@ -24,11 +24,16 @@ import { units } from "./units.js";
 import { loot } from "./loot.js";
 import { dialog } from "./dialog.js";
 import { daylight } from "./daylight.js";
-import { village } from "./village.js";
-import { placeAt, worldMap, worldMapSetup } from "./worldmap.js";
-import { mapStatePack, mapStateUnpack } from "./mapstate.js";
+import { village, villagePack, villageUnpack } from "./village.js";
+import { knownPack, knownUnpack, placeAt, worldMap,
+         worldMapSetup } from "./worldmap.js";
+import { mapStatePack, mapStateUnpack, packPile } from "./mapstate.js";
+import { warbandsApply, warbandsPack } from "./warband.js";
 
 const KEY = "knyaz2.save.v1";
+//: Предыдущее сохранение. Пишется перед каждой удачной записью, читается
+//: только если основное пропало или испортилось.
+const BACKUP = "knyaz2.save.v1.prev";
 
 //: Что берём у любого члена отряда — героя и спутников одинаково: в движке
 //: они и есть одна сущность.
@@ -101,6 +106,87 @@ function packActor(actor) {
     // лицо (+0xEF) — тоже поле записи юнита: по нему берётся портрет
     face: actor.face ?? 0,
   };
+}
+
+// ЧУЖОЙ ЮНИТ В СЕЙВЕ. Мешок, навыки и характеристики ему не нужны: их никто
+// не менял, карта отдаст их из пака теми же. Нужно то, что меняет ИГРА, —
+// в записи движка это поля +0x12/+0x14 (клетка), +0x13/+0x15 (куда идёт),
+// +0x16 (занятие), +0x10 (кого бьёт), +0x17 (поза), +0x18 (направление),
+// +0x19 (стойка), +0x1B (сторона), +0x4E (здоровье), +0x52 (отрава).
+// Буфер шагов +0x00 не храним намеренно: путь перестроится из занятия и
+// клетки назначения, а в сейве от него пользы нет.
+//: Пометка игрока в поле цели: своего `id` у героя нет, он живёт вне списка.
+const HERO_MARK = "hero";
+
+function packFoe(unit) {
+  return {
+    id: unit.id ?? null,
+    slot: unit.slot ?? 0,
+    side: unit.side ?? 0,
+    cell: unit.cell ? { ...unit.cell } : null,
+    x: unit.x, y: unit.y,
+    direction: unit.direction ?? 6,
+    pose: unit.pose ?? "stand",
+    stance: unit.stance ?? "peace",
+    health: unit.health ?? null,
+    alive: unit.alive !== false,
+    poison: unit.poison ?? 0,
+    orderByte: unit.orderByte ?? 0,
+    orderRow: unit.orderRow ?? null,
+    orderCol: unit.orderCol ?? null,
+    // Кого бьёт (+0x10) — по `id`, ссылками сейв не хранит. У движка игрок —
+    // такой же юнит с номером записи, а у нас он живёт отдельно и `id` не
+    // имеет вовсе; поэтому ему отдельная пометка. Без неё терялся ровно тот
+    // случай, ради которого всё и затевалось: «за мной гонятся».
+    target: unit.target ? (unit.target === hero ? HERO_MARK : unit.target.id ?? null) : null,
+    workRest: unit.workRest ?? 0,
+    ally: Boolean(unit.ally),
+  };
+}
+
+//: Разложить обратно. Юниты к этому мигу уже расставлены картой, ищем по id.
+function applyFoes(saved) {
+  for (const record of saved ?? []) {
+    const unit = units.find((live) => live.id != null && live.id === record.id);
+    if (!unit) continue;
+    if (record.cell) unit.cell = { ...record.cell };
+    if (Number.isFinite(record.x)) unit.x = record.x;
+    if (Number.isFinite(record.y)) unit.y = record.y;
+    unit.direction = record.direction ?? unit.direction;
+    unit.pose = record.pose ?? unit.pose;
+    unit.frame = 0;
+    unit.frameTime = 0;
+    unit.stance = record.stance ?? unit.stance;
+    if (record.health != null) unit.health = record.health;
+    unit.alive = record.alive !== false;
+    unit.poison = record.poison ?? 0;
+    if (Number.isFinite(record.side)) unit.side = record.side;
+    unit.orderByte = record.orderByte ?? 0;
+    unit.orderKind = (record.orderByte ?? 0) & 0x0F;
+    if (record.orderRow != null) unit.orderRow = record.orderRow;
+    if (record.orderCol != null) unit.orderCol = record.orderCol;
+    unit.workRest = record.workRest ?? 0;
+    if (record.ally) unit.ally = true;
+    // Путь перестроится сам: держать его в сейве незачем, а вот стоячие
+    // остатки прошлого хода мешают — юнит поехал бы к старой клетке.
+    // ПУСТОЙ СПИСОК, А НЕ null: буфер шагов у движка всегда есть (+0x00,
+    // пустой помечается 0xFF), и весь тик ходьбы читает `path.length` без
+    // оглядки. С `null` первый же кадр падал на «Cannot read length of null».
+    unit.path = [];
+    unit.step = null;
+    unit.moving = false;
+  }
+  // Цели ставим ВТОРЫМ проходом: тот, кого бьют, мог сам ещё не найтись.
+  const byId = new Map(units
+    .filter((unit) => unit?.id != null)
+    .map((unit) => [unit.id, unit]));
+  byId.set(HERO_MARK, hero);
+  for (const record of saved ?? []) {
+    if (!record.target) continue;
+    const unit = units.find((live) => live.id != null && live.id === record.id);
+    if (unit) unit.target = byId.get(record.target) ?? null;
+  }
+  return true;
 }
 
 function applyActor(actor, saved) {
@@ -189,24 +275,30 @@ export function saveState(mapNumber) {
     party_members: hero.party?.members ?? null,
     clock: daylight.time,
     hero: packActor(hero),
-    // Спутники: только свои, чужие юниты карта расставит сама.
+    // Спутники — своим упаковщиком: у них есть мешок, навыки и нажитое.
     party: units.filter((unit) => unit.ally).map(packActor),
+    // ЧУЖИЕ ЮНИТЫ И ФЛАГИ ОТРЯДОВ. Здесь стояло «чужих карта расставит сама»,
+    // и это прямо против движка: сейв пишет память БЛОКАМИ (VA 0x423CB8), и
+    // среди них весь массив юнитов `0x7B3C08` размером 0x7D000 — две тысячи
+    // записей по 0x100 — и весь массив отрядов `0x71E56C` (0xC800, двести
+    // записей). То есть сохраняется ВСЁ: где стоит враг, куда он шёл, кого
+    // бьёт, сколько у него здоровья, и поднят ли у отряда флаг боя `+0x1D`
+    // с флагами войны `+0x1E`/`+0x1F`. Порт же расставлял чужих заново из
+    // пака — и погоня после загрузки распадалась: преследователи возвращались
+    // по своим местам и забывали про игрока.
+    foes: units.filter((unit) => !unit.ally).map(packFoe),
+    warbands: warbandsPack(),
     // Что уже подобрано: храним, каких куч БОЛЬШЕ НЕТ.
     lootTaken: (world.map?.loot ?? [])
       .map((entry) => entry.id)
       .filter((id) => id != null && !loot.some((pile) => pile.id === id)),
     // В оригинале сохраняется вся таблица куч. Это нужно и при частично
     // разобранной куче: оставшиеся экземпляры несут собственные поля.
-    loot: loot.map((pile) => ({
-      id: pile.id ?? null,
-      items: [...(pile.items ?? [])],
-      details: (pile.details ?? []).map((detail) => ({ ...(detail ?? {}) })),
-      enchant: [...(pile.enchant ?? [])],
-      money: pile.money ?? 0,
-      x: pile.x, y: pile.y,
-      cell: pile.cell ? { ...pile.cell } : null,
-      taken: pile.taken ?? false,
-    })),
+    // Упаковщик кучи ОДИН и живёт в памяти карт: здесь была вторая копия с
+    // перечислением полей руками, и она отставала — теряла «спрятана» (тайник
+    // после загрузки оказывался на виду) и пару «зона, гнездо» (сундук
+    // становился обычной кучей на полу).
+    loot: loot.map(packPile),
     quests: [...dialog.quests.entries()],
     // Биты «подойди и заговори» — часть ТОГО ЖЕ блока состояний (0x6A50E8),
     // который движок пишет в сейв целиком (0x423CB8). Без них сохранение
@@ -231,7 +323,19 @@ export function saveState(mapNumber) {
       timer: village.timer ?? 0,
       stock: { ...(village.stock ?? {}) },
       lastTime: village.lastTime ?? null,
+      // ДОЛЖНОСТИ (+0x3D0, пять слов) и СЧЁТЧИК ОТРЯДА ДЕРЕВНИ (+0x1C).
+      // Первое ставит действие 74, второе растёт при каждом «Останься
+      // здесь» (0x4338B0) и решает, примут ли следующего. Без них
+      // назначенный староста и оставленный спутник откатывались бы
+      // загрузкой, а место в деревне освобождалось само собой.
+      officials: [...(village.data.officials ?? [])],
+      squadPeople: village.data.squad_people ?? 0,
     } : null,
+    // ВСЕ ПОСЕЛЕНИЯ, А НЕ ТОЛЬКО ЗДЕШНЕЕ. Движок пишет блок 0x83D408 целиком
+    // (0x423CB8, 0x378C байт) — двенадцать записей разом, потому что деревня
+    // живёт независимо от того, где сейчас игрок. Поле `village` выше
+    // оставлено ради старых сохранений.
+    villages: villagePack(),
     // ПОСТРОЙКИ: ступень и счётчик. Стройка, пожар и пепелище — состояние
     // мира, а не карты, и после загрузки не должны откатываться к тому, что
     // лежит в паке.
@@ -252,6 +356,11 @@ export function saveState(mapNumber) {
     worldMap: {
       cells: worldMap.cells ? worldMap.cells.map((row) => row.slice()) : null,
       x: worldMap.x, y: worldMap.y, onMap: worldMap.onMap,
+      // ЧТО ИГРОК УЗНАЛ О МЕСТАХ — наш `0x8442A0`. Туман над значком и знание
+      // имени в движке ставятся вместе (0x436908), но живут порознь, поэтому
+      // и сохранять надо оба: без этого после загрузки все места снова
+      // становятся «Неизвестное место».
+      known: knownPack(),
     },
   };
 }
@@ -296,18 +405,61 @@ export function saveGame(mapNumber) {
     console.warn("сохранение пропущено: состояние не прошло проверку", state);
     return false;
   }
+  const text = JSON.stringify(state);
+  // ЗАПАСНАЯ КОПИЯ ПЕРЕД ЗАПИСЬЮ. Хранилище одно, и неудачная запись сверху
+  // прежде оставляла игрока вообще без сохранения. Теперь предыдущее уходит
+  // во второй ключ, и одна сорвавшаяся запись больше не стоит всей партии.
   try {
-    localStorage.setItem(KEY, JSON.stringify(state));
+    const прежнее = localStorage.getItem(KEY);
+    if (прежнее && прежнее !== text) localStorage.setItem(BACKUP, прежнее);
+  } catch { /* места нет — тем важнее записать САМО сохранение, идём дальше */ }
+  try {
+    localStorage.setItem(KEY, text);
+    saveTrouble = null;
     return true;
   } catch (error) {
+    // МОЛЧА ТЕРЯТЬ СОХРАНЕНИЕ НЕЛЬЗЯ. Здесь стояло только `console.warn`, и
+    // игрок ни о чём не узнавал: жмёшь «сохранить», тебе ничего не говорят, а
+    // записи нет. Хранилище могло быть переполнено, данные сайта запрещены,
+    // окно открыто в приватном режиме — причин много, и все молчаливые.
+    saveTrouble = describeTrouble(error);
     console.warn("сохранить не вышло:", error);
+    world.onSaveTrouble?.(saveTrouble);
     return false;
   }
 }
 
+//: Последняя беда с записью — её показывает меню. Пусто, пока всё хорошо.
+let saveTrouble = null;
+export function saveTroubleText() { return saveTrouble; }
+
+function describeTrouble(error) {
+  const имя = error?.name || "";
+  if (имя === "QuotaExceededError" || имя === "NS_ERROR_DOM_QUOTA_REACHED") {
+    return "хранилище браузера переполнено — сохранение НЕ записано";
+  }
+  if (имя === "SecurityError") {
+    return "браузер запретил данные сайта — сохранение НЕ записано "
+      + "(приватное окно или блокировка хранилища)";
+  }
+  return `сохранение НЕ записано: ${error?.message || имя || "неизвестная беда"}`;
+}
+
 export function savedGame() {
   try {
-    const text = localStorage.getItem(KEY);
+    let text = localStorage.getItem(KEY);
+    // ОСНОВНОЕ ИСПОРЧЕНО ИЛИ ПРОПАЛО — БЕРЁМ ЗАПАСНОЕ. Прежде такая пропажа
+    // означала конец партии; теперь у нас есть копия предыдущей записи, и
+    // терять всё из-за одной сорвавшейся записи больше не нужно.
+    if (!usableText(text)) {
+      const запас = localStorage.getItem(BACKUP);
+      if (usableText(запас)) {
+        console.warn("основное сохранение не годится — беру запасную копию");
+        world.onSaveTrouble?.("основное сохранение пропало, "
+          + "загружена предыдущая запись");
+        text = запас;
+      }
+    }
     const saved = text ? JSON.parse(text) : null;
     if (saved && !saveUsable(saved)) {
       // Не удаляем сами: бут, не получив сейва, доедет до конца и запишет
@@ -330,6 +482,40 @@ export function saveHealth() {
     return { present: true, usable: saveUsable(JSON.parse(text)) };
   } catch {
     return { present: true, usable: false };
+  }
+}
+
+function usableText(text) {
+  if (!text) return false;
+  try { return saveUsable(JSON.parse(text)); } catch { return false; }
+}
+
+// ВЫГРУЗКА И ЗАГРУЗКА ФАЙЛОМ.
+//
+// Хранилище браузера — вещь ненадёжная и чужая: его чистит «очистить данные
+// сайта», его не бывает в приватном окне, и оно СВОЁ у каждого адреса, так что
+// партия с локального сервера на боевом не видна. Файл на диске от всего этого
+// не зависит, и он же переносит игру между машинами.
+export function saveExport() {
+  const text = localStorage.getItem(KEY);
+  if (!usableText(text)) return null;
+  const метка = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
+  return { text, name: `knyaz2-${метка}.json` };
+}
+
+//: Возвращаем беду словами, а не бросаем: зовущему надо показать её игроку.
+export function saveImport(text) {
+  let разобрано;
+  try { разобрано = JSON.parse(text); }
+  catch { return "это не файл сохранения: не разбирается"; }
+  if (!saveUsable(разобрано)) return "файл не похож на сохранение этой игры";
+  try {
+    const прежнее = localStorage.getItem(KEY);
+    if (прежнее) localStorage.setItem(BACKUP, прежнее);
+    localStorage.setItem(KEY, JSON.stringify(разобрано));
+    return null;
+  } catch (error) {
+    return describeTrouble(error);
   }
 }
 
@@ -367,6 +553,12 @@ export function applySave(saved) {
     live.side = mate.side ?? hero.side ?? live.side;
     live.hostile = false;
   }
+  // ЧУЖИЕ — ПОСЛЕ СВОИХ. Порядок не косметика: цель врага может указывать на
+  // спутника, а тот к этому мигу должен быть уже разложен. Флаги отрядов
+  // поднимаем следом: на них смотрит и рассудок твари (гейт `+0x1D` в
+  // 0x410010), и удержание боя.
+  applyFoes(saved.foes);
+  warbandsApply(saved.warbands);
   if (Array.isArray(saved.loot)) {
     loot.splice(0, loot.length, ...saved.loot.map((pile) => ({
       ...pile,
@@ -401,7 +593,16 @@ export function applySave(saved) {
     village.timer = saved.village.timer ?? 0;
     village.stock = { ...(saved.village.stock ?? {}) };
     village.lastTime = saved.village.lastTime ?? null;
+    if (Array.isArray(saved.village.officials)) {
+      village.data.officials = [...saved.village.officials];
+    }
+    if (Number.isFinite(saved.village.squadPeople)) {
+      village.data.squad_people = saved.village.squadPeople;
+    }
   }
+  //: Новый формат — все поселения разом; старый (`village`) разобран выше и
+  //: описывает только ту деревню, где игрок сохранился.
+  if (Array.isArray(saved.villages)) villageUnpack(saved.villages);
   for (const entry of saved.buildings ?? []) {
     const object = (world.objects ?? [])[entry.index];
     if (!object?.states) continue;
@@ -413,6 +614,7 @@ export function applySave(saved) {
     worldMap.wandering = saved.wandering.map((record) => ({ ...record }));
   }
   if (saved.worldMap?.cells) worldMap.cells = saved.worldMap.cells.map((r) => r.slice());
+  if (Array.isArray(saved.worldMap?.known)) knownUnpack(saved.worldMap.known);
   // Через placeAt, а не полем: клетка отряда ВЫВОДИТСЯ из точки, и ставить
   // её отдельно нельзя — разъедутся. А выводится она по правилам сетки,
   // которые появляются только в worldMapSetup — boot применяет сохранение

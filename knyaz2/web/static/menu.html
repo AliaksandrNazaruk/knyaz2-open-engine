@@ -2,7 +2,13 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <link rel="manifest" href="/manifest.json">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="/icon-192.png">
   <title>Князь 2 — Кровь Титанов</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/menu.css">
@@ -67,13 +73,10 @@
         <div class="options">
           <label class="option">
             <span class="option__name">Сложность</span>
-            <select class="option__input" id="opt-difficulty">
-              <option value="0">Ученик</option>
-              <option value="1">Воин</option>
-              <option value="2">Витязь</option>
-              <option value="3">Богатырь</option>
-              <option value="4">Князь</option>
-            </select>
+            <!-- Ступени заполняет menu.js из difficulty.js: там же лежат
+                 множители, которые читает игра, — разъехаться названиям и
+                 числам негде. -->
+            <select class="option__input" id="opt-difficulty"></select>
             <span class="option__hint" id="opt-difficulty-hint"></span>
           </label>
           <label class="option">
@@ -88,6 +91,33 @@
                    min="0" max="100" step="5">
             <span class="option__hint" id="opt-sound-hint"></span>
           </label>
+          <!-- Камера за выбранным — наша уступка телефону, а не канон: в
+               оригинале камеру водит только курсор у края экрана. -->
+          <label class="option">
+            <span class="option__name">Камера</span>
+            <input class="option__input" id="opt-follow" type="checkbox">
+            <span class="option__hint" id="opt-follow-hint"></span>
+          </label>
+          <!-- Бег по умолчанию: с пальца двойное касание ловится плохо. -->
+          <label class="option">
+            <span class="option__name">Всегда бегом</span>
+            <input class="option__input" id="opt-run" type="checkbox">
+            <span class="option__hint" id="opt-run-hint"></span>
+          </label>
+          <!-- Полный экран просится на первое касание в самой игре: без
+               жеста игрока браузер его не даёт (fullscreen.js). -->
+          <label class="option">
+            <span class="option__name">Во весь экран</span>
+            <input class="option__input" id="opt-fullscreen" type="checkbox">
+            <span class="option__hint" id="opt-fullscreen-hint"></span>
+          </label>
+          <!-- Галочка из самого движка: KONUNG2.CFG, флаг 0x8495B4. При нуле
+               расчёт освещения отдаёт уровень ноль — день навсегда. -->
+          <label class="option">
+            <span class="option__name">Смена дня и ночи</span>
+            <input class="option__input" id="opt-daynight" type="checkbox">
+            <span class="option__hint" id="opt-daynight-hint"></span>
+          </label>
         </div>
         <button class="screen__back" type="button" data-back>Назад</button>
       </section>
@@ -97,6 +127,15 @@
       <section class="screen" id="screen-slots" hidden aria-label="Сохранения">
         <h2 class="screen__title" id="slots-title">Загрузить игру</h2>
         <div class="slots" id="slots"></div>
+        <!-- ФАЙЛ НА ДИСКЕ КАК ЗАПАСНОЙ ВЫХОД. Хранилище браузера чужое: его
+             сносит очистка данных сайта, его нет в приватном окне, и оно своё
+             у каждого адреса. Отдельными пунктами меню это не сделать —
+             пункты там картинками из INTERF.RES, а поддельных спрайтов заводить
+             не станем; здесь же обычные кнопки уместны. -->
+        <div class="slots__file">
+          <button class="screen__back" type="button" data-action="export">Выгрузить в файл</button>
+          <button class="screen__back" type="button" data-action="import">Загрузить из файла</button>
+        </div>
         <button class="screen__back" type="button" data-back>Назад</button>
       </section>
 

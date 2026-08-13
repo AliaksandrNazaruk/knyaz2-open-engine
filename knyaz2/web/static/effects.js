@@ -20,11 +20,40 @@ import { unitFighting } from "./warband.js";
 import { grantExperience } from "./progress.js";
 // движковый ROUND (0x442BF0) — fistp, округление к чётному
 import { roundHalfEven } from "./round.js";
+import { clockPhaseHits } from "./clock.js";
+import { villageTraining } from "./village.js";
+import { villageBrew, villageForge } from "./shops.js";
 
 function rules() { return world.map?.hero?.rules?.effects ?? null; }
 
 export function poisonTickEvery() { return rules()?.poison?.tick_every ?? 16; }
 export function healthMax() { return rules()?.health?.max ?? 1600; }
+
+// ОДНА ТОЧКА ИЗМЕНЕНИЯ ЗДОРОВЬЯ.
+//
+// В движке второго хранилища здоровья нет: полоску рисует FUN_004305A4
+// прямо из `+0x4E` записи, а высота считается как
+// `(0x640 − здоровье) * 0x3E / 0x640`. Синхронизировать нечего — зато эту
+// перерисовку зовут ИЗ КАЖДОГО места, где здоровье изменилось: такт мира
+// (0x41C944, дважды), ближний бой (0x414DF0), прилёт снаряда (0x41FDD0),
+// выпитое снадобье (0x41D954), ход по глобальной (0x4277F4), такт NPC
+// (0x413894) и действия разговора (0x4345A4, 0x434630, 0x43473C).
+//
+// У нас панель обновлялась по своему расписанию, и выходил рассинхрон:
+// в игре юнит уже мёртв, а на портрете ещё жив. Поэтому все правки
+// здоровья идут через эту функцию, а она сообщает интерфейсу.
+export function healthSet(target, value) {
+  if (!target) return 0;
+  const было = target.health ?? 0;
+  const стало = Math.max(0, Math.min(healthMax(), Math.round(value)));
+  target.health = стало;
+  if (стало !== было) world.onHealth?.(target, стало, было);
+  return стало;
+}
+//: Развязка без петли: dialog.js и units.js зовут точку через `world` —
+//: напрямую нельзя, effects.js сам тянет units.js.
+world.healthSet = healthSet;
+
 export function potionClasses() { return rules()?.potions ?? {}; }
 
 // Отравить: число складывается с тем, что уже есть.
@@ -42,21 +71,27 @@ export function weaponPoison(actor, ranged = false) {
   return (ranged ? on.ammo : on.hand) ?? 0;
 }
 
-//: Счётчик кадров главного цикла — тот самый, по которому движок решает,
-//: пора ли миру шевелиться.
-let frames = 0;
 
-// Мировой такт: у отравы и у построек РАЗНЫЕ фазы одного счётчика кадров
-// (VA 0x41C944). Отрава бьёт, когда `счётчик & 0xF == 0`, а стройка и
-// пожар — в else-ветке, когда `(счётчик + 7) & 0xF == 0`, то есть на
-// кадрах, сдвинутых на девять. Период у обоих шестнадцать, но совпасть
-// они не могут никогда, и это не мелочь: постройка, догоревшая в том же
-// кадре, в котором отрава добила её работника, вела бы себя иначе.
+// Мировой такт: у отравы и у построек РАЗНЫЕ фазы одного счётчика МИРОВЫХ
+// ТАКТОВ (VA 0x41C944). Отрава бьёт, когда `такт & 0xF == 0`, а стройка и
+// пожар — в else-ветке, когда `(такт + 7) & 0xF == 0`. Период у обоих
+// шестнадцать, но совпасть они не могут никогда, и это не мелочь: постройка,
+// догоревшая в том же такте, в котором отрава добила её работника, вела бы
+// себя иначе.
 export function effectsTick() {
-  frames += 1;
   let changed = false;
-  const period = poisonTickEvery();
-  if (frames % period === 0) {
+  // СЧИТАЕМ ТАКТЫ, А НЕ КАДРЫ. Здесь стоял собственный счётчик кадров rAF, и
+  // фаза сходилась каждый шестнадцатый КАДР вместо каждого шестнадцатого
+  // мирового такта. Мировой такт — 78 мс (12,82 в секунду), кадров же 60 в
+  // секунду, а на быстром мониторе и 144: деревня жила в 4,7…11 раз быстрее
+  // канона. Отсюда и жалоба «казарма строится мгновенно» — двадцать четыре
+  // единицы счётчика проходили за шесть секунд вместо тридцати.
+  //
+  // `clockPhaseHits` считает ПОПАДАНИЯ фазы за кадр, поэтому догон не теряет
+  // тактов, а стоящий счётчик не срабатывает по кругу. Функция чистая, звать
+  // её можно из нескольких мест (то же делает village.js).
+  const mask = poisonTickEvery() - 1;
+  for (let hit = clockPhaseHits(mask, 0); hit > 0; hit -= 1) {
     for (const unit of [hero, ...units]) {
       if (expireTemporary(unit)) changed = true;
       const poison = unit.poison ?? 0;
@@ -64,8 +99,19 @@ export function effectsTick() {
       changed = true;
       world.onPoisonDamage?.(unit, poison);
     }
-  } else if ((frames + BUILD_PHASE_SHIFT) % period === 0) {
-    if (buildingsTick(workersOf())) changed = true;
+  }
+  for (let hit = clockPhaseHits(mask, BUILD_PHASE_SHIFT); hit > 0; hit -= 1) {
+    // Стройка и учёба в один такт не сходятся: 0x41C944:513 зовёт обучение
+    // только когда флаг «стройка сдвинулась» пуст.
+    const стройка = buildingsTick(workersOf());
+    if (стройка) changed = true;
+    else if (villageTraining(1)) changed = true;
+    // ВАРКА У ЗНАХАРЯ — та же фаза деревень, безусловно: 0x41C944 зовёт
+    // FUN_004176C8 (строка 509) рядом с обучением, и на флаг стройки она,
+    // в отличие от обучения, не смотрит.
+    if (villageBrew(1)) changed = true;
+    // Мастерская кузнеца — там же (0x41C944 зовёт FUN_00417BD8 рядом).
+    if (villageForge(1)) changed = true;
   }
   return changed;
 }
@@ -91,13 +137,29 @@ function expireTemporary(unit) {
 //: Сдвиг фазы построек относительно отравы (VA 0x41C944: `+ 7 & 0xF`).
 const BUILD_PHASE_SHIFT = 7;
 
-//: Сколько СВОБОДНЫХ рук на стройке (VA 0x41C944): жители поселения минус
-//: те, кто уже занят на другой работе. Нижней границы у движка нет — при
-//: нуле работа просто стоит, поэтому Math.max(1, …) здесь был бы враньём.
+// РАБОТНИКИ СЧИТАЮТСЯ ПО ОТРЯДУ ДЕРЕВНИ, а не по всей карте (VA 0x41C944,
+// строки 358-386). Движок идёт по бойцам отряда поселения и берёт тех, у кого
+//
+//     облик (+0xFC) меньше шести        — человек, а не зверь и не тварь
+//     не труп (+0x1A & 0x80 == 0)
+//     порода (+0x17) не 3, не 0xB, не 0xC
+//
+// затем вычитает занятых должностями: пять слов поселения +0x3D0, сколько их
+// непусто. А если отряд деревни в бою (+0x1D == 1), работников НОЛЬ — стройка
+// на время боя стоит.
+//
+// Здесь считались ВСЕ живые юниты карты минус занятые: в делителе
+// `(время_вида * 60) / работники` это давало вчетверо больший знаменатель и
+// вместе с кадровым счётчиком превращало стройку в мгновенную.
 function workersOf() {
-  const living = units.filter((unit) => unit.alive !== false && !unitFighting(unit));
-  const busy = living.filter((unit) => unit.working).length;
-  return living.length - busy;
+  const data = world.map?.village;
+  if (!data) return 0;
+  const locals = units.filter((unit) => unit.side === data.side
+    && unit.alive !== false && (unit.body ?? 0) < 6);
+  //: «Отряд в бою» у нас поля нет — берём признак по самим жителям.
+  if (locals.some((unit) => unitFighting(unit))) return 0;
+  const posted = (data.officials ?? []).filter(Boolean).length;
+  return Math.max(0, locals.length - posted);
 }
 
 // Крепость зелья — поле +0x04 его ЗАПИСИ, и это она тратится, а не «выпил
@@ -120,7 +182,7 @@ export function potionDrink(item, target = hero, state = null) {
   let spent = 0;                    // порог, ниже которого банка пустеет
   switch (kind) {
     case codes.halve:                                   // Непонятная смесь
-      target.health = Math.max(1, Math.floor(target.health / 2));
+      healthSet(target, Math.max(1, Math.floor(target.health / 2)));
       return codes.empty ?? 83;                         // тратится целиком
     case codes.heal: {                                  // Лечебный бальзам
       // Цена лечения растёт с раной: (100 − здоровье/16) * 0.1, но не
@@ -134,8 +196,12 @@ export function potionDrink(item, target = hero, state = null) {
         ((numbers.heal_base ?? 100) - Math.trunc(health / divisor)) *
         (numbers.heal_step ?? 0.1));
       if (cost > strength) cost = strength;
-      target.health = Math.min(healthMax(),
-        roundHalfEven(health + cost * (numbers.heal_gain ?? 160)));
+      // Порядок движка: сложить, ОКРУГЛИТЬ (0x442BF0), потом кламп 1600 и
+      // запись (0x41DA44…0x41DA55). `healthSet` делает две последние
+      // операции, округление остаётся здесь — иначе потеряется округление
+      // к чётному, а `Math.round` в самой точке уже получает целое и
+      // ничего не меняет.
+      healthSet(target, roundHalfEven(health + cost * (numbers.heal_gain ?? 160)));
       strength -= cost;
       spent = numbers.heal_spent ?? 0.01;
       break;
@@ -221,13 +287,15 @@ function temporaryPotion(kind, target, strength) {
     }
   }
   if (kind === codes.brew) {
-    target.health = Math.min(healthMax(),
+    //: Тот же порядок, что у бальзама: сложить, округлить, потом кламп и
+    //: запись — их берёт на себя healthSet (VA 0x41DD57…0x41DD7D).
+    healthSet(target,
       roundHalfEven(strength * (numbers.heal_gain ?? 160) + (target.health ?? 0)));
   }
   if (kind === codes.wisdom) {
     const drop = power * (set.wisdom_health_drain ?? 160);
     const floor = set.wisdom_health_floor ?? 160;
-    target.health = Math.max(floor, (target.health ?? 0) - drop);
+    healthSet(target, Math.max(floor, (target.health ?? 0) - drop));
     // Опыт Эликсира — round(sqrt(k − 5) · 100): снято дизасмом хвоста ветки
     // (0x41DEAE: fild k−5; fsqrt-хелпер 0x442C6C; fmul double 100.0 по
     // 0x450243; ROUND) и идёт через общее ядро 0x413110 с его множителем.

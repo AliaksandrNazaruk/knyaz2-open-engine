@@ -15,6 +15,16 @@
 import { world } from "./world.js";
 import { drawSprite, spriteReady, context } from "./viewport.js";
 
+// КЛЮЧ ГЛУБИНЫ ЮНИТА — низ его холста, а не точка ног. Движок кладёт юнита
+// в таблицу строк по `экранный Y + высота холста` (VA 0x426D45 в общем
+// проходе сцены, VA 0x424514:43 в проходе нутра постройки), а холст человека
+// 256 на 150 с якорем ног (127, 144) — отсюда и шестёрка.
+//
+// Число одно на все проходы: общий, внутренностей постройки и куч. Раньше
+// оно стояло числом в трёх местах, и порядок внутри дома успел разъехаться с
+// порядком снаружи.
+export const UNIT_SORT_BIAS = 6;
+
 export function actorClassRef(ref, items = world.map?.items) {
   if (!ref || !items) return null;
   if (items[ref]) return ref;
@@ -357,7 +367,20 @@ export function actorBody(data, actor, frame) {
   const painted = data?.bodies?.[String(actor.palette)]?.frames?.[String(frame.record)];
   // Крашеные кадры приезжают фоном, и пока их нет, юнит должен остаться на
   // месте, а не мигать: показываем то же тело базовой палитрой.
-  return spriteReady(world.images, heroSheets(), painted) ? painted : frame;
+  //
+  // ПОДМЕНЯЕТСЯ ТОЛЬКО КАРТИНКА, ОСТАЛЬНОЕ БЕРЁТСЯ У БАЗОВОГО КАДРА. В паке у
+  // крашеного кадра лежит одна геометрия — лист и прямоугольник; ни номера
+  // записи, ни тени в нём нет, они есть только у базового. Возвращая
+  // `painted` голым, мы теряли и то и другое: `actorLayers` без `record`
+  // отдаёт пустые списки, а отрисовщик без `shadow` не рисует тень.
+  //
+  // Видно это было на ОДНОМ Ратиборе, и не случайно: своя форма тела есть у
+  // пятерых стартовых героев, они уходят веткой выше, где базовый кадр
+  // сохраняется. У Ратибора форма нулевая — он единственный, кто доходил
+  // сюда, и потому единственный ходил без снаряжения и без тени.
+  return spriteReady(world.images, heroSheets(), painted)
+    ? { ...frame, ...painted, record: frame.record }
+    : frame;
 }
 
 //: Листы кадров героя — общая «арена» пака (см. viewport.drawSprite).
@@ -374,7 +397,20 @@ export function sheetsFor(actor) {
 
 export function drawLayerFrame(frame, baseX, baseY, sheets = null) {
   if (!frame) return;
-  drawSprite(world.images, sheets ?? heroSheets(), frame,
+  const set = sheets ?? heroSheets();
+  // ЛИСТ СЛОЯ ЗАКАЗЫВАЕТСЯ ТАК ЖЕ, КАК ЛИСТ ТЕЛА.
+  //
+  // Листы тянутся по требованию, и заказывает их РОВНО ОДНО место —
+  // `spriteReady` (viewport.js). Слои снаряжения шли мимо неё, прямо в
+  // `drawSprite`, а тот на отсутствующей картинке молча возвращает false и
+  // никого ни о чём не просит. Поэтому оружие и щиты, чьи листы не попали в
+  // предзагрузку карты, не появлялись НИКОГДА — сколько ни смотри.
+  //
+  // Замер на Ратиборе в Борье: из четырёх слоёв кадра два листа были на
+  // месте (82 доспех, 107 шлем), а два — нет (64 топор, 104 щит), и рендер
+  // их не заказывал ни через секунду, ни через десять.
+  if (!spriteReady(world.images, set, frame)) return;
+  drawSprite(world.images, set, frame,
              baseX + frame.offset_x, baseY + frame.offset_y);
 }
 

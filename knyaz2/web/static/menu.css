@@ -193,6 +193,27 @@ html, body {
   border: 1px solid rgb(var(--gold) / .35);
   color: rgb(var(--gold));
   font: 500 clamp(11px, 1.5vh, 17px)/1.35 "Trebuchet MS", system-ui, sans-serif;
+  /* ЭКРАН САМ СЕБЕ МЕРКА. Он сидит внутри кадра 4:3, а тот подстраивается
+     под окно, поэтому ширина строки настроек к ширине ОКНА отношения не
+     имеет: мерить надо сам экран. Отсюда container, а не media. */
+  container-type: inline-size;
+}
+
+/* НА МАЛЕНЬКОМ ОКНЕ ЭКРАН ВЫХОДИТ ИЗ КАДРА. Кадр 4:3 на телефоне сам по
+   себе невелик, а экран внутри него занимает ещё меньше — настройки
+   съёживались до нечитаемых. Кадру он не принадлежит по смыслу: это не
+   часть картинки меню, а окно поверх неё. Ни transform, ни filter у .frame
+   нет, поэтому fixed спокойно выходит за его overflow: hidden. */
+@media (max-width: 760px), (max-height: 640px) {
+  .screen {
+    position: fixed;
+    inset: 0;
+    padding: max(2.2vh, .8rem) max(2.4vw, .9rem);
+    padding-bottom: max(2.2vh, env(safe-area-inset-bottom, 0px));
+    border: none;
+    background: rgb(8 6 4 / .93);
+    overscroll-behavior: contain;
+  }
 }
 
 .screen__title {
@@ -220,6 +241,17 @@ html, body {
   background: rgb(var(--gold) / .14);
   outline: none;
 }
+
+/* Выгрузка и загрузка файлом — рядом, над кнопкой «Назад». Своего вида им не
+   придумываем: те же кнопки, что и «Назад», только в строку. */
+.slots__file {
+  display: flex;
+  gap: .8em;
+  flex-wrap: wrap;
+  margin-top: 1em;
+}
+
+.slots__file .screen__back { margin-top: 0; }
 
 /* карточки героев: шесть миров — шесть героев */
 .heroes {
@@ -262,11 +294,28 @@ html, body {
   display: grid;
   grid-template-columns: minmax(6rem, 9rem) minmax(8rem, 18rem) 1fr;
   align-items: center;
-  gap: .8em;
+  gap: .35em .8em;
 }
 
+/* ЯЧЕЙКА СЕТКИ НЕ УЖИМАЕТСЯ НИЖЕ СВОЕГО min-content, пока ей это прямо не
+   разрешить. Без этих двух строк длинная подсказка не переносилась, а
+   распирала строку, и всё окно уезжало вбок под горизонтальную прокрутку. */
+.option > * { min-width: 0; }
+
 .option__name { letter-spacing: .05em; }
-.option__hint { opacity: .7; }
+.option__hint { opacity: .7; overflow-wrap: anywhere; }
+
+/* Узкий экран: подсказке в одной строке с подписью и переключателем места
+   уже нет — она уходит под них во всю ширину. */
+/* Порог взят из самих колонок: подпись до 9rem плюс переключатель до 18rem
+   плюс место под подсказку хотя бы в 15rem — ниже сорока двух строка в три
+   колонки уже не читается. */
+@container (max-width: 42rem) {
+  .option { grid-template-columns: 1fr minmax(6.5rem, 11rem); }
+  .option__input { width: 100%; }
+  input[type="checkbox"].option__input { width: 1.7em; justify-self: end; }
+  .option__hint { grid-column: 1 / -1; font-size: .92em; }
+}
 
 .option__input {
   color: inherit;
@@ -277,3 +326,11 @@ html, body {
 }
 
 input.option__input { padding: 0; accent-color: rgb(var(--gold)); }
+
+/* Галочка не тянется во всю колонку, а на телефоне должна быть достаточно
+   крупной, чтобы в неё попадали пальцем. */
+input[type="checkbox"].option__input {
+  width: 1.7em;
+  height: 1.7em;
+  justify-self: start;
+}

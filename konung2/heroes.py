@@ -179,11 +179,66 @@ def draw_script(data: bytes | None = None) -> list[list[int]]:
 #: 6 разных — остальное задержки) и по таблице 0x45A0C0 возвращается в стойку.
 IDLE_CHANCE = 10
 
-#: Доля клетки за такт по «походкам» — таблицы 0x459AD4 (X) и 0x459D14 (Y),
-#: по 8 float на походку. Походка выбирается в начале шага (VA 0x416C2C):
-#: ``1 + случайное(0 … 3 - скорость)``, при скорости 3 и выше всегда 1.
-#: Скорость юнита лежит в unit+0x1D.
-GAIT_CELL_FRACTION = {1: 1.0, 2: 0.5, 3: 1.0 / 3.0}
+#: СКОЛЬКО ТАКТОВ ЗАНИМАЕТ КЛЕТКА — таблица 0x45FE90, байт на блок анимации.
+#: Ставит её FUN_00429B2C (VA 0x429B3E) в байт юнита +0xFD:
+#:
+#:     *(char *)(юнит + 0xFD) = DAT_0045FE90[блок] - *(char *)(юнит + 0x1D);
+#:
+#: а такт шага (FUN_0041611C, VA 0x41612B) прибавляет единицу к счётчику
+#: +0xFB, и по достижении +0xFD юнит переходит в следующую клетку
+#: (FUN_00413894, VA 0x4143xx: ``if (юнит[0xFD] <= юнит[0xFB])``).
+#:
+#: Отсюда: КЛЕТКА = база_блока − скорость(+0x1D) тактов. Число кадров блока
+#: (+0xFE) на скорость не влияет вовсе — оно только крутит спрайты.
+MOVE_BLOCK_TICKS_VA = 0x0045FE90
+
+#: Четыре блока хода — их выбирает FUN_00416C84 по битам байта +0x19:
+#: 0x80 бег, 0x04 боевая стойка.
+MOVE_BLOCKS = {"combat_walk": 0x01, "combat_run": 0x07,
+               "walk": 0x11, "run": 0x13}
+
+#: Смещения подшагов: X с 0x459AD4, Y с 0x459D14, по восемь float на походку
+#: в порядке направлений W, NW, N, NE, E, SE, S, SW; всего 18 походок
+#: (0x459D14 − 0x459AD4 = 0x240 = 18 × 32). Индекс — САМА походка +0xFD
+#: (VA 0x416157: ``shl eax, 5`` по байту +0xFD плюс направление × 4).
+#:
+#: Походка N даёт ровно «клетка / N»: смещение × N — это (±58, 0), (±29, ±16)
+#: или (0, ±32), то есть переход в соседнюю клетку. Это независимая проверка
+#: того, что +0xFD и есть число тактов на клетку.
+#:
+#: Прежние 0x459AF4 / 0x459D34 — та же таблица, но с походки 1, поэтому
+#: индексы уезжали на единицу; и обрывалась она на пяти походках из
+#: восемнадцати.
+GAIT_X_VA, GAIT_Y_VA, GAIT_COUNT = 0x00459AD4, 0x00459D14, 18
+
+
+def _exe_blob() -> bytes:
+    from .paths import game_file
+    with open(game_file("konung2.exe"), "rb") as stream:
+        return stream.read()
+
+
+def move_block_ticks() -> dict[str, int]:
+    """База длительности клетки по блокам хода: имя блока -> такты."""
+    from .exetables import va_to_foff
+    blob = _exe_blob()
+    at = va_to_foff(MOVE_BLOCK_TICKS_VA)
+    return {name: blob[at + block] for name, block in MOVE_BLOCKS.items()}
+
+
+def gait_steps(count: int = GAIT_COUNT) -> list[list[list[float]]]:
+    """Смещения по походкам: [походка][направление] -> (dx, dy)."""
+    import struct
+
+    from .exetables import va_to_foff
+    blob = _exe_blob()
+    x_at, y_at = va_to_foff(GAIT_X_VA), va_to_foff(GAIT_Y_VA)
+    out = []
+    for gait in range(count):
+        xs = struct.unpack_from("<8f", blob, x_at + gait * 32)
+        ys = struct.unpack_from("<8f", blob, y_at + gait * 32)
+        out.append([[round(x, 3), round(y, 3)] for x, y in zip(xs, ys)])
+    return out
 
 #: Шаг юнита по направлениям — таблицы движка 0x459AD4 (X) и 0x459D14 (Y),
 #: набор для пешей ходьбы. Совпадает с таблицей соседних клеток 0x49CF68:

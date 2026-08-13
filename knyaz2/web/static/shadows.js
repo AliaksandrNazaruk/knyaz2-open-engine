@@ -1,7 +1,8 @@
 // Тени: маски копятся в отдельном слое и делят яркость кадра пополам.
 import { canvas, dynamicShadowsNode } from "./dom.js";
 import { world } from "./world.js";
-import { drawSprite, spriteReady, context, view } from "./viewport.js";
+import { drawSprite, spriteReady, context, view,
+         withMainContext } from "./viewport.js";
 import { daylight, daylightCurve, sunProgress } from "./daylight.js";
 import { hero, heroBodyFrame } from "./hero.js";
 import { sheetsFor, actorFrame } from "./actor.js";
@@ -62,13 +63,33 @@ function prepareMask() {
   shadows.context.imageSmoothingEnabled = false;
 }
 
-function stampMask(alpha) {
-  context.save();
-  context.setTransform(1, 0, 0, 1, 0, 0);
-  context.globalCompositeOperation = "source-over";
-  context.globalAlpha = alpha;
-  context.drawImage(shadows.canvas, 0, 0);
-  context.restore();
+// Приложить накопленную маску. `onMain` кладёт её МИМО слоя сцены — прямо на
+// кадр, как это делает светлый кадр интерьера (`drawBrightImage`).
+//
+// Иначе тень сереет, и вот почему. Слой сцены заливается фильтром суток
+// целиком (`endSceneLayer` → `applyDaylight`), а у фильтра есть не только
+// множитель, но и ПРИБАВКА (движковый «плюс к максимуму», VA 0x43CA8B):
+// затемнённый тенью пиксель она поднимает обратно, и вместо тени выходит
+// светлое серое пятно. Уличные тени этого избегают тем, что штампуются между
+// закрытием слоя земли и открытием слоя объектов (scene.js), — то есть на
+// сам кадр. Интерьерная тень рисуется изнутри постройки и до этой правки
+// ложилась в слой.
+//
+// Класть её на кадр можно ровно потому, что пол интерьера тоже там: он
+// рисуется светлым кадром мимо слоя (VA 0x425B0C — исходная палитра, без
+// пересчёта под сутки). Слой объектов ляжет сверху и накроет тень стенами и
+// фигурами, а порядок «после пола, до людей» сохранится.
+function stampMask(alpha, onMain = false) {
+  const put = () => {
+    context.save();
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.globalCompositeOperation = "source-over";
+    context.globalAlpha = alpha;
+    context.drawImage(shadows.canvas, 0, 0);
+    context.restore();
+  };
+  if (onMain) withMainContext(put);
+  else put();
 }
 
 // ТЕНИ ЮНИТОВ ВНУТРИ ПОСТРОЙКИ — отдельным проходом, в самой постройке.
@@ -82,7 +103,7 @@ function stampMask(alpha) {
 // Маска копится и накладывается один раз на всю постройку — иначе
 // перекрывающиеся тени двух человек в одной избе затемнили бы фон дважды,
 // чего спановый список движка не допускает.
-export function renderInsideShadows(actors) {
+export function renderInsideShadows(actors, onMain = false) {
   if (!actors.length) return;
   const set = shadowSettings();
   let any = false;
@@ -90,7 +111,9 @@ export function renderInsideShadows(actors) {
     if (!any) prepareMask();          // чистим маску перед первой удачной тенью
     if (paintActorShadow(shadows.context, actor, frame, set)) any = true;
   }
-  if (any) stampMask(set.alpha);
+  //: Пол интерьера лежит на кадре мимо слоя — значит и тень туда же, иначе
+  //: заливка фильтра поднимет её до серого пятна (см. stampMask).
+  if (any) stampMask(set.alpha, onMain);
 }
 
 export function renderShadows(visible) {

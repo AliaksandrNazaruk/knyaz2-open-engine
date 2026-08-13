@@ -290,10 +290,21 @@ def _read_entity(record: dict, number: int, objects: ObjectsRes,
         frames=frames,
         lighting=lighting,
     )
+    cells = owned.get(record_slot, {})
     if header["walls"] == -1:
         common["id"] = common["id"].format(kind="prop")
-        return Prop(**common)
-    cells = owned.get(record_slot, {})
+        # КЛЕТКИ ОТДАЁМ И РЕКВИЗИТУ, ЕСЛИ ОНИ У НЕГО ЕСТЬ.
+        #
+        # Постройкой объект считается по стенам его НЫНЕШНЕГО состояния, а у
+        # пустой площадки под стройку стен нет — она реквизит. Но клетки за
+        # ней в сетке закреплены (метка «номер объекта + 1» в битах 16…20), и
+        # без них достроенная казарма остаётся глухой: движок открывает её
+        # клетки, сравнивая ровно эту метку (VA 0x43F178).
+        return Prop(**common, cells=BuildingCells(
+            footprint=tuple(cells.get("footprint", ())),
+            floor=tuple(cells.get("floor", ())),
+            routed=tuple(cells.get("routed", ())),
+        ))
     common["id"] = common["id"].format(kind="building")
     return Building(**common, cells=BuildingCells(
         footprint=tuple(cells.get("footprint", ())),

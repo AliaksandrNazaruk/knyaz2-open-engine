@@ -12,6 +12,7 @@
 import { hero } from "./hero.js";
 import { world } from "./world.js";
 import { actorItem } from "./actor.js";
+import { difficultyNow } from "./settings.js";
 
 function rules() { return hero.data?.rules?.progression ?? null; }
 
@@ -47,8 +48,14 @@ export function progressSetup() {
   hero.face = template?.face ?? hero.face ?? 0;
   hero.body = template?.body ?? hero.body ?? 0;
   hero.palette = template?.palette ?? hero.palette ?? 0;
-  // Деньги — кошелёк героя (+0x26 его записи), общий на весь отряд.
-  hero.money = template?.money ?? hero.money ?? 0;
+  // Деньги — кошелёк героя (+0x26 его записи), общий на весь отряд. Ступень
+  // сложности множит ИМЕННО стартовую сумму из записи, а не текущую: строка
+  // и так ставит кошелёк из шаблона, поэтому повторный вход на карту ничего
+  // не удваивает. Нажитое возвращает сейв, он применяется позже.
+  const purse = template?.money;
+  hero.money = purse != null
+    ? Math.trunc(purse * difficultyNow().money)
+    : hero.money ?? 0;
   // Отряд: герой первым, дальше спутники; вместимость — из записи отряда.
   hero.party = template?.party ?? hero.party ?? null;
 }
@@ -140,17 +147,22 @@ export function killExperience(unit) {
 // Начислить опыт и поднять уровни, пока хватает порога (VA 0x413110).
 // Это ОБЩЕЕ ядро всех источников опыта: убийств, наград разговора
 // (обработчик 51, VA 0x434504 зовёт его напрямую), зелий и порошков.
-// Сумма не больше 2000 умножается на «настройка + 2» из KONUNG2.CFG;
-// четверти убийцы здесь нет — она живёт только в путях убийства
-// (killShare) и берётся ДО множителя.
+// Сумма не больше 2000 умножается на множитель сложности; четверти убийцы
+// здесь нет — она живёт только в путях убийства (killShare) и берётся ДО
+// множителя.
 export function grantExperience(unit, amount) {
   const config = rules();
-  // Фолбэк настройки — 0: столько ставит движок, когда KONUNG2.CFG нет
-  // (VA 0x42EBD0), то есть минимальный множитель «настройка + 2» = 2.
-  const multiplier = config?.xp_multiplier ?? { at_most: 2000, setting: 0 };
+  // Из правил пака берётся только ПОРОГ: сам множитель наш, из выбора
+  // игрока. Поле `setting` (первое dword KONUNG2.CFG установки) больше не
+  // читается — оно означало сложность той копии игры, а не этой партии.
+  const multiplier = config?.xp_multiplier ?? { at_most: 2000 };
   let gained = Math.trunc(amount);
   if (gained <= (multiplier.at_most ?? 2000)) {
-    gained *= (multiplier.setting ?? 0) + 2;
+    // МНОЖИТЕЛЬ БЕРЁТСЯ ИЗ ВЫБОРА ИГРОКА, а не из KONUNG2.CFG установки. Порог
+    // «не больше 2000» и само место умножения — канон (VA 0x413110); наше
+    // здесь только значение множителя, см. difficulty.js. Усечение к нулю
+    // оставляет опыт целым, как в движке, где он int.
+    gained = Math.trunc(gained * difficultyNow().xp);
   }
   unit.experience = (unit.experience ?? 0) + gained;
   let levels = 0;
@@ -192,6 +204,13 @@ function progressLocked(unit) { return Boolean(unit.progressLock); }
 // а не с текущим, которое показывает панель (VA 0x413214).
 export function canRaiseCharacteristic(index, unit = hero) {
   if (progressLocked(unit)) return false;
+  // ШЕСТЬ БАЙТ ЕСТЬ У ЛЮБОГО ЮНИТА (+0xC0 и +0xCC записи), поэтому «списка
+  // нет» — это не «можно поднять с нуля», а испорченная запись: поднимать
+  // нечего. Проверка обязана стоять здесь, а не только у прибавки: пока
+  // `canRaise` пускал дальше по `?.`, а сама прибавка писала в список без
+  // проверки, обучение у воеводы валилось на первом же жителе и обрывало
+  // весь тик игры.
+  if (!unit.characteristics) return false;
   const config = rules()?.characteristics;
   const cap = config?.cap ?? 150;
   const base = unit.baseCharacteristics?.[index] ?? unit.characteristics?.[index] ?? 0;
@@ -299,6 +318,8 @@ export function skillLimit(index, unit = hero) {
 
 export function canRaiseSkill(index, unit = hero) {
   if (progressLocked(unit)) return false;
+  //: двадцать байт навыков (+0xD2) — там же и по той же причине, что выше
+  if (!unit.skills) return false;
   return (unit.freeExperience ?? 0) >= skillCost() &&
     (unit.skills?.[index] ?? 0) < skillLimit(index, unit);
 }
