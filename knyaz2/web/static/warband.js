@@ -22,7 +22,7 @@
 // прямо по стороне.
 import { world } from "./world.js";
 import { hero, roster } from "./hero.js";
-import { orderClear, orderUnit } from "./orders.js";
+import { orderClear } from "./orders.js";
 
 //: Сторона -> отряд. Заполняется из пака при входе на карту.
 export const warbands = new Map();
@@ -31,9 +31,8 @@ export const warbands = new Map();
 //: (VA 0x410784) — не по прямой, а по обеим сразу.
 export const KEEP_RANGE = 0x348;
 
-//: Породы: бит 0x40 в +0x1A значит «тварь», бит 0x80 — «мёртв».
+//: Породы: бит 0x40 в +0x1A значит «тварь».
 export const BREED_BEAST = 0x40;
-export const BREED_DEAD = 0x80;
 
 //: Как тварь выбирает жертву — разбор по породе из VA 0x410010. Породы,
 //: которых здесь нет, идут общим путём: ближайший живой враг.
@@ -42,13 +41,15 @@ export const BREED_DEAD = 0x80;
 //:   вплотную  — только восемь соседних клеток            (0x410010:85-108)
 //:   досягаемый — первый, до кого дотянется бросок          (0x410010:127-160)
 //
-// РАЗБОР ПЕРЕЧИТАН 12.08.2026 по самой цепочке `bVar1` (0x410010:82-177), и
-// три породы стояли не там: 0x43 Болотник и 0x45 Мертвяк идут ОБЩИМ путём
-// (в цепочке для них ветки нет вовсе), а 0x44 Цветок-людоед имеет свою и
-// здесь её не хватало. Кикимора (0x53) имеет собственную —
-// перебор всего вражеского отряда по досягаемости; перенесена 12.08.
+// РАЗБОР ПЕРЕЧИТАН ЗАНОВО 15.08.2026 (прошлое чтение 12.08 ошиблось на
+// 0x43/0x45): цепочка `bVar1` в 0x410010 ведёт 0x43 Болотника и 0x45
+// Мертвяка через `FUN_0041f340` — «свободный», как 0x46 и 0x4C
+// (`if (0x42 < bVar1) { if (0x44) {вплотную} local_38 = FUN_0041f340; }`).
+// 0x44 Цветок-людоед — своя ветка «вплотную», Кикимора 0x53 — перебор
+// всего вражеского отряда по досягаемости броска.
 const BREED_HUNT = new Map([
   [0x41, "стая"], [0x4D, "стая"], [0x4F, "стая"],
+  [0x43, "свободный"], [0x45, "свободный"],
   [0x46, "свободный"], [0x4C, "свободный"],
   [0x44, "вплотную"], [0x53, "досягаемый"],
 ]);
@@ -155,7 +156,7 @@ function playerBand() {
 
 //: Все живые юниты стороны. Игрок и спутники живут отдельным списком,
 //: поэтому сторона героя собирается из общего состава.
-function membersOf(side, units) {
+export function membersOf(side, units) {
   const out = [];
   for (const unit of roster(units)) {
     if ((unit.side ?? 0) !== side) continue;
@@ -235,6 +236,22 @@ export function warbandTick(band, units) {
       for (const unit of membersOf(other.side, units)) {
         if (insideZone(unit, band.zone)) {
           warbandDeclare(band, other.side, units);
+          return;
+        }
+      }
+    }
+  }
+
+  // Бит 0x80: бросается на отряд ПОСЕЛЕНИЯ (VA 0x415B20:73-94). Прямоугольник
+  // здесь не проверяется вовсе — достаточно живого НЕ-зверя в отряде деревни
+  // (`_DAT_00849538`), и война объявляется его стороне.
+  if (band.warFlags & 0x80) {
+    const villageSide = world.map?.village?.side;
+    if (villageSide !== undefined && villageSide !== null &&
+        villageSide !== band.side) {
+      for (const unit of membersOf(villageSide, units)) {
+        if (!unit.beast) {
+          warbandDeclare(band, villageSide, units);
           return;
         }
       }
@@ -358,9 +375,12 @@ export function pickEnemy(unit, units) {
   const breed = unit.breed ?? 0;
 
   if (!(breed & BREED_BEAST)) {
-    // Человек с битом «за вожаком» сперва защищает вожака: ищет того, кто
-    // бьёт первого юнита отряда, и берёт из таких ближайшего.
-    if ((unit.orderByte ?? 0) & 0x10) {
+    // «ЗАЩИЩАТЬ ГЕРОЯ» — тумблер окна персонажа (бит СОСТОЯНИЯ +0x19 &
+    // 0x10, зоны щелчка 0x3B/0x3C в 0x421690). С ним юнит сперва ищет
+    // того, кто бьёт ПЕРВОГО юнита отряда — вожака, — и берёт ближайшего
+    // из таких (0x410010:46-69). Здесь читался бит ПРИКАЗА 0x10 («за
+    // вожаком») — другое поле: движок держит их в разных байтах.
+    if (unit.defendLeader) {
       const leader = membersOf(band.side, units)[0] ?? null;
       let best = null, bestRange = Infinity;
       for (const other of membersOf(enemySide, units)) {
@@ -392,9 +412,17 @@ export function pickEnemy(unit, units) {
 
 // Кого юнит считает врагом прямо сейчас. Соседняя клетка сильнее любого
 // дальнего выбора: движок зовёт 0x4107EC раньше, чем 0x410010.
-export function enemyFor(unit, units, neighbour) {
+//
+// МЕЖДУ НИМИ СТОИТ ВЫБОР ЦЕЛИ СТРЕЛКА (VA 0x410A08 case 1: сперва
+// 0x411F28, и только при неуспехе 0x410010): лучник перебирает юнитов
+// ВРАЖЬЕГО отряда в порядке записей — не ближайшего! — и целится в
+// первого, до кого выстрел возможен. Сам перебор живёт в units.js
+// (rangedTargetPick), потому что ему нужны дальность и трасса выстрела.
+export function enemyFor(unit, units, neighbour, rangedPick = null) {
   const near = adjacentEnemy(unit, units, neighbour);
   if (near) return near;
+  const shot = rangedPick?.(unit);
+  if (shot) return shot;
   return pickEnemy(unit, units);
 }
 
@@ -429,6 +457,12 @@ export function warbandAlarm(attacker, victim, units) {
   }
   const ours = warbandOf(attacker);
   if (ours) { ours.enemySide = victim.side ?? 0; ours.fighting = true; }
+  // ГЕРОЙ ПОСЛЕ ТАКОЙ ССОРЫ БРОСАЕТСЯ САМ. Движок пишет ему цель 0, приказ
+  // 0x21 (бой + «подумать»), чистит путь и СНИМАЕТ бит «занят приказом»
+  // (+0x19 &= 0xBF) — то есть отдаёт героя рассудку, и тот выбирает жертву.
+  // Это одно из трёх событий, снимающих бит; без него герой, поругавшись,
+  // стоял бы столбом до первого щелчка.
+  if (ours?.player) attacker.busy = false;
   return true;
 }
 

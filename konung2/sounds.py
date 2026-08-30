@@ -46,13 +46,34 @@ SAMPLE_WIDTH = 2                              # 16 бит в обоих форм
 SAMPLE_RATE, CHANNELS = 22050, 1
 
 #: Музыка — WAVEFORMATEX 0x8A7A10; слоты, которые движок заводит через 0x42D13C.
+#:
+#: ФОРМАТ ЗАДАЁТ МЕСТО ВЫЗОВА, А НЕ НОМЕР. 0x42D13C всегда берёт стереоформат
+#: 44100, всё прочее играется моно 22050 — то есть «музыкальный слот» это
+#: просто «слот, который куда-то передают в 0x42D13C». Отсюда и то, что у
+#: двух игр наборы разные.
 MUSIC_RATE, MUSIC_CHANNELS = 44100, 2
 MUSIC_SLOTS = frozenset(range(20, 31))
 
+#: Музыка «Продолжения легенды» — слоты 28…39, а НЕ канонные 20…30.
+#: Доказано трижды и сходится:
+#:   * дизасм: его проигрыватель музыки FUN_0042FED4, обёртка FUN_0041FA40
+#:     зовёт его как `слот + 0x1C`, а выбор трека FUN_0043BC94 выдаёт только
+#:     числа 0x1E…0x27 (30…39);
+#:   * размеры: слоты 28…39 весят 4.6–8.2 МБ, соседние 20…27 и 42 — 19–66 КБ;
+#:   * длительности при верном формате — 26.43…46.24 с, ровно канонный
+#:     музыкальный диапазон; при канонной раскладке его музыка выходила
+#:     105…185 с (вчетверо медленнее), а его эффекты — обрывками 0.11…0.37 с.
+LEGEND_MUSIC_SLOTS = frozenset(range(28, 40))
 
-def audio_format(slot):
+
+def music_slots(game=None):
+    """Музыкальные слоты своей игры: у донора они сдвинуты."""
+    return LEGEND_MUSIC_SLOTS if game == 'legend' else MUSIC_SLOTS
+
+
+def audio_format(slot, game=None):
     """(частота, каналов) для слота: музыка звучит не так, как эффекты."""
-    if slot in MUSIC_SLOTS:
+    if slot in music_slots(game):
         return MUSIC_RATE, MUSIC_CHANNELS
     return SAMPLE_RATE, CHANNELS
 
@@ -70,8 +91,23 @@ VILLAGE_CULTURES = {19: 0, 33: 0, 13: 0, 32: 0, 21: 0, 18: 0,
                     25: 2}
 
 
-def map_track(map_number):
-    """Фоновый трек локации по правилам движка."""
+#: Те же роли у «Продолжения легенды» (FUN_0043BC94, музыка через FUN_0042FED4):
+#:   бой -> 0x24, карта мира -> 0x25 (четыре места выхода на глобальную),
+#:   поселение -> 0x20 + культура старейшины, прочее -> 0x26,
+#:   а с флагом 1 записи локации (0x462C76 + карта*0x2E) -> 0x23.
+#: Отдельные карты: 1 -> 0x26, 2 -> 0x1F, 5 -> 0x27, 29 -> 0x1E.
+LEGEND_TRACK_GLOBAL_MAP, LEGEND_TRACK_BATTLE = 37, 36
+LEGEND_TRACK_PLAIN, LEGEND_TRACK_FLAGGED = 38, 35
+LEGEND_VILLAGE_TRACK_BASE = 32
+
+#: Особые карты донора — прямо из FUN_0043BC94.
+LEGEND_TRACK_BY_MAP = {1: 38, 2: 31, 5: 39, 29: 30}
+
+
+def map_track(map_number, game=None, village=False, flagged=False):
+    """Фоновый трек локации по правилам движка своей игры."""
+    if game == 'legend':
+        return legend_map_track(map_number, village, flagged)
     if map_number == 26:
         return 30
     if map_number == 27:
@@ -83,6 +119,27 @@ def map_track(map_number):
     if 27 < map_number <= 32:
         return 22
     return 30
+
+
+def legend_map_track(map_number, village=False, flagged=False):
+    """Фоновый трек локации «Продолжения легенды» (FUN_0043BC94).
+
+    Три ветки правила сюда доехали как есть: особые карты, «поселение или
+    нет» и бит 0 признаков локации (``konung2.donor.location_track_flag``).
+    Не доехала одна, и она названа, чтобы не выглядеть сделанной:
+
+    КУЛЬТУРА СТАРЕЙШИНЫ НЕ СНЯТА. Движок берёт её как
+    ``0x74B0E4[байт +2 записи поселения] >> 24``, а 0x74B0E4 лежит ВНЕ секций
+    exe — это данные его ``GAME.<мир>``, живые. У канона та же история, и там
+    раскладка замерена стендом (VILLAGE_CULTURES); здесь замера нет, поэтому
+    всем его поселениям достаётся культура 0, то есть слот 32. Это неточность
+    выбора между тремя настоящими дорожками поселений, а не чужой звук.
+    """
+    if map_number in LEGEND_TRACK_BY_MAP:
+        return LEGEND_TRACK_BY_MAP[map_number]
+    if village:
+        return LEGEND_VILLAGE_TRACK_BASE
+    return LEGEND_TRACK_FLAGGED if flagged else LEGEND_TRACK_PLAIN
 
 
 class SoundsRes:
@@ -319,10 +376,34 @@ AMBIENT_CHANCE_PERCENT = 1
 AMBIENT_DAY_VARIANTS = 5
 AMBIENT_NIGHT_OFFSET, AMBIENT_NIGHT_VARIANTS = 5, 3
 
+#: У «Продолжения легенды» база восьмёрки ДРУГАЯ — 300, а не 256. Обе
+#: очереди устроены одинаково, отличается одно число:
+#:
+#:   канон  (0x43DF48): local_20 = n + (карта - 1) * 8 + 0x100;
+#:                      if (1 < *(int *)(&DAT_006b649c + local_20 * 8)) ...
+#:   донор  (0x4417E0): local_20 = n + (карта - 1) * 8 + 300;
+#:                      if (1 < *(int *)(&DAT_006def3c + local_20 * 8)) ...
+#:
+#: Пока к его картам применялась канонная база, амбиент брался на 44 слота
+#: раньше и звучал чужими звуками: на «Военном лагере Повелителя» (его
+#: карта 14) играли слоты 360…367 вместо 404…411 — короткие мужские
+#: вскрики не к месту, по многу раз подряд.
+#:
+#: РАЗБИВКА ДЕНЬ/НОЧЬ И ШАНС ОСТАВЛЕНЫ КАНОННЫМИ. В его коде проверена
+#: только очередь загрузки; что он делит восьмёрку так же (+0…+4 днём,
+#: +5…+7 ночью) и бросает тот же 1% — не доказано, а выдумывать вторую
+#: разницу там, где видна одна, не стоит.
+LEGEND_AMBIENT_BASE = 300
 
-def ambient_slots(map_number):
+
+def ambient_base(game=None):
+    """База восьмёрки амбиента своей игры."""
+    return LEGEND_AMBIENT_BASE if game == 'legend' else AMBIENT_BASE
+
+
+def ambient_slots(map_number, game=None):
     """Восьмёрка амбиента карты."""
-    base = AMBIENT_BASE + (map_number - 1) * AMBIENT_STRIDE
+    base = ambient_base(game) + (map_number - 1) * AMBIENT_STRIDE
     return range(base, base + AMBIENT_STRIDE)
 
 

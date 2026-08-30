@@ -13,7 +13,9 @@
 // Сама она не проходит: во всём коде отраву только прибавляют. Снимает
 // единственно противоядие (класс 88).
 import { world } from "./world.js";
+import { profiler } from "./profiler.js";
 import { hero } from "./hero.js";
+import { actorItem, actorReclassItemRef } from "./actor.js";
 import { units } from "./units.js";
 import { buildingsTick } from "./buildings.js";
 import { unitFighting } from "./warband.js";
@@ -21,7 +23,8 @@ import { grantExperience } from "./progress.js";
 // движковый ROUND (0x442BF0) — fistp, округление к чётному
 import { roundHalfEven } from "./round.js";
 import { clockPhaseHits } from "./clock.js";
-import { villageTraining } from "./village.js";
+import { village, villageCrew, villageOfficial, villagesAway, villageTickAway,
+         villageTraining } from "./village.js";
 import { villageBrew, villageForge } from "./shops.js";
 
 function rules() { return world.map?.hero?.rules?.effects ?? null; }
@@ -45,6 +48,10 @@ export function healthMax() { return rules()?.health?.max ?? 1600; }
 export function healthSet(target, value) {
   if (!target) return 0;
   const было = target.health ?? 0;
+  //: Отладочная неуязвимость (knyaz2.profiler.invulnerable). Стоит именно тут,
+  //: потому что через эту точку идут ВСЕ пути урона — ближний бой, снаряд,
+  //: отрава и ход по глобальной. Лечение при этом работает как обычно.
+  if (profiler.invulnerable && target === hero && value < было) return было;
   const стало = Math.max(0, Math.min(healthMax(), Math.round(value)));
   target.health = стало;
   if (стало !== было) world.onHealth?.(target, стало, было);
@@ -92,18 +99,20 @@ export function effectsTick() {
   // её можно из нескольких мест (то же делает village.js).
   const mask = poisonTickEvery() - 1;
   for (let hit = clockPhaseHits(mask, 0); hit > 0; hit -= 1) {
-    for (const unit of [hero, ...units]) {
-      if (expireTemporary(unit)) changed = true;
-      const poison = unit.poison ?? 0;
-      if (!poison || unit.alive === false) continue;
-      changed = true;
-      world.onPoisonDamage?.(unit, poison);
-    }
+    if (poisonRound()) changed = true;
   }
-  for (let hit = clockPhaseHits(mask, BUILD_PHASE_SHIFT); hit > 0; hit -= 1) {
+  const попаданий = clockPhaseHits(mask, BUILD_PHASE_SHIFT);
+  //: РУКИ ЗАПОМИНАЕМ, пока стоим на карте: у чужих поселений юнитов в памяти
+  //: нет, а стройка там идти обязана (village.js, villageTickAway).
+  if (попаданий > 0) village.workers = workersOf();
+  //: Чужие поселения — тем же числом тактов, что и своё. Казну и стройку
+  //: они считают тут же, а набор карт со сдвинувшейся стройкой нужен ниже:
+  //: по нему решается учёба, как флаг `local_38` у движка.
+  const строили = villageTickAway(попаданий);
+  for (let hit = попаданий; hit > 0; hit -= 1) {
     // Стройка и учёба в один такт не сходятся: 0x41C944:513 зовёт обучение
     // только когда флаг «стройка сдвинулась» пуст.
-    const стройка = buildingsTick(workersOf());
+    const стройка = buildingsTick(village.workers);
     if (стройка) changed = true;
     else if (villageTraining(1)) changed = true;
     // ВАРКА У ЗНАХАРЯ — та же фаза деревень, безусловно: 0x41C944 зовёт
@@ -113,8 +122,74 @@ export function effectsTick() {
     // Мастерская кузнеца — там же (0x41C944 зовёт FUN_00417BD8 рядом).
     if (villageForge(1)) changed = true;
   }
+  // ТО ЖЕ ХОЗЯЙСТВО — И В ДАЛЬНИХ ДЕРЕВНЯХ.
+  //
+  // В движке фаза идёт по всем двенадцати записям подряд, и ни варка, ни
+  // кузница, ни учёба карты не спрашивают: 0x4176C8 и 0x417BD8 зовутся
+  // безусловно, 0x4181E8 — когда в этой фазе стройка не сдвинулась. У нас
+  // всё это висело на живых юнитах текущей карты, и у брошенной деревни
+  // знахарь переставал варить, кузнец ковать, а воевода учить.
+  //
+  // Должностной дальней деревни — снимок жителя из памяти карт: та же
+  // запись, из которой он поднимется при входе (village.js, villageCrew).
+  //: Склад и снимки за одну фазу не меняются — собираем их один раз, а не
+  //: на каждое попадание: разбор снимков карты не бесплатный.
+  const дальние = попаданий > 0
+    ? villagesAway().map(([map, kept]) => ({ map, kept, crew: villageCrew(map) }))
+    : [];
+  for (let hit = попаданий; hit > 0; hit -= 1) {
+    for (const { map, kept, crew } of дальние) {
+      const data = kept.data;
+      if (!data) continue;
+      if (!строили.has(map)) villageTraining(1, kept, crew);
+      villageBrew(1, data, villageOfficial(data, crew, HEALER_POST));
+      villageForge(1, data, villageOfficial(data, crew, SMITH_POST), crew);
+    }
+  }
   return changed;
 }
+
+//: Места должностных в пятёрке +0x3D0: роль движка — «место + 1», отсюда у
+//: знахаря 2, у кузнеца 4 (VA 0x415190).
+const HEALER_POST = 1;
+const SMITH_POST = 3;
+
+// ОДИН КРУГ ОТРАВЫ И СРОКОВ по всему отряду: здоровье убавляется на поле
+// отравы, а счётчик временного зелья идёт вниз. Круг вынесен отдельно, потому
+// что зовут его ДВА разных места движка одним и тем же кодом:
+//
+//     мировой такт  (VA 0x41C944) — раз в шестнадцать тактов, где бы отряд
+//                    ни был: фильтра по карте у этой ветки нет;
+//     ШАГ ПО ГЛОБАЛЬНОЙ (VA 0x4277F4) — на КАЖДЫЙ шаг похода:
+//
+//         if (юнит[+0x52] != 0) {              // отрава
+//             юнит[+0x4E] -= юнит[+0x52];      // здоровье
+//             FUN_0041C494(юнит);              // пересчёт
+//             if (юнит[+0x4C]>>0x10 < 1) { ... смерть ... }
+//             FUN_004305A4(юнит);              // перерисовать портрет
+//         }
+//         if (юнит[+0x4A] != 0 && --юнит[+0x4A] == 0) {
+//             юнит[0xF8] = 0;
+//             memcpy(юнит+0xC0, юнит+0xC6, 6);  // вернуть характеристики
+//         }
+//
+// Второго вызова у порта не было вовсе, и поход по глобальной травил в
+// шестнадцать раз медленнее оригинала — то есть на глаз не травил совсем.
+function poisonRound() {
+  let changed = false;
+  for (const unit of [hero, ...units]) {
+    if (expireTemporary(unit)) changed = true;
+    const poison = unit.poison ?? 0;
+    if (!poison || unit.alive === false) continue;
+    changed = true;
+    world.onPoisonDamage?.(unit, poison);
+  }
+  return changed;
+}
+
+//: Шаг похода по глобальной карте — тот же круг, но РОВНО ОДИН и без фазы.
+//: Зовёт его ход по карте мира, на каждый принятый шаг.
+export function effectsTravelStep() { return poisonRound(); }
 
 // Срок временного зелья: счётчик unit+0x4A тикает вниз, и на нуле движок
 // возвращает шесть спрятанных характеристик из unit+0xC6 обратно в +0xC0.
@@ -155,7 +230,7 @@ function workersOf() {
   const data = world.map?.village;
   if (!data) return 0;
   const locals = units.filter((unit) => unit.side === data.side
-    && unit.alive !== false && (unit.body ?? 0) < 6);
+    && unit.alive !== false && !unit.hidden && (unit.body ?? 0) < 6);
   //: «Отряд в бою» у нас поля нет — берём признак по самим жителям.
   if (locals.some((unit) => unitFighting(unit))) return 0;
   const posted = (data.officials ?? []).filter(Boolean).length;
@@ -235,6 +310,55 @@ export function potionDrink(item, target = hero, state = null) {
   if (state) state.strength = strength;
   // Пустой банка становится ТОЛЬКО когда крепости не осталось.
   return strength <= spent ? (codes.empty ?? 83) : null;
+}
+
+// ЛЕЧЕБНЫЕ СМЕСИ — ТРИГГЕР ЗДОРОВЬЯ (VA 0x414DF0). Третий тумблер окна
+// персонажа (биты +0x19: 0x01 «Здр<50», 0x02 «Здр<75») велит юниту САМОМУ
+// пить Лечебный бальзам (класс 0x55) после попадания по нему. Пороги
+// АБСОЛЮТНЫЕ — 800 и 1200 сырых (на экране, делённом на 16, это 50 и 75).
+// Движок пьёт из мешка по банке, пока здоровье ниже порога и банки
+// находятся, и делает это МОЛЧА (в 0x414DF0 нет ни одного вызова 0x42D660).
+// Зовут его оба пути урона — ближний бой (0x413894) и прилёт снаряда
+// (0x41FDD0); отрава триггер не дёргает.
+const HEAL_TRIGGER_LOW = 800;      // «Здр<50», бит 0x01
+const HEAL_TRIGGER_HIGH = 0x4B0;   // «Здр<75», бит 0x02
+
+export function healTriggerTick(unit) {
+  const mode = unit?.healTrigger ?? 0;
+  if (!mode || unit.alive === false) return 0;
+  const threshold = mode === 1 ? HEAL_TRIGGER_LOW : HEAL_TRIGGER_HIGH;
+  const heal = potionClasses()?.heal ?? 85;
+  let drunk = 0;
+  while ((unit.health ?? 0) < threshold) {
+    const bag = unit.bag ?? [];
+    const at = bag.findIndex((name) => name && actorItem(name)?.index === heal);
+    if (at < 0) break;
+    const name = bag[at];
+    const item = actorItem(name);
+    if (!item) break;
+    // Крепость банки — экземплярная, как у ручного питья из мешка.
+    const state = { strength: unit.bagStrength?.[name] ?? item.durability ?? 0 };
+    const became = potionDrink(item, unit, state);
+    drunk += 1;
+    if (became !== null) {
+      // Банка опустела — класс меняется на месте (пустая банка), крепость
+      // прежнего зелья ей больше не принадлежит.
+      const next = classRefByIndex(became);
+      bag[at] = next ? actorReclassItemRef(name, next) : null;
+      if (unit.bagStrength) delete unit.bagStrength[name];
+    } else if (typeof state.strength === "number") {
+      unit.bagStrength = unit.bagStrength ?? {};
+      unit.bagStrength[name] = state.strength;
+    }
+  }
+  return drunk;
+}
+
+//: Имя класса по номеру — как classRef в carry.js: у модулей нет общего
+//: владельца этой мелочи, а тянуть carry.js сюда — петля импортов.
+function classRefByIndex(index) {
+  return Object.entries(world.map?.items ?? {})
+    .find(([, item]) => item?.index === index)?.[0] ?? null;
 }
 
 // Временные зелья 89…92 (VA 0x41DC14…0x41DE20). Все четверо устроены

@@ -29,7 +29,8 @@ from typing import Any, Iterable
 from konung2 import sounds
 from konung2.gamefile import map_units
 from konung2.graph import fixed_light_map
-from konung2.sounds import MUSIC_SLOTS, SoundsRes, audio_format, map_track
+from konung2.sounds import (MUSIC_SLOTS, SoundsRes, audio_format, map_track,
+                           music_slots)
 from konung2.voices import VOICE_CHANNELS, VOICE_RATE, VoicesRes
 
 #: Битрейты по пластам (kbps): выбраны в docs/AUDIO_PLAN.md.
@@ -155,34 +156,64 @@ def export_pack_audio(root: Path, previous: Path | None = None,
                       slots: Iterable[int] | None = None) -> dict[str, Any]:
     """Эффекты, музыка и канон правил; возвращает базу для блоков карт.
 
+    ЗВУК ДВУХ ИГР — ДВА РАЗНЫХ НАБОРА ПОД ОДНИМИ НОМЕРАМИ, ровно как
+    графика. Замер по `SOUNDS.RES`: общих номеров 376, и **ни один** не
+    совпал байт в байт; у десяти совпала длина — и в них различается 98–99%
+    байт, то есть та же длительность при другом звуке (сжатие с постоянным
+    потоком). Своих у канона 118, у донора 306. Поэтому его набор едет в пак
+    рядом, под ключом ``legend:<слот>`` и файлами с приставкой ``legend_``.
+
     slots — ограничение для тестов; по умолчанию все занятые слоты.
     """
-    res = SoundsRes.from_game()
-    occupied = [i for i, e in enumerate(res.entries) if e and e[1] > 1]
-    wanted = occupied if slots is None else [s for s in occupied if s in set(slots)]
+    from konung2 import donor
 
     old = _load_registry(root / AUDIO_INDEX,
                          *([previous / AUDIO_INDEX] if previous else []))
     old_slots = old.get("slots", {})
-
     registry: dict[str, Any] = {}
-    jobs = []
-    for slot in wanted:
-        music = slot in MUSIC_SLOTS
-        relative = (TRACK_DIR / f"track_{slot:03}.opus" if music
-                    else SFX_DIR / f"{slot:03}.opus")
-        pcm = res.pcm(slot)
-        digest = _sha256(pcm)
-        rate, channels = audio_format(slot)
-        entry = old_slots.get(str(slot))
-        if _reusable(entry, digest, root / relative, previous, relative):
-            registry[str(slot)] = entry
-            continue
-        kbps = MUSIC_KBPS if music else SFX_KBPS
-        jobs.append((str(slot), pcm, rate, channels, kbps, root / relative))
+    jobs: list[tuple[str, bytes, int, int, int, Path]] = []
+    occupied: dict[str, set[int]] = {}
+
+    def collect(res: SoundsRes, prefix: str) -> None:
+        # ЧЬИ СЛОТЫ МУЗЫКАЛЬНЫЕ. Формат задаёт место вызова в движке, а не
+        # номер: у канона музыку заводят слотами 20…30, у донора 28…39.
+        # Пока набор брался канонный, его музыка распаковывалась как моно
+        # 22050 (вчетверо медленнее), а его эффекты — как стерео 44100 и
+        # превращались в обрывки по 0.11…0.37 с.
+        game = "legend" if prefix else None
+        music_of = music_slots(game)
+        mine = [i for i, e in enumerate(res.entries) if e and e[1] > 1]
+        wanted = (mine if slots is None
+                  else [s for s in mine if s in set(slots)])
+        occupied[prefix or "canon"] = set(wanted)
+        for slot in wanted:
+            music = slot in music_of
+            name = (f"{prefix}track_{slot:03}.opus" if music
+                    else f"{prefix}{slot:03}.opus")
+            relative = (TRACK_DIR if music else SFX_DIR) / name
+            pcm = res.pcm(slot)
+            digest = _sha256(pcm)
+            rate, channels = audio_format(slot, game)
+            key = f"legend:{slot}" if prefix else str(slot)
+            entry = old_slots.get(key)
+            if _reusable(entry, digest, root / relative, previous, relative):
+                registry[key] = entry
+                continue
+            kbps = MUSIC_KBPS if music else SFX_KBPS
+            jobs.append((key, pcm, rate, channels, kbps, root / relative))
+
+    collect(SoundsRes.from_game(), "")
+    if donor.available():
+        try:
+            collect(SoundsRes(Path(donor.donor_file("sounds.res")).read_bytes()),
+                    "legend_")
+        except OSError:
+            pass
     _encode_batch(jobs, registry)
     for key, entry in registry.items():        # пути в реестре — относительные
-        entry["path"] = str((TRACK_DIR if int(key) in MUSIC_SLOTS else SFX_DIR)
+        slot = int(key.split(":")[-1])
+        own = music_slots("legend" if key.startswith("legend:") else None)
+        entry["path"] = str((TRACK_DIR if slot in own else SFX_DIR)
                             / Path(entry["path"]).name).replace("\\", "/")
 
     document = {
@@ -198,32 +229,55 @@ def export_pack_audio(root: Path, previous: Path | None = None,
                "path": registry[str(slot)]["path"],
                "seconds": registry[str(slot)]["seconds"]}
               for slot in sorted(MUSIC_SLOTS) if str(slot) in registry]
+    legend_tracks = [{"slot": slot,
+                      "path": registry[f"legend:{slot}"]["path"],
+                      "seconds": registry[f"legend:{slot}"]["seconds"]}
+                     for slot in sorted(music_slots("legend"))
+                     if f"legend:{slot}" in registry]
     return {"index": str(AUDIO_INDEX).replace("\\", "/"),
-            "tracks": tracks, "occupied": set(wanted)}
+            "tracks": tracks, "legend_tracks": legend_tracks,
+            "occupied": occupied.get("canon", set()),
+            "legend_occupied": occupied.get("legend_", set())}
 
 
 def export_voice_lines(root: Path, previous: Path | None = None,
                        lines: Iterable[int] | None = None) -> dict[str, Any]:
-    """Реплики диалогов и приветствия — по файлу на запись."""
-    res = VoicesRes.from_game()
-    wanted = res.used() if lines is None else [i for i in res.used()
-                                               if i in set(lines)]
+    """Реплики диалогов и приветствия — по файлу на запись.
+
+    ГОЛОСА ОБЕИХ ИГР. У «Продолжения легенды» свой ``voices.res`` и своя
+    нумерация: под общим номером у него лежит другая реплика, и все 1215
+    наших номеров попадают в его диапазон. Поэтому его записи уезжают в
+    проектный участок (``donor.PROJECT_VOICE_BASE``) — туда же, куда их
+    уводит разбор разговоров, и клиент получает уже готовый номер.
+    """
+    from konung2 import donor
+    from konung2.profile import CANON, LEGEND
     old = _load_registry(root / VOICE_INDEX,
                          *([previous / VOICE_INDEX] if previous else []))
     old_lines = old.get("lines", {})
 
+    sources = [(CANON, 0)]
+    if donor.available():
+        sources.append((LEGEND, donor.PROJECT_VOICE_BASE))
+
     registry: dict[str, Any] = {}
     jobs = []
-    for index in wanted:
-        relative = VOICE_DIR / f"{index:04}.opus"
-        pcm = res.pcm(index)
-        digest = _sha256(pcm)
-        entry = old_lines.get(str(index))
-        if _reusable(entry, digest, root / relative, previous, relative):
-            registry[str(index)] = entry
-            continue
-        jobs.append((str(index), pcm, VOICE_RATE, VOICE_CHANNELS,
-                     VOICE_KBPS, root / relative))
+    picked = None if lines is None else set(lines)
+    for profile, shift in sources:
+        res = VoicesRes.from_game(profile)
+        for index in res.used():
+            number = index + shift
+            if picked is not None and number not in picked:
+                continue
+            relative = VOICE_DIR / f"{number:04}.opus"
+            pcm = res.pcm(index)
+            digest = _sha256(pcm)
+            entry = old_lines.get(str(number))
+            if _reusable(entry, digest, root / relative, previous, relative):
+                registry[str(number)] = entry
+                continue
+            jobs.append((str(number), pcm, VOICE_RATE, VOICE_CHANNELS,
+                         VOICE_KBPS, root / relative))
     _encode_batch(jobs, registry)
     for entry in registry.values():
         entry["path"] = str(VOICE_DIR / Path(entry["path"]).name).replace("\\", "/")
@@ -233,7 +287,21 @@ def export_voice_lines(root: Path, previous: Path | None = None,
     return document
 
 
-def map_audio_block(number: int, base: dict[str, Any]) -> dict[str, Any]:
+def _legend_flag(native: int) -> bool:
+    """Бит признаков локации донора; нет донора — считаем, что не стоит."""
+    from konung2 import donor
+    if not donor.available():
+        return False
+    try:
+        return donor.location_track_flag(native)
+    except OSError:
+        return False
+
+
+def map_audio_block(number: int, base: dict[str, Any],
+                    game: str | None = None,
+                    native: int | None = None,
+                    village: bool = False) -> dict[str, Any]:
     """Блок ``audio`` документа карты: трек, амбиент и предзагрузка.
 
     Повторяет загрузчик карты (VA 0x43DF48): амбиент — занятые слоты
@@ -242,9 +310,19 @@ def map_audio_block(number: int, base: dict[str, Any]) -> dict[str, Any]:
     Деление день/ночь — правило амбиента из 0x438A00; в «пещерах» (карты с
     фиксированным светом, таблица 0x4617B0) оно выключено.
     """
-    occupied: set[int] = base["occupied"]
-    eight = [slot for slot in sounds.ambient_slots(number) if slot in occupied]
-    night_from = sounds.ambient_slots(number).start + sounds.AMBIENT_NIGHT_OFFSET
+    # ЧЕЙ ЗВУК И ПО ЧЬЕМУ НОМЕРУ. Восьмёрка амбиента — арифметика от номера
+    # карты (база + (номер−1)·шаг), поэтому донорской карте нужен ЕГО номер:
+    # по нашему 155 она брала бы чужую восьмёрку. Набор звуков тоже его.
+    legend = game == "legend"
+    occupied: set[int] = (base.get("legend_occupied") or set()) if legend \
+        else base["occupied"]
+    own = native if (legend and native) else number
+    # БАЗА ВОСЬМЁРКИ ТОЖЕ СВОЯ У КАЖДОЙ ИГРЫ: канон 256, донор 300. Пока
+    # бралась канонная, его карты озвучивались слотами на 44 раньше своих —
+    # чужими вскриками вместо своего гомона.
+    eight = [slot for slot in sounds.ambient_slots(own, game) if slot in occupied]
+    night_from = (sounds.ambient_slots(own, game).start
+                  + sounds.AMBIENT_NIGHT_OFFSET)
     cave = bool(fixed_light_map(number))
 
     records = set(sounds.PRELOAD_FORCED_RECORDS)
@@ -261,8 +339,19 @@ def map_audio_block(number: int, base: dict[str, Any]) -> dict[str, Any]:
                        if slot in occupied)
 
     return {
-        "map_track": map_track(number),
-        "tracks": base["tracks"],
+        # ЧЕЙ НАБОР ЗВУКОВ БРАТЬ. Клиент ищет слот сперва под этой
+        # приставкой (`legend:<слот>`), и только потом среди канонных.
+        **({"game": "legend"} if legend else {}),
+        # Правило выбора трека — СВОЁ У КАЖДОЙ ИГРЫ: канон 0x437F48, донор
+        # 0x43BC94. Раньше к донорской карте применялось канонное, и оно
+        # выдавало номер из канонного музыкального диапазона — а в его наборе
+        # под этим номером лежит звуковой эффект. Отсюда «музыка зависает»:
+        # карта 169 просила трек 24, а в донорском банке это 0.23 секунды,
+        # закольцованные навсегда.
+        "map_track": map_track(own, game, village, _legend_flag(own)
+                               if legend else False),
+        "tracks": (base.get("legend_tracks") or base["tracks"]) if legend
+                  else base["tracks"],
         "index": base["index"],
         "ambient": {
             "day": [slot for slot in eight if slot < night_from],

@@ -38,8 +38,21 @@ export function exitsSetup(map) {
 }
 
 // Выход, внутри которого лежит точка.
-export function exitAt(x, y) {
+//
+// ДВЕ ПРОВЕРКИ, А НЕ ОДНА. Движок узнаёт выход по БИТУ КЛЕТКИ (0x1000,
+// VA 0x4115AC), а не по пиксельному прямоугольнику; прямоугольник у нас —
+// удобная скороговорка, и она ломалась на зоне шириной в одну клетку:
+// у телепорта в гнездо дракона (карта 188, выход 188 -> 188) left == right,
+// и якорь юнита в вырожденный прямоугольник не попадал никогда. Поэтому
+// сперва клетка против row1..row2/col1..col2 из записи выхода, и лишь
+// запасным ходом — пиксели (у старых записей клеток может не быть).
+export function exitAt(x, y, cell = null) {
   for (const door of exits) {
+    if (cell && door.row1 != null &&
+        cell.row >= door.row1 && cell.row <= door.row2 &&
+        cell.col >= door.col1 && cell.col <= door.col2) {
+      return door;
+    }
     if (x >= door.left && x <= door.right && y >= door.top && y <= door.bottom) {
       return door;
     }
@@ -129,9 +142,19 @@ export function exitsTick() {
   const свой = arrivalOf(hero, heroWas);
   heroWas = свой.now;
 
+  // ПРИКАЗ С ДЕЛОМ СИЛЬНЕЕ ДВЕРИ. Переход живёт в ветке DEFAULT разбора
+  // прибытия (0x4115AC: `switch (занятие & 0x0F) { case 2: разговор;
+  // case 3: обыск; ... default: if (клетка & 0x1000) переход }`) — то
+  // есть пришедший ЗАГОВОРИТЬ или ОБЫСКАТЬ до двери не доходит вовсе.
+  // Без этого гейта куча на клетке выхода телепортировала на карту ДО
+  // открытия: доспех оставался в куче, и его можно было брать бесконечно.
+  const kinds = world.map?.hero?.rules?.orders?.kind ?? { talk: 2, take: 3 };
+  const busyKinds = new Set([kinds.talk ?? 2, kinds.take ?? 3,
+                             kinds.wait_talk ?? 0x0C]);
   let door = null;
-  if (свой.arrived && atGoal(hero, hero.orderRow, hero.orderCol)) {
-    door = exitAt(hero.x, hero.y);
+  if (свой.arrived && atGoal(hero, hero.orderRow, hero.orderCol) &&
+      !busyKinds.has(hero.orderKind ?? 0)) {
+    door = exitAt(hero.x, hero.y, hero.cell);
   }
 
   // Спутники: кромка своя у каждого, а условие — клетка, куда шёл вожак.
@@ -144,8 +167,9 @@ export function exitsTick() {
     const его = arrivalOf(mate, был);
     mateWas.set(id, его.now);
     if (door || !его.arrived) continue;
+    if (busyKinds.has(mate.orderKind ?? 0)) continue;   // пришёл по делу
     if (!atGoal(mate, hero.orderRow, hero.orderCol)) continue;
-    door = exitAt(mate.x, mate.y);
+    door = exitAt(mate.x, mate.y, mate.cell);
   }
   //: Выбывших забываем, иначе список растёт весь сеанс.
   for (const id of [...mateWas.keys()]) if (!живые.has(id)) mateWas.delete(id);

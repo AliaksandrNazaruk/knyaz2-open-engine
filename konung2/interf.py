@@ -286,6 +286,48 @@ CHARACTER_WEIGHT_SCALE = 0.001
 #: Здоровье печатается в шестнадцатых долях (шкала 0x640 → 0…100).
 CHARACTER_HEALTH_DIVISOR = 16
 
+#: ТРИ СТРОКИ-ТУМБЛЕРА экрана персонажа (VA 0x42A8F4:126-180; щелчки —
+#: зоны 0x39…0x3F внутри 0x421690). Живут на битах байта состояния +0x19
+#: показанного юнита:
+#:
+#:     «Выбор оружия»   бит 0x20 — взведён значит ЗАПРЕЩЁН: юнит сам не
+#:                      переключается между рукой и метательным (0x410A08:67
+#:                      и 0x411F28 пробуют выстрел только при +0xEE == 1
+#:                      ИЛИ снятом бите); клики 0x39 or/0x3A and
+#:     «Защищать героя» бит 0x10 — цель берётся среди бьющих ВОЖАКА отряда
+#:                      (0x410010:46-69); клики 0x3B/0x3C
+#:     «Лечебные смеси» биты 0x01/0x02 — автопитьё Лечебного бальзама
+#:                      (класс 0x55) после попадания, пороги 800 и 1200
+#:                      сырых (0x414DF0); клики 0x3D/0x3E/0x3F
+#:
+#: Тексты значений — семь указателей с 0x45D3F4; x-координаты значений и
+#: y строк — из кода рендера (подписи строк лежат в общей таблице подписей
+#: по x=300). Активное значение печатается второй палитрой 0x60054C.
+CHARACTER_TOGGLES_VA, CHARACTER_TOGGLE_TEXTS = 0x45D3F4, 7
+CHARACTER_TOGGLE_ROWS = (
+    ("weaponLock", 380, ((0, 0x145, True), (1, 0x1C7, False))),
+    ("defendLeader", 400, ((2, 0x145, True), (3, 0x1C7, False))),
+    ("healTrigger", 420, ((4, 0x145, 0), (5, 0x1A4, 1), (6, 0x1F9, 2))),
+)
+
+
+def character_toggles(data: bytes | None = None) -> list[dict]:
+    """Тумблеры экрана персонажа: поле, строка и значения с текстами exe."""
+    from .exetables import va_to_foff
+    if data is None:
+        with open(game_file("konung2.exe"), "rb") as stream:
+            data = stream.read()
+    offset = va_to_foff(CHARACTER_TOGGLES_VA)
+    texts = []
+    for index in range(CHARACTER_TOGGLE_TEXTS):
+        pointer = struct.unpack_from("<I", data, offset + index * 4)[0]
+        texts.append(_string_at(data, pointer)
+                     if 0x440000 < pointer < 0x470000 else "")
+    return [{"field": field, "y": y,
+             "values": [{"text": texts[at] or "?", "x": x, "value": value}
+                        for at, x, value in values]}
+            for field, y, values in CHARACTER_TOGGLE_ROWS]
+
 
 def _string_at(data: bytes, va: int) -> str:
     """CP866-строка по виртуальному адресу."""
@@ -386,7 +428,9 @@ def character_screen(data: bytes | None = None) -> dict:
             "sprite_alt": CHARACTER_SCREEN_SPRITE_ALT,
             "numbers": numbers, "labels": labels,
             "weight_scale": CHARACTER_WEIGHT_SCALE,
-            "health_divisor": CHARACTER_HEALTH_DIVISOR}
+            "health_divisor": CHARACTER_HEALTH_DIVISOR,
+            # три строки-тумблера (+0x19): тексты значений — из exe
+            "toggles": character_toggles(data)}
 
 
 #: ПРОЗВИЩЕ ИГРОКА (VA 0x42FDC0). Подсказка о своём герое начинается не с

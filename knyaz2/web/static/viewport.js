@@ -82,6 +82,11 @@ export const band = {
 };
 
 export const view = {
+  //: ЗАКАЗ ПЕРЕРИСОВКИ, А НЕ САМА ПЕРЕРИСОВКА. Протяжка мыши и колесо звали
+  //: `render()` прямо из обработчика, поверх той, что уже идёт из кадра:
+  //: в замере игрока 579 отрисовок на 425 кадров — треть работы впустую.
+  //: Теперь обработчик поднимает флаг, а рисует кадровый цикл, один раз.
+  dirty: false,
   width: 1,
   height: 1,
   dpr: Math.max(1, window.devicePixelRatio || 1),
@@ -151,12 +156,18 @@ export function clampCamera() {
   if (view.zoom !== zoomWas) updateZoom();
   const halfW = view.width / 2 / view.zoom;
   const halfH = view.height / 2 / view.zoom;
+  //: С перспективой половины разные: вверх дальше, вниз ближе. Без этого
+  //: камеру держало по плоской мерке — сверху открывались лишние три клетки,
+  //: а нижний край карты становился недостижим, и с него нельзя было выйти
+  //: на карту мира.
+  const reach = extent?.(halfW, halfH) ??
+    { up: halfH, down: halfH, side: halfW };
   const left = bounds.left ?? 0, right = bounds.right ?? 0;
   const top = bounds.top ?? 0x20, bottom = bounds.bottom ?? 0;
-  if (view.cameraX - halfW < left) view.cameraX = left + halfW;
-  else if (view.cameraX + halfW > right) view.cameraX = right - halfW;
-  if (view.cameraY - halfH < top) view.cameraY = top + halfH;
-  else if (view.cameraY + halfH > bottom) view.cameraY = bottom - halfH;
+  if (view.cameraX - reach.side < left) view.cameraX = left + reach.side;
+  else if (view.cameraX + reach.side > right) view.cameraX = right - reach.side;
+  if (view.cameraY - reach.up < top) view.cameraY = top + reach.up;
+  else if (view.cameraY + reach.down > bottom) view.cameraY = bottom - reach.down;
   return before !== `${view.cameraX},${view.cameraY},${view.zoom}`;
 }
 
@@ -190,14 +201,16 @@ export function setLayeredFrame(value) {
   layeredFrame = value;
 }
 
-export function traceDiamond(x, y) {
+//: `target` — куда обводить. По умолчанию текущий кадр, но выпечка земли
+//: (ground.js) рисует метку недогруженной плитки в свой холст.
+export function traceDiamond(x, y, target = context) {
   const grid = world.map.coordinates.ground_grid;
-  context.beginPath();
-  context.moveTo(x + grid.tile_width / 2, y);
-  context.lineTo(x + grid.tile_width, y + grid.tile_height / 2);
-  context.lineTo(x + grid.tile_width / 2, y + grid.tile_height);
-  context.lineTo(x, y + grid.tile_height / 2);
-  context.closePath();
+  target.beginPath();
+  target.moveTo(x + grid.tile_width / 2, y);
+  target.lineTo(x + grid.tile_width, y + grid.tile_height / 2);
+  target.lineTo(x + grid.tile_width / 2, y + grid.tile_height);
+  target.lineTo(x, y + grid.tile_height / 2);
+  target.closePath();
 }
 
 export function cellVisible(x, y, visible) {
@@ -205,6 +218,7 @@ export function cellVisible(x, y, visible) {
   return !(x > visible.right || y > visible.bottom ||
     x + grid.tile_width < visible.left || y + grid.tile_height < visible.top);
 }
+
 
 // Вернуть рисование на сам кадр: с этого начинается каждый кадр и этим
 // заканчивается сборка слоя.
@@ -214,6 +228,11 @@ export function useMainContext() {
 }
 
 // Нарисовать что-то мимо слоя сцены — прямо на кадр, минуя фильтр суток.
+//
+//: Подмены цели здесь больше нет. Она была нужна выпечке построек: та
+//: печатала светлые кадры интерьера в свой холст, а не на экран. Кэш
+//: выпечки (props.js) не воспроизводил картинку и лежал выключенным —
+//: удалён вместе с этой подменой.
 export function withMainContext(draw) {
   const previous = context;
   context = mainContext;
@@ -221,9 +240,16 @@ export function withMainContext(draw) {
   context = previous;
 }
 
-// Светлый кадр (интерьер постройки, юнит на клетке бита 22) ложится на кадр,
-// а из слоя вырезается его силуэт: объекты переднего плана рисуются позже и
-// закрашивают вырез, поэтому глубина не ломается.
+// СВЕТЛЫЙ КАДР: на сам кадр, мимо фильтра суток, плюс окно в слое сцены.
+//
+// Так рисуется интерьер постройки (VA 0x425B0C блитит main исходной
+// палитрой). Вырез здесь НЕМЕДЛЕННЫЙ, и это правильно ровно потому, что всё,
+// что должно закрыть интерьер, — стены, крыша, фигуры снаружи — ложится в
+// слой ПОЗЖЕ и закрашивает окно обратно.
+//
+// У светлого ЮНИТА так нельзя: его рисуют посреди прохода по глубине, и слой
+// под ним ещё не собран. Его окно откладывается до конца прохода —
+// units.renderBrightCuts, docs/RENDER_DEPTH.md.
 export function drawBrightImage(image, x, y) {
   withMainContext(() => context.drawImage(image, x, y));
   context.save();
@@ -233,11 +259,33 @@ export function drawBrightImage(image, x, y) {
   context.restore();
 }
 
+// Тот же светлый кадр, но КУСКОМ: нужен полосовой укладке построек
+// (perspective.drawMesh). Правило то же — на кадр мимо фильтра плюс
+// немедленный вырез из слоя ровно теми же координатами.
+export function drawBrightPart(image, sx, sy, sw, sh, dx, dy, dw, dh) {
+  withMainContext(() => context.drawImage(image, sx, sy, sw, sh, dx, dy, dw, dh));
+  context.save();
+  context.globalCompositeOperation = "destination-out";
+  context.globalAlpha = 1;
+  context.drawImage(image, sx, sy, sw, sh, dx, dy, dw, dh);
+  context.restore();
+}
+
+// ПАСМУРНОСТЬ. Наша добавка (у Diablo дождь свет не трогает, у Князя
+// погоды нет вовсе), но сделана КАНОННОЙ механикой: это обычный уровень
+// канала 0…100, который складывается с суточным. Кладёт сюда значение
+// weather.js — так модуль погоды не попадает в зависимости камеры.
+export const overcast = { level: 0 };
+
 export function applyDaylight() {
   // Раскладка каналов из цикла пересчёта палитр (VA 0x441E47): таблица c8
   // применяется к младшим битам слова (синий), c9 — к средним (зелёный),
   // c10 — к старшим (красный).
-  const [b, g, r] = daylight.levels;
+  //: ТУЧИ ГАСЯТ ТРИ КАНАЛА ПОРОВНУ и складываются с суточным уровнем;
+  //: сумма зажата в канонные −100…100, иначе множитель уходит в минус.
+  const тучи = Math.max(0, overcast.level || 0);
+  const [b, g, r] = daylight.levels.map(
+    (level) => Math.max(-100, Math.min(100, level - тучи)));
   if (!r && !g && !b) return;
   const multiply = [r, g, b].map((level) =>
     Math.round(255 * (100 - Math.abs(level)) / 100));
@@ -330,14 +378,31 @@ export function endSceneLayer(alpha = 1) {
   worldTransform(context);
 }
 
+//: ОБРАТНЫЙ ХОД ЭКРАН -> МИР ставится СНАРУЖИ. Опыт с перспективой
+//: (perspective.js) искажает кадр, и без такой же поправки на мышь щелчок
+//: у края кадра промахивался бы мимо клетки. Формула живёт там же, где
+//: прямой ход, — сюда её копировать нельзя, две копии молча разойдутся.
+//: Импортировать perspective.js отсюда тоже нельзя: он импортирует нас, и
+//: вышел бы цикл (tests/test_client_imports.py его ловит).
+let unproject = null;
+export function setUnproject(fn) { unproject = fn; }
+
+//: ПОЛОВИНЫ ВИДА ТОЖЕ СТАВЯТСЯ СНАРУЖИ. С перспективой они перестают быть
+//: симметричными: вверх кадр захватывает дальше, вниз ближе. Формула живёт
+//: в perspective.js, импортировать его отсюда нельзя (цикл), поэтому он сам
+//: кладёт сюда счётчик.
+let extent = null;
+export function setViewExtent(fn) { extent = fn; }
+
 export function screenToWorld(clientX, clientY) {
   const rect = canvas.getBoundingClientRect();
   const x = clientX - rect.left;
   const y = clientY - rect.top;
-  return {
+  const flat = {
     x: view.cameraX + (x - view.width / 2) / view.zoom,
     y: view.cameraY + (y - view.height / 2) / view.zoom,
   };
+  return unproject ? unproject(flat) : flat;
 }
 
 export function updateZoom() {

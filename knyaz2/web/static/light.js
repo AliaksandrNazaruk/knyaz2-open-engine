@@ -2,6 +2,7 @@
 import { daylight } from "./daylight.js";
 import { world } from "./world.js";
 import { cellVisible, context } from "./viewport.js";
+import { drawPlane } from "./perspective.js";
 
 export function nightDarkness() {
   const [b, g, r] = daylight.levels;
@@ -37,7 +38,8 @@ export function renderLightGlow(visible) {
   for (const cell of world.litCells) {
     if (!cellVisible(cell.x, cell.y, visible)) continue;
     const image = world.images.get(cell.light.glow);
-    if (image) context.drawImage(image, cell.x, cell.y);
+    //: Пятно света лежит НА ЗЕМЛЕ, значит едет плоскостью, а не спрайтом.
+    if (image) drawPlane(context, image, cell.x, cell.y, image.width, image.height);
   }
   context.restore();
 }

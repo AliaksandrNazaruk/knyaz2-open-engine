@@ -115,6 +115,34 @@ function paint() {
     if (picked === code - firstFace) button.classList.add("выбран");
   }
 
+  // СВОИ ПЕРСОНАЖИ — ЗА ПРЕДЕЛАМИ ДЕВЯТИ КЛЕТОК.
+  //
+  // Портретных клеток в NEWHERO.RES ровно девять, и десятому герою рамки
+  // взять неоткуда: он приходит из project/creatures, а не из игры. Рисуем
+  // ему кнопку СЛЕДУЮЩЕЙ строкой той же сетки и подписываем именем, потому
+  // что портрета у него нет вовсе. Канонные девять при этом не двигаются:
+  // их прямоугольники берутся из таблицы exe как были.
+  const cells = lastFace - firstFace + 1;
+  if (starts.length > cells) {
+    const own = rects.slice(firstFace, firstFace + cells).filter(Boolean);
+    const columns = [...new Set(own.map((rect) => rect[0]))].sort((a, b) => a - b);
+    const lines = [...new Set(own.map((rect) => rect[1]))].sort((a, b) => a - b);
+    const width = own[0][2] - own[0][0];
+    const height = own[0][3] - own[0][1];
+    const pitch = lines.length > 1 ? lines[1] - lines[0] : height + 9;
+    for (let index = cells; index < starts.length; index += 1) {
+      const spare = index - cells;
+      const left = columns[spare % columns.length];
+      const top = lines[lines.length - 1] + pitch * (1 + Math.floor(spare / columns.length));
+      const button = zone([left, top, left + width, top + height],
+                          starts[index]?.name ?? "герой",
+                          () => loadArchetype(index));
+      button.classList.add("creation__zone--own");
+      button.textContent = starts[index]?.name ?? "герой";
+      if (picked === index) button.classList.add("выбран");
+    }
+  }
+
   // ЯРКИЙ ПОРТРЕТ — ТОЛЬКО У ВЫБРАННОГО, И В ЕГО ЖЕ КЛЕТКЕ.
   //
   // Сверил пиксельно: блоки 1…6 файла NEWHERO.RES совпадают с фоном ровно
@@ -192,11 +220,22 @@ function paint() {
   // КАНОННАЯ: перенос идёт от x 0x4622E4 до x 0x4622EC, начиная с y
   // 0x4622E8; снизу текст упирается в кнопки. Раньше рамка была задана на
   // глаз в процентах, и текст вылезал за неё.
+  //
+  // ИМЯ — ПЕРВОЙ СТРОКОЙ ОПИСАНИЯ. На родном фоне имена были вшиты под
+  // шестью рамками; с девятью слотами их печатаем сами, и не под сеткой
+  // (там нет места между рядами), а заголовком рассказа — как движок
+  // открывает описание титулом героя.
   if (start.story) {
     const box = data.story_box ?? { x: 52, y: 410, x2: 550, y2: 699 };
     const about = document.createElement("p");
     about.className = "creation__story";
-    about.textContent = start.story;
+    if (start.name) {
+      const title = document.createElement("strong");
+      title.className = "creation__story-name";
+      title.textContent = start.name;
+      about.append(title);
+    }
+    about.append(document.createTextNode(start.story));
     about.style.left = `${(box.x / SCREEN_W) * 100}%`;
     about.style.top = `${(box.y / SCREEN_H) * 100}%`;
     about.style.width = `${((box.x2 - box.x) / SCREEN_W) * 100}%`;

@@ -25,17 +25,18 @@ const REPLAN_PER_TICK = 2;
 let replanBudget = 0;
 import { grantExperience } from "./progress.js";
 import { isNight } from "./daylight.js";
-import { actorAttackPose, actorFrames, actorItem, actorReach, drawActor,
-         isBeast } from "./actor.js";
+import { actorAttackPose, actorBody, actorFrames, actorItem, actorReach,
+         drawActor, isBeast, sheetsFor, unitSortKey } from "./actor.js";
 import { context, layeredFrame, withMainContext } from "./viewport.js";
 import { drawSelectionCircle, hero, heroAnchor, heroCellKey,
          heroDirectionToCell, heroNeighbor,
          heroPlanPath, heroFree, roster, unitMove, unitMovePose,
          unitUpdateBuilding } from "./hero.js";
-import { KEEP_RANGE, enemyFor, warbandOf, warbandSwing,
-         warbandsSetup, warbandsTick } from "./warband.js";
+import { withPerspective } from "./perspective.js";
+import { KEEP_RANGE, adjacentEnemy, enemyFor, membersOf, warbandOf,
+         warbandSwing, warbandsSetup, warbandsTick } from "./warband.js";
 import { weaponModeRefresh } from "./inventory.js";
-import { mapStateDead, mapStateJoined } from "./mapstate.js";
+import { mapStateDead, mapStateJoined, mapStateResidents } from "./mapstate.js";
 import { sfxHumanPose, sfxPose, sfxSwing } from "./sfx.js";
 
 export const units = [];
@@ -130,7 +131,7 @@ export const ORDER_FOLLOW = 0x10;
 // приказов, как список 0x840B94 в движке.
 export { isSelected, select as selectUnit, selection } from "./orders.js";
 import { followDistance, follows, isSelected, orderClear,
-         orderKinds } from "./orders.js";
+         orderKinds, orderUnit } from "./orders.js";
 
 // Обратный перевод: живой юнит -> запись бойца отряда.
 //
@@ -153,12 +154,27 @@ function namedFrom(kind, list) {
 export function memberFromUnit(unit) {
   return {
     index: unit.slot, name: unit.name,
+    // РОДНАЯ КАРТА — вторая половина идентичности. В движке слот уникален
+    // глобально (один массив юнитов на игру), а в паке слоты РАЗНЫХ карт
+    // пересекаются: донорские карты несут номера своего мира (unit_337 на
+    // 18 — Белун, на 186 — чужой житель). Без пары (карта, слот) запись
+    // отряда прятала пачного юнита ЛЮБОЙ карты с тем же слотом — «Ярл
+    // превращается в Белуна», клоны и невозвращаемые спутники.
+    home: unit.homeMap ?? null,
     face: unit.face ?? 0, body: unit.body ?? 0, palette: unit.palette ?? 0,
+    // Чья игра — часть облика: кадры и портреты двух игр под разными
+    // ключами (см. bodyKey и portraitPath).
+    game: unit.game ?? null,
     breed: unit.breed ?? 0, side: unit.side ?? 0,
     level: unit.level ?? 1,
     health: unit.health, armour: unit.stats?.armour,
     accuracy: unit.stats?.accuracy,
     order: unit.orderByte ?? ORDER_FOLLOW,
+    // Тумблеры окна персонажа — биты +0x19 (0x20 выбор оружия, 0x10
+    // защита вожака, 0x01/0x02 лечебные смеси); едут с бойцом.
+    weapon_lock: Boolean(unit.weaponLock),
+    defend_leader: Boolean(unit.defendLeader),
+    heal_trigger: unit.healTrigger ?? 0,
     dialog: unit.dialogNumber ?? unit.dialog?.number ?? null,
     // ДЕРЕВО РАЗГОВОРА ПЕРЕЕЗЖАЕТ ВМЕСТЕ С НИМ. Номера мало: на новой карте
     // спутник пересоздаётся из этой записи, а его дерево лежало у юнита той
@@ -200,19 +216,33 @@ export function memberFromUnit(unit) {
 // локацию, а вход возвращал спутнику здоровье, опыт и мешок того дня, когда
 // он к нам присоединился.
 //
-// Павшего не трогаем: как поступать с мёртвым спутником, отдельный вопрос
-// (в движке его вычёркивает свёртка карты), и решать его молча здесь нельзя.
+// ПАВШИЙ ВЫЧЁРКИВАЕТСЯ ИЗ ОТРЯДА НАВСЕГДА — обе ветки свёртки 0x43A628
+// вырезают мёртвого из массива юнитов при КАЖДОМ уходе с карты (счёт
+// отряда −1, хвост сдвигается на 0x100 вниз, :80-84 и :156-169), и у
+// отряда игрока это делается безусловно, даже с именными. Второго массива,
+// откуда его можно поднять, в движке нет. Здесь стояло «павшего не
+// трогаем» — и старая запись поднимала его на следующей карте живым и с
+// полным здоровьем дня найма. Добро павшего сыплется кучей в его клетку
+// раньше, в mapTeardown (там же, где у движка, — :39-66).
 export function partyCapture() {
   const party = hero.party ?? hero.data?.template?.party ?? null;
   const members = party?.members;
   if (!members?.length) return false;
   let saved = 0;
-  for (let at = 0; at < members.length; at += 1) {
-    const live = units.find((unit) => unit.ally && unit.slot === members[at].index);
-    if (!live || live.alive === false) continue;
-    members[at] = memberFromUnit(live);
-    saved += 1;
+  const kept = [];
+  for (const member of members) {
+    const live = units.find((unit) => unit.ally && unit.slot === member.index);
+    if (live && live.alive === false) continue;     // павший — вычеркнут
+    if (live) {
+      kept.push(memberFromUnit(live));
+      saved += 1;
+    } else {
+      // Первый в списке — сам герой, его живой юнит не в units; записи
+      // без живого двойника (глава отряда, чужая карта) едут как есть.
+      kept.push(member);
+    }
   }
+  party.members = kept;
   return saved > 0;
 }
 
@@ -245,6 +275,8 @@ function spawnCompanion(member, map, index) {
     // Номер слота юнита: по нему движок держит список выбора в порядке
     // адресов записей (VA 0x423F80), они лежат подряд через 0x100.
     slot: member.index ?? 0,
+    // родная карта — половина идентичности юнита (см. memberFromUnit)
+    homeMap: member.home ?? null,
     name: member.name,
     x: anchor.x, y: anchor.y,
     cell: { row: hero.cell.row, col: hero.cell.col + 1 + index },
@@ -256,6 +288,8 @@ function spawnCompanion(member, map, index) {
     palette: member.palette ?? 0,
     side: hero.side ?? 0,
     face: member.face ?? 0,
+    // Спутник донорского героя приезжает из ЕГО игры — и рисуется её кадрами.
+    game: member.game ?? hero.game ?? null,
     // тело = актёр голоса: свои отклики на выбор и свои приветствия
     body: member.body ?? 0,
     level: member.level ?? 1,
@@ -268,6 +302,10 @@ function spawnCompanion(member, map, index) {
     // без зова не бродит, и игрок на этом настоял; поэтому на старте бит
     // снят, а кнопка его ставит.
     orderByte: (member.order ?? 0) & ~ORDER_FOLLOW,
+    // тумблеры окна персонажа (биты +0x19) — из записи бойца
+    weaponLock: Boolean(member.weapon_lock),
+    defendLeader: Boolean(member.defend_leader),
+    healTrigger: member.heal_trigger ?? 0,
     // ДЕРЕВО РАЗГОВОРА У СПУТНИКА ТОЖЕ ЕСТЬ. Здесь стоял `null`, и со своими
     // спутниками нельзя было заговорить вовсе — а через разговор их и
     // назначают на должность в деревне (действие 74). Номер диалога у них
@@ -296,7 +334,9 @@ function spawnCompanion(member, map, index) {
     skills: skillList(member.skills),
     // У спутника всё СВОЁ: панель персонажа в движке работает с тем
     // юнитом, который выбран (0x849514, VA 0x4292DC), а не с героем.
-    characteristics: characteristicList(member.current),
+    // Сеется БАЗА: прибавки надетого досчитывает currentCharacteristics
+    // на лету, иначе чары считались бы дважды (см. progressSetup).
+    characteristics: characteristicList(member.characteristics ?? member.current),
     baseCharacteristics: characteristicList(member.characteristics),
     bag: [...(member.bag ?? [])],
     // экземплярные поля вещей (В10): крепость и слово чар по имени
@@ -349,12 +389,16 @@ export function unitsSetup(map) {
   // Нанятый разговором житель уже приехал бойцом отряда — вторым
   // экземпляром на своей родной карте его поднимать нельзя.
   //
-  // Сверяем по `id`: поля `index` у записей пака НЕТ вовсе, номер слота
-  // зашит в строку вида `unit_333`, и `unitSpawn` достаёт его оттуда.
-  // Сверка по `entry.index` не срабатывала никогда — на родной карте
-  // наёмник поднимался дважды.
+  // КЛЮЧ — ПАРА «РОДНАЯ КАРТА : СЛОТ». Слот уникален только в пределах
+  // одной игры (глобальный массив GAME.x), а донорские карты несут номера
+  // СВОЕГО мира — по паку 543 из 917 слотов мира 0 живут на двух и более
+  // картах. Пока сверка шла голым слотом, боец отряда прятал пачного
+  // юнита ЛЮБОЙ карты с тем же номером: на его месте вставал спутник —
+  // «Ярл превращается в Белуна». Запись без родной карты (старый сейв)
+  // прячет по-старому, на любой карте.
+  const mapNumber = Number(map?.legacy?.map_number);
   const inParty = new Set((party?.members ?? [])
-    .map((member) => `unit_${member.index}`));
+    .map((member) => `${member.home ?? mapNumber}:${member.index}`));
   // УБИТЫЕ ОСТАЮТСЯ УБИТЫМИ. В движке отдельной памяти не нужно: запись
   // юнита с поднятым битом 0x80 (unit+0x1A) продолжает лежать в отряде и
   // уезжает в сохранение вместе с ним. Здесь юниты карты пересоздаются из
@@ -365,11 +409,18 @@ export function unitsSetup(map) {
   // по запомненному; кого в паке нет вовсе — поднимаем из его собственной
   // записи отряда. Подробности и канон — в mapstate.js.
   const joined = mapStateJoined(map.legacy?.map_number);
+  // СНИМКИ ЖИТЕЛЕЙ (mapstate): вся изменяемая часть записи — движок держит
+  // её в глобальном массиве и не перечитывает. `removed` — ушёл с карты
+  // (действия 44/46/70), такой не поднимается; мёртвый — как и раньше.
+  const kept = mapStateResidents(map.legacy?.map_number);
   for (const entry of roster) {
-    if (inParty.has(entry.id)) continue;
     const slot = Number(String(entry.id ?? "").replace(/\D+/g, ""));
-    if (fallen.has(slot)) continue;
+    if (inParty.has(`${mapNumber}:${slot}`)) continue;
+    const snap = kept.get(slot);
+    if (snap && (snap.removed || snap.alive === false)) continue;
+    if (!snap && fallen.has(slot)) continue;
     unitSpawn(entry, map);
+    if (snap) applyResident(units[units.length - 1], snap);
     const remembered = joined.get(slot);
     if (remembered) {
       applyJoined(units[units.length - 1], remembered);
@@ -380,6 +431,13 @@ export function unitsSetup(map) {
   let extra = 0;
   for (const remembered of joined.values()) {
     if (!remembered.member || fallen.has(remembered.slot)) continue;
+    // СНОВА НАНЯТЫЙ уже приехал бойцом отряда (обработчик 36 снимает
+    // запись, но старые сейвы её ещё несут): поднять его и из памяти —
+    // выпустить клона, «два Белуна». Ключ тот же, что у пачного набора:
+    // пара «родная карта : слот».
+    if (inParty.has(`${remembered.member.home ?? mapNumber}:${remembered.slot}`)) {
+      continue;
+    }
     const unit = spawnCompanion(remembered.member, map, extra);
     extra += 1;
     applyJoined(unit, remembered);
@@ -393,6 +451,54 @@ export function unitsSetup(map) {
   // уезжают под пол собственного дома.
   for (const unit of units) unitUpdateBuilding(unit);
   return units;
+}
+
+// НАЛОЖИТЬ СНИМОК ЖИТЕЛЯ (mapstate.packResident): изменяемая часть записи
+// поверх пачной. В движке этого шага нет — запись юнита глобальна и
+// никогда не перечитывается из данных карты.
+function applyResident(unit, snap) {
+  if (!unit || !snap) return unit;
+  if (snap.cell) {
+    unit.cell = { ...snap.cell };
+    unit.home = { ...snap.cell };
+    const anchor = heroAnchor(snap.cell.row, snap.cell.col);
+    unit.x = anchor.x;
+    unit.y = anchor.y;
+  }
+  unit.direction = snap.direction ?? unit.direction;
+  unit.side = snap.side ?? unit.side;
+  if (snap.health != null) unit.health = snap.health;
+  unit.poison = snap.poison ?? 0;
+  unit.flags = snap.flags ?? 0;
+  unit.talkStamp = snap.talkStamp ?? null;
+  unit.money = snap.money ?? 0;
+  unit.bag = [...(snap.bag ?? [])];
+  unit.counter = [...(snap.counter ?? [])];
+  unit.equipment = { ...(snap.equipment ?? {}) };
+  unit.enchant = { ...(snap.enchant ?? {}) };
+  unit.bagStrength = { ...(snap.bagStrength ?? {}) };
+  unit.bagCount = { ...(snap.bagCount ?? {}) };
+  unit.bagEnchant = { ...(snap.bagEnchant ?? {}) };
+  unit.bagPoison = { ...(snap.bagPoison ?? {}) };
+  unit.wear = { ...(snap.wear ?? {}) };
+  unit.ammoCount = snap.ammoCount ?? null;
+  unit.rangedMode = Boolean(snap.rangedMode);
+  unit.body = snap.body ?? unit.body;
+  if (snap.face != null) unit.face = snap.face;
+  unit.palette = snap.palette ?? unit.palette;
+  unit.level = snap.level ?? unit.level;
+  unit.experience = snap.experience ?? 0;
+  unit.freeExperience = snap.freeExperience ?? 0;
+  unit.nextLevel = snap.nextLevel ?? 0;
+  if (snap.skills) unit.skills = [...snap.skills];
+  if (snap.characteristics) unit.characteristics = [...snap.characteristics];
+  if (snap.baseCharacteristics) {
+    unit.baseCharacteristics = [...snap.baseCharacteristics];
+  }
+  unit.weaponLock = Boolean(snap.weaponLock);
+  unit.defendLeader = Boolean(snap.defendLeader);
+  unit.healTrigger = snap.healTrigger ?? 0;
+  return unit;
 }
 
 // Наложить на поднятого юнита то, чем он отличается от исходного. Полей
@@ -428,17 +534,36 @@ export function unitSpawn(entry, map = world.map) {
       id: entry.id,
       // тот же номер слота, что у спутников: он зашит в id (unit_NNN)
       slot: entry.slot ?? (Number(String(entry.id ?? "").replace(/\D+/g, "")) || 0),
+      // РОДНАЯ КАРТА — вторая половина идентичности: слоты разных карт
+      // пересекаются (донор), и все глобальные склады ключуются парой.
+      homeMap: Number(map?.legacy?.map_number ?? NaN) || null,
       name: entry.name,
       x: position.x,
       y: position.y,
       cell: { ...cell },
       home: { ...cell },
-      direction: 6,
+      // ПОВОРОТ ИЗ РАССТАНОВКИ (+0x18 записи юнита, konung2/gamefile.py).
+      // Здесь стояла голая шестёрка, и вся деревня встречала игрока лицом
+      // вниз: направление менялось только у того, кто пошёл или заговорил.
+      // Шестёрка осталась запасной — для юнитов, заведённых не расстановкой.
+      direction: entry.direction ?? 6,
       stance: "peace",
       // ПОЗА РАССТАНОВКИ (+0x17). Скелеты, ичетики и кикиморы лежат в позе 4
       // и доигрывают свою анимацию, прежде чем начать действовать: разбор
       // занятия (0x410010) начинается с проверки «поза 4 и кадр 0».
-      pose: entry.pose === CREATURE_RISE_POSE ? "rise" : "stand",
+      //
+      // ЗАКАПЫВАЮТСЯ ТОЛЬКО ЗАКАПЫВАЮЩИЕСЯ. Здесь стояло «поза 4 — значит
+      // из земли» без разбора породы, и под правило попал живой человек.
+      // Замер по всему паку: в каноне позу 4 несут РОВНО три породы —
+      // ичетик (5 юнитов), скелет (71) и кикимора (16); у донора те же три
+      // и ещё одна, ровно один юнит на всю игру — Позвизд, порода 90, в
+      // Дубках у пещеры. Он висел в позе подъёма и не двигался, пока на
+      // него не нападут; тестер записал его как «чародей забаговался».
+      //
+      // Что он не тварь, говорит он сам: разговор 29, тринадцать узлов,
+      // «Ты ответишь за это оскорбление — я человек, а не зверь!».
+      pose: entry.pose === CREATURE_RISE_POSE && BURROWING.has((entry.breed ?? 0) & 0x7F)
+        ? "rise" : "stand",
       breedCounter: entry.breed_counter ?? 0,
       frame: 0,
       frameTime: 0,
@@ -457,11 +582,23 @@ export function unitSpawn(entry, map = world.map) {
       // а затем пересчитывает текущие через 0x41C494. Пока порт вёз эти два
       // списка только герою и спутникам, первое же занятие в казарме падало на
       // `characteristics[5]` жителя и обрывало ВЕСЬ тик игры.
-      characteristics: characteristicList(entry.current),
+      // Сев БАЗЫ (+0xC0): текущие (+0xCC) — это база плюс чары надетого,
+      // и их порт считает на лету (currentCharacteristics); сев current
+      // удваивал бы прибавки зачарованных вещей записи.
+      characteristics: characteristicList(entry.characteristics ?? entry.current),
       baseCharacteristics: characteristicList(entry.characteristics),
       face: entry.face ?? null,
       level: entry.level ?? 1,
-      hostile: entry.hostile !== false,
+      //: ЗЛОЙ ИЛИ ДОБРЫЙ — РЕШАЕТ ОТРЯД, А НЕ ЮНИТ. Поле бралось как
+      //: «враждебен, если пак прямо не сказал обратного», а пак его
+      //: жителям не пишет вовсе — и мирный житель, поставленный
+      //: редактором в мирный отряд, числился врагом. Бой это не решало
+      //: (цель выбирает отряд, warband.js), но всё, что читает флаг —
+      //: снимок для агента, правила разговора, — врало. Берём
+      //: враждебность ОТРЯДА: бит 0x01 его байта +0x1F (on_player).
+      hostile: entry.hostile ?? Boolean(
+        (map?.warbands ?? []).find(
+          (band) => Number(band.side) === Number(entry.side ?? 0))?.on_player),
       // Рабочие места жителя и сколько ему ещё стоять на текущем.
       workplaces: entry.workplaces ?? [],
       workRest: 0,
@@ -500,6 +637,10 @@ export function unitSpawn(entry, map = world.map) {
       beast: Boolean((entry.breed ?? 0) &
         (map?.hero?.rules?.progression?.beast_flag?.mask ?? 0x40)),
       body: entry.body ?? 0,
+      // ЧЬЯ ИГРА. Пак ставит это поле каждому жителю донорской карты, а
+      // клиент его терял — и в Тиграте 52 юнита из 57 искали набор кадров
+      // `6:162` вместо `legend:6:162` и оставались чёрными.
+      game: entry.game ?? null,
       venom: entry.venom ?? 0,
       // отрава на вещах юнита: у Славуна болты, у Святовита стрелы
       poisonOn: entry.poison_on ?? {},
@@ -512,7 +653,10 @@ export function unitSpawn(entry, map = world.map) {
       ...instanceMaps(entry),
       role: entry.role ?? 0,
       counter: [...(entry.counter ?? [])],
-      speed: entry.speed ?? 2,
+      // Скорость записи (+0x1D). Формулу из характеристик движок считает
+      // ТОЛЬКО отряду игрока (0x41C944:305); NPC живут с этим полем, и в
+      // стартовых мирах оно ноль у всех — потому и умолчание ноль.
+      speed: entry.speed ?? 0,
       //: Поля `sight` здесь больше нет: радиуса обзора в движке не существует,
       //: см. комментарий у `sees` в unitsTick. Из сборщика пака `sight_cells`
       //: убран тем же заходом.
@@ -654,7 +798,18 @@ function waitingToTalk(unit) {
 const WORKPLACE_NIGHT_BIT = 0x10;
 const WORKPLACE_COMBAT_FROM = 0x70;
 
-function workplaceTable() { return world.map?.village?.workplaces ?? null; }
+// ТАБЛИЦА МЕСТ — У КАЖДОГО ОТРЯДА СВОЯ. Числа в записи жителя это номера
+// слотов ЕГО отряда, а не общей деревенской таблицы. На Морском лагере
+// отрядов три, и знахарь с купцом, старостой и кузнецом (слоты 0…2 деревни)
+// уходили работать на клетки Хрофта, Хрорара и Эгиля — то есть кучковались
+// у Хрофта. Деревенская таблица остаётся запасной: для тех, чей отряд
+// не назван, и для паков, собранных до этой правки.
+function workplaceTable(unit = null) {
+  const own = unit?.party != null
+    ? world.map?.workplaces_by_party?.[String(unit.party)]
+    : null;
+  return own ?? world.map?.village?.workplaces ?? null;
+}
 
 // «СТОЙ, С ТОБОЙ ГОВОРЯТ» ОТПУСКАЕТ (VA 0x413894, случай 0x0C).
 //
@@ -668,6 +823,11 @@ function workplaceTable() { return world.map?.village?.workplaces ?? null; }
 // оставался с занятием 0x0C — не работал, не ходил, а разговор с ним считался
 // идущим. Отсюда и «спутник стоит как вкопанный», и «после разговора не
 // поговорить со старостой».
+//
+// САМ СЧЁТЧИК УБРАН 20.08: его ставили из правил пака и обнуляли здесь, а
+// уменьшать и спрашивать было некому — решает всё байт приказа. Никакого
+// отсчёта в движке и нет: удержание чисто условное, одно из двух, как
+// написано выше. Нашло средство tools/write_only_fields.js.
 function waitTalkTick(unit) {
   const kinds = orderKinds();
   const wait = kinds.wait_talk ?? 0x0C;
@@ -683,7 +843,6 @@ function waitTalkTick(unit) {
     return true;
   }
   orderClear(unit);
-  unit.waitTalk = 0;
   return false;
 }
 
@@ -707,17 +866,18 @@ export function unitSendTo(unit, row, col, order) {
   return unit.path.length > 0;
 }
 
-// СПАРРИНГ У КАЗАРМЫ (VA 0x413894, приказ 9).
-//
-// Дошедший до места с видом 0x9x получает занятие 9, и такт поведения делает
-// с ним вот что: смотрит два шага в сторону рабочего места, ищет там второго,
-// разворачивает его НАВСТРЕЧУ (направление ± 4) и раз в 1024 мировых такта
-// даёт ему единицу опыта. Прирост нарочно медленный — это фон, а не занятие
-// на вечер.
-//
-// Опыт достаётся НАПАРНИКУ, а не тому, кто пришёл: так в разборе и написано.
+//: РАЗОВЫЕ ПОЗЫ, КОТОРЫХ НЕТ В ТАБЛИЦЕ ДЕЙСТВИЙ. `actions` описывает кадры
+//: HEROES.RES, а эти приходят из набора твари: подъём из земли и каст своего
+//: героя. Доигравшая поза, не попавшая в разбор действий, сваливается в
+//: запасной ход `frame = 0` и начинается заново — так тварь бесконечно лезла
+//: из земли, а волшебница бесконечно кастовала.
+const SET_ACTIONS = new Set(["rise", "cast"]);
+
 //: Блок анимации, в котором лежат «встающие» твари (выпечка: CREATURE_POSES).
 const CREATURE_RISE_POSE = 4;
+//: Кто вылезает из земли: ичетик, скелет, кикимора. Список снят замером по
+//: всем картам обеих игр, а не выписан из головы (см. unitSpawn).
+const BURROWING = new Set([0x46, 0x4C, 0x53]);
 //: Порода Скелета — единственная, кто встаёт после смерти (0x413894:275).
 const BREED_SKELETON = 0x4C;
 //: Пауки: обычный и ядовитый. Ходят дёргано — см. beastPauses.
@@ -754,23 +914,166 @@ function beastPauses(unit) {
 //: units.js уже тянет его. Отдаём через мир, как unitSpeed и unitCanRun.
 world.beastPauses = beastPauses;
 
-const SPARRING_ORDER = 9;
+const SPARRING_ORDER = 9;      // места 0x90/0xA0 — бьются в паре
+const DRILL_ORDER = 10;        // места 0x70/0x80 — машут в одиночку
 const SPARRING_PHASE = 0x3FF;
+//: Взгляд лежит в МЛАДШЕЙ половине вида места (0x413894:66). Отдельного
+//: поля направления у места нет вовсе: `kind` несёт занятие старшей
+//: половиной, а сторону, куда встать, — младшей.
+const WORKPLACE_FACING = 0x0F;
+//: Приказ «идти на место» — движковый param_4 функции 0x416574: боевому
+//: месту 4, обычному 0xB. Своего смысла у чисел нет, важно лишь, что
+//: девятка на время дороги СНИМАЕТСЯ, — иначе боец машет по пути.
+const WALK_TO_COMBAT_ORDER = 4;
+const WALK_TO_WORK_ORDER = 0x0B;
 
+// ТРЕНИРОВКА — НЕ БОЙ, И УДАРА В НЕЙ НЕТ ВОВСЕ.
+//
+// В движке удар висит на боевом приказе с целью в +0x10, а тренировка
+// цель обнуляет (0x413894:84) — бьют воздух. У нас удар висит на КАДРЕ
+// анимации, и одного обнуления цели мало: `onUnitStrike` подставляет
+// героя запасным ходом любому чужому юниту, ПРИЧЁМ БЕЗ ПРОВЕРКИ
+// РАССТОЯНИЯ, — так что замах в казарме бьёт игрока через всю карту.
+//
+// МЕТИТЬ НАДО ЗАМАХ, А НЕ ПРИКАЗ. Здесь стояла проверка приказа 9/10, и
+// она пропускала половину случаев: спаррингующий ставит замах и НАПАРНИКУ
+// (так в движке — 0x413894:113), а у того приказ свой, хоть нулевой. Такой
+// сосед под гейт не попадал и честно лупил героя: «Ослябя -> герой: урон
+// 150» при 1600 здоровья. Поэтому флаг живёт на самом юните и снимается
+// первым же настоящим ударом — `attack` зовёт `swing` без него.
+function unitTraining(unit) {
+  return unit?.trainingSwing === true;
+}
+
+//: Занят ли юнит тренировкой — по приказу, а не по позе.
+function unitSparring(unit) {
+  const kind = (unit?.orderByte ?? 0) & 0x0F;
+  return kind === SPARRING_ORDER || kind === DRILL_ORDER;
+}
+//: Ходячие позы. В движке это таблица 0x45FE90 — такты на клетку, и
+//: положительные значения там ровно у четырёх записей: walk и run в обеих
+//: стойках (11, 5, 10, 4). Ею же он проверяет, не идёт ли напарник.
+const POSE_WALKS = new Set(["walk", "run"]);
+
+// ЗАМАХ (VA 0x416B50) — общий для боя и для тренировки.
+//
+// Движок ставит боевую стойку (бит 4 байта +0x19), сбрасывает «бьётся
+// метательным» и выбирает блок по оружию и щиту: двуручное — 8, нулевой
+// навык боя двумя руками или щит во второй руке — 5, иначе 9. Последней
+// строкой кладёт походку удара (+0xFD). Ровно это же делал `attack`, и
+// держать две копии было бы враньём: удар в бою и удар по воздуху в
+// казарме — одно движение, разная причина.
+function swing(unit, { melee = false, training = false, pace = null } = {}) {
+  // ТРЕТЬЯ КОМАНДА ЗАМАХА (0x416B50): `+0xEE = 0` — «бьётся не
+  // метательным», безусловно. Без неё лучник в казарме «тренировался
+  // луком» со звуком выстрела: слой оружия и звук замаха выбирались по
+  // режиму стрельбы, а тренировка — всегда ближний бой. Обратно режим
+  // возвращает задумывание боя (наш перенос 0x412FF4 в боевой ветке).
+  if (melee) unit.rangedMode = false;
+  drawWeapons(unit);
+  const поза = actorAttackPose(data(), unit, { melee });
+  const сменилась = unit.pose !== поза;
+  setPose(unit, поза);
+  //: ПОХОДКУ УДАРА (+0xFD) КЛАДЁТ ВЫЗЫВАЮЩИЙ. `0x416B50` ставит её сама,
+  //: но обе ветки тренировки тут же ПЕРЕЗАПИСЫВАЮТ — и по-разному:
+  //:
+  //:     приказ 9, себе       0x413B4C   +0xFD = 0
+  //:     приказ 9, напарнику  0x413CBC   +0xFD = кадры / 2
+  //:     приказ 10            0x413C71   +0xFD = rand() % (кадры / 2)
+  //:
+  //: Снято дизассемблером, не декомпилятом: у Ghidra эти три строки
+  //: сливаются в одну ветку.
+  //: ТОЛЬКО НА НОВЫЙ ЗАМАХ. Тренировка зовёт замах каждые шестнадцать
+  //: тактов, и переустановка счётчика на прежней позе не давала кадру
+  //: сдвинуться: он топтался на нуле, счётчик тикал 3-2-1, приходил
+  //: новый замах — и снова 3-2-1. В движке `+0xFD` кладётся при СМЕНЕ
+  //: блока (0x416740 заводит его с начала), а не каждый вызов.
+  if (сменилась) {
+    unit.attackWait = pace !== null ? pace
+      : (isShootingPose(unit.pose) ? 0 : attackWait(unit));
+  }
+  //: Пометка снимается сама: настоящий удар идёт этим же путём и кладёт
+  //: сюда ложь, поэтому «застрять безоружным» юнит не может.
+  unit.trainingSwing = training;
+}
+
+//: Половина кадров нынешней анимации — из неё обе ветки берут походку.
+function swingHalf(unit) {
+  const набор = actorFrames(data(), unit, unit.pose, unit.direction ?? 0);
+  return Math.trunc((Array.isArray(набор) ? набор.length : 0) / 2);
+}
+
+// ТРЕНИРОВКА У КАЗАРМЫ (VA 0x413894, приказы 9 и 10).
+//
+// Полный разбор — docs/VILLAGE_TRAINING_SPEC.md; здесь только то, что
+// нужно, чтобы читать этот код:
+//
+//   * поворот по взгляду места (младшая половина вида места);
+//   * приказ 9 — пара через клетку, приказ 10 — удары в одиночку;
+//   * цель обнуляется (+0x10), потому удар и уходит в воздух;
+//   * опыт даётся ТОЛЬКО напарнику стороны игрока, раз в 0x3FF тактов;
+//     в ветке приказа 10 начисления нет вовсе (проверено по всем вызовам
+//     0x413110: в девятке один, в десятке ни одного).
 function sparringTick(unit) {
-  if ((unit.orderByte & 0x0F) !== SPARRING_ORDER) return false;
+  const kind = (unit.orderByte ?? 0) & 0x0F;
+  if (kind !== SPARRING_ORDER && kind !== DRILL_ORDER) return false;
   if (!unit.cell) return false;
+  const place = (workplaceTable(unit) ?? []).find(
+    (row) => row.slot === (unit.workplaces ?? [])[0]);
+  const facing = (place?.kind ?? 0) & WORKPLACE_FACING;
+  if (facing < 8) unit.direction = facing;
+  unit.target = null;
+  //: Замах СЕБЕ — только из стойки (0x413894:88). Иначе анимация удара
+  //: сбрасывалась бы в первый кадр каждые шестнадцать тактов и не
+  //: доигрывала никогда: боец дёргался бы, а не бил.
+  const свой = unit.pose === "stand";
+  if (kind === DRILL_ORDER) {
+    //: БЕЗ ПРОВЕРКИ ПОЗЫ. У девятки движок спрашивает, стоит ли боец
+    //: (0x413B2x), а у десятки — нет: `cmp [ebp-8], 0xa` и сразу
+    //: `call 0x416B50` (0x413C56). Здесь стояло моё «только из стойки»,
+    //: и одиночки у бочек махали втрое реже, чем должны.
+    const прежняя = unit.pose;
+    swing(unit, { melee: true, training: true });
+    if (unit.pose !== прежняя) {
+      const половина = swingHalf(unit);
+      unit.attackWait = половина < 2 ? 0
+        : Math.floor(Math.random() * половина);
+    }
+    return true;
+  }
   // Два шага в свою сторону — там стоит напарник.
+  //
+  // НАПАРНИКОМ МОЖЕТ БЫТЬ КТО УГОДНО, И ГЕРОЙ ТОЖЕ. Движок берёт юнита из
+  // клетки по общей карте `DAT_005662BC` (0x413894:82), где лежат все без
+  // разбора; своей записи у игрока там нет. Приказ 9 ставит ТОЛЬКО жизнь
+  // деревни (0x412C0C — единственное место во всём exe, где пишется
+  // девятка), значит зачинщик всегда житель, а игрок и его спутник
+  // попадают в спарринг второй стороной — им ставят замах и им же капает
+  // опыт. Оттого движок и сверяет сторону напарника с игроковой.
+  //
+  // У нас герой живёт ОТДЕЛЬНО от массива `units`, и поиск его не видел:
+  // игрок вставал на вторую клетку казармы — и просто стоял.
   let spot = heroNeighbor(unit.cell.row, unit.cell.col, unit.direction ?? 0);
   spot = heroNeighbor(spot.row, spot.col, unit.direction ?? 0);
-  const mate = units.find((other) => other !== unit && other.alive !== false &&
-    other.cell?.row === spot.row && other.cell?.col === spot.col);
+  const наКлетке = (кто) => кто?.alive !== false &&
+    кто?.cell?.row === spot.row && кто?.cell?.col === spot.col;
+  const mate = units.find((other) => other !== unit && наКлетке(other))
+    ?? (наКлетке(hero) ? hero : null);
   if (!mate) return false;
-  // Только своя сторона — чужого движок не учит.
-  if (mate.side !== unit.side) return false;
-  mate.direction = ((unit.direction ?? 0) + 4) & 7;
-  if (!clockPhaseHits(SPARRING_PHASE)) return false;
-  grantExperience(mate, 1);
+  if (свой) swing(unit, { melee: true, training: true, pace: 0 });
+  //: Идущего напарника движок не трогает вовсе — ни разворотом, ни опытом.
+  if (POSE_WALKS.has(mate.pose)) return true;
+  //: СТОРОНА ИГРОКА, А НЕ СВОЯ. Движок сверяет напарника с записью игрока
+  //: (`[0x1B]` обоих), и разворот с опытом достаются только своим; чужой
+  //: на соседней клетке всё равно машет, просто впустую. Здесь стояло
+  //: `mate.side !== unit.side`, и у деревенской пары это совпадало
+  //: случайно — сторона у жителей одна.
+  if ((mate.side ?? 0) === (hero.side ?? 0)) {
+    mate.direction = ((unit.direction ?? 0) + 4) & 7;
+    if (clockPhaseHits(SPARRING_PHASE)) grantExperience(mate, 1);
+  }
+  mate.target = null;
+  swing(mate, { melee: true, training: true, pace: swingHalf(unit) });
   return true;
 }
 
@@ -783,7 +1086,7 @@ function orderFromWorkplace(previous, workplace) {
 }
 
 function pickWorkplace(unit) {
-  const table = workplaceTable();
+  const table = workplaceTable(unit);
   const mine = unit.workplaces ?? [];
   if (!table || mine.length < 1) return null;
   const atNight = isNight();
@@ -932,7 +1235,14 @@ export function unitDamage(unit, amount, attacker = null) {
   // Отряд жертвы поднимает не урон, а ЗАМАХ (см. warbandSwing) — здесь
   // объявление нужно только для урона, пришедшего мимо замаха: долетевшая
   // стрела поднимает отряд жертвы в миг попадания (VA 0x41FDD0).
-  if (attacker && (attacker.side ?? 0) !== (unit.side ?? 0)) {
+  //
+  // НО НЕ ОТРЯД ИГРОКА: стрельба по юниту стороны игрока войну ему НЕ
+  // объявляет — 0x41FDD0:72 явно пропускает такую жертву
+  // (`if ((&DAT_007b3b23)[жертва] != _DAT_0084951C[0x1B]) 0x4159DC(...)`).
+  // На обстрел издалека отряд в оригинале сам не отвечает — только на
+  // ближний замах (0x413894, кадр 2) и на приказ игрока.
+  if (attacker && (attacker.side ?? 0) !== (unit.side ?? 0) &&
+      !unit.ally && (unit.side ?? 0) !== (hero.side ?? 0)) {
     warbandSwing(attacker, unit, units);
   }
   unit.health -= amount;
@@ -962,29 +1272,89 @@ export function unitDamage(unit, amount, attacker = null) {
 // пикселей и вширь на 28 — это габариты кадра на холсте 256x150. Клик по
 // ногам, по груди и по голове должны попадать одинаково.
 //: ПРЯМОУГОЛЬНИК ПОД МЫШЬЮ — НАШ, адресов за этими числами нет. Движок
-//: ищет юнита под курсором ПОПИКСЕЛЬНО, по маске нарисованного кадра
-//: (VA 0x425DB4 в конце отрисовки зовёт 0x442260 и запоминает попавшего),
-//: то есть точность у него ровно по силуэту. Пока маски кадров в клиенте
-//: не заведены, здесь стоит грубая рамка по размеру тела.
+// Попадание в юнита — ПОПИКСЕЛЬНО, по маске нарисованного кадра, как в
+// движке: отрисовка юнита пишет его номер в буфер попаданий по
+// непрозрачным пикселям (VA 0x425DB4 в конце блита зовёт 0x442260), и
+// щелчок просто читает буфер. Прозрачное не пишет ничего — потому в
+// оригинале клик «между ног» героя проваливается к куче за ним, а наша
+// прежняя рамка 60x106 глотала его: при строке сетки в 16 точек она
+// накрывала пять строк вверх, и чан рядом с героем не кликался вовсе
+// («факел не работает», жалоба 23.08).
+//
+// Рамка осталась первым, дешёвым отсевом — и запасным ответом, пока кадр
+// или его лист ещё не приехали: лучше лишний выбор, чем клик сквозь
+// невидимого юнита.
 const BODY_HALF_WIDTH = 30;
 const BODY_HEIGHT = 92;
 const BODY_BELOW = 14;
 
+//: Холст в один пиксель — проба альфы кадра на месте буфера попаданий.
+const probeCanvas = typeof document !== "undefined"
+  ? document.createElement("canvas") : null;
+if (probeCanvas) { probeCanvas.width = 1; probeCanvas.height = 1; }
+const probeContext = probeCanvas
+  ? probeCanvas.getContext("2d", { willReadFrequently: true }) : null;
+
+//: Ответ пробы: true попал, false мимо, null — кадра или листа ещё нет.
+function unitPixelHit(unit, x, y) {
+  if (!probeContext) return null;
+  const frames = actorFrames(data(), unit);
+  const frame = frames?.length
+    ? frames[Math.min(unit.frame ?? 0, frames.length - 1)] : null;
+  if (!frame) return null;
+  // Мерка по ТЕЛУ: слои снаряжения уже общего силуэта, и движок пишет в
+  // буфер каждый блит, но тела достаточно — оружие лишь чуть шире.
+  const body = actorBody(data(), unit, frame) ?? frame;
+  const lx = Math.floor(x) - (Math.round(unit.x) + (body.offset_x ?? 0));
+  const ly = Math.floor(y) - (Math.round(unit.y) + (body.offset_y ?? 0));
+  if (body.width && body.height &&
+      (lx < 0 || ly < 0 || lx >= body.width || ly >= body.height)) {
+    return false;                     // вне прямоугольника кадра — мимо
+  }
+  let image = null;
+  let sx = lx;
+  let sy = ly;
+  if (body.sheet !== undefined) {
+    const sheet = sheetsFor(unit)?.[body.sheet];
+    image = sheet ? world.images.get(sheet.path) : null;
+    sx = (body.x ?? 0) + lx;
+    sy = (body.y ?? 0) + ly;
+  } else if (body.path) {
+    image = world.images.get(body.path);
+  }
+  if (!image) return null;            // лист не доехал — решает рамка
+  probeContext.clearRect(0, 0, 1, 1);
+  probeContext.drawImage(image, sx, sy, 1, 1, 0, 0, 1, 1);
+  return probeContext.getImageData(0, 0, 1, 1).data[3] >= 128;
+}
+
 export function unitAt(x, y, withDead = false) {
-  let best = null;
-  let bestScore = Infinity;
   // Герой — такой же юнит отряда (в движке он просто нулевая запись того
   // же массива), поэтому щелчок по его ТЕЛУ обязан выбирать его так же,
   // как щелчок по портрету. Раньше он в переборе не участвовал вовсе.
+  let best = null;                    // попавший пикселем, самый ближний
+  let bestDepth = -Infinity;
+  let backup = null;                  // без кадра: старая рамка со счётом
+  let backupScore = Infinity;
   for (const unit of roster(units)) {
+    if (unit.hidden) continue;        // ушедшие и исчезнувшие не кликаются
     if (!unit.alive && !withDead) continue;
     const dx = Math.abs(unit.x - x);
     const dy = y - unit.y;                 // положительное — ниже ног
     if (dx > BODY_HALF_WIDTH || dy > BODY_BELOW || dy < -BODY_HEIGHT) continue;
+    const hit = unitPixelHit(unit, x, y);
+    if (hit === false) continue;      // кадр есть, пиксель прозрачный
+    if (hit === true) {
+      // Из попавших побеждает нарисованный ПОЗЖЕ: движок пишет буфер в
+      // порядке отрисовки, и последний блит перекрывает прежние.
+      const depth = unitSortKey(unit);
+      if (depth >= bestDepth) { best = unit; bestDepth = depth; }
+      continue;
+    }
     const score = dx + Math.abs(dy + BODY_HEIGHT / 2) * 0.4;
-    if (score < bestScore) { best = unit; bestScore = score; }
+    if (score < backupScore) { backup = unit; backupScore = score; }
   }
-  return best;
+  return best ?? backup;
 }
 
 // Кого юнит считает врагом. Разбор целиком канонический и живёт в
@@ -993,7 +1363,49 @@ export function unitAt(x, y, withDead = false) {
 // «злой/добрый» в движке нет вовсе, поэтому и здесь его больше нет.
 function enemyOf(unit) {
   return enemyFor(unit, units, (row, col, direction) =>
+    heroNeighbor(row, col, direction), rangedTargetPick);
+}
+
+// СОСЕД — И БОЛЬШЕ НИКТО (VA 0x4107EC). Юниту, которым распоряжается игрок
+// (бит +0x19 & 0x40, у нас `busy`), цель достаётся единственным путём: весь
+// рассудок 0x4111E8 заперт условием `(+0x19 & 0x40) == 0`, а обработчик
+// приказа 0x410A08 в случае 1 при пустой цели зовёт для такого юнита ровно
+// 0x4107EC — обход восьми соседних клеток — и, не найдя соседа, снимает
+// приказ (0x416E24). Дальнего выбора 0x410010 для него не существует.
+function adjacentFoe(unit) {
+  return adjacentEnemy(unit, units, (row, col, direction) =>
     heroNeighbor(row, col, direction));
+}
+
+// ВЫБОР ЦЕЛИ СТРЕЛКА (VA 0x411F28). Гейты движка: не тварь, метательное
+// гнездо и боеприпас заняты, режим стрельбы взведён ЛИБО самопереключение
+// не запрещено тумблером «Выбор оружия» (0x410A08:33). Дальше — юниты
+// ВРАЖЬЕГО отряда В ПОРЯДКЕ ЗАПИСЕЙ (не ближайший!): живой, не лежит, и
+// выстрел до него возможен (0x414AF8: не в упор, в дальности оружия,
+// трасса чиста). Первый подошедший становится целью, и юнит входит в
+// стрельбу (0x416AC8 взводит режим).
+function rangedTargetPick(unit) {
+  if (isBeast(unit)) return null;
+  if (!unit.equipment?.ranged || !unit.equipment?.ammo) return null;
+  if (!unit.rangedMode && unit.weaponLock) return null;
+  const band = warbandOf(unit);
+  if (!band?.fighting) return null;
+  const bow = actorItem(unit.equipment.ranged);
+  const reach = bow?.range_cells ?? 0;
+  if (!reach) return null;
+  const set = hero.data?.rules?.accuracy;
+  const min = set?.ranged_min_cells ?? 3;
+  for (const other of membersOf(band.enemySide, units)) {
+    if (other === unit || other.alive === false || other.hidden) continue;
+    if (!other.cell) continue;
+    const dist = cellRange(unit, other);
+    if (dist < min || dist > reach) continue;
+    if (!lineOfFire(unit.cell, other.cell)) continue;
+    // Вход в стрельбу: движок здесь же ставит режим (+0xEE = 1).
+    unit.rangedMode = true;
+    return other;
+  }
+  return null;
 }
 
 // ДОСТАЛ ОРУЖИЕ — ДОСНАРЯДИЛСЯ (VA 0x4111E8 -> 0x412FF4). Движок делает это
@@ -1048,12 +1460,30 @@ function attackWait(unit) {
 world.attackWait = attackWait;
 
 function attack(unit) {
-  drawWeapons(unit);
   unit.direction = directionTo(unit, unit.target ?? hero);
-  setPose(unit, actorAttackPose(data(), unit));
-  unit.attackWait = isShootingPose(unit.pose) ? 0 : attackWait(unit);
+  swing(unit);
   unit.struck = false;
   return unit;
+}
+
+// ВЗЯТЬ БОЕВОЙ ПРИКАЗ (вид 1) НА СЕБЯ. В движке автобой — это тоже приказ:
+// рассудок пишет юниту 0x21 (VA 0x4111E8), а сосед-враг — прямо единицу с
+// целью в +0x10 (VA 0x4107EC). На этом виде держатся сразу четыре
+// механизма: перехват «кто бьёт МЕНЯ» у соседей (0x4107EC, ветка а),
+// «стая» и «свободный» у тварей (0x41F0D0/0x41F340 смотрят чужой приказ и
+// цель) и ВЫХОД ОТРЯДА ИГРОКА ИЗ БОЯ — война гаснет, только когда ни у
+// кого из его юнитов нет вида 1 (VA 0x415B20:147-156). Пока порт дрался
+// без приказа, всё это было мертво: ветки не срабатывали никогда, а война
+// игрока гасла посреди боя за шестнадцать тактов.
+//
+// Путь НАРОЧНО не сбрасывается: это не выдача приказа игроком (0x4240BC),
+// а каждотактное удержание боевого вида, как случай 1 в 0x410A08.
+function combatOrder(unit, target) {
+  const kind = orderKinds().target ?? 1;
+  if ((unit.orderKind ?? 0) === kind && unit.orderTarget === target) return;
+  unit.orderKind = kind;
+  unit.orderTarget = target;
+  unit.orderByte = ((unit.orderByte ?? 0) & 0xF0) | (kind & 0x0F);
 }
 
 // КАДР УДАРА В БЛИЖНЕМ БОЮ — ТАБЛИЦА ДВИЖКА, а не «предпоследний кадр».
@@ -1224,50 +1654,105 @@ export function unitsTick(now, dt) {
   // пуст, либо равен REPLAN_PER_TICK.
   replanBudget = REPLAN_PER_TICK * clock.elapsed;
   let active = false;
-  for (const unit of units) {
+  // ГЕРОЙ — ПЕРВЫЙ ЮНИТ ЭТОГО ЖЕ ЦИКЛА. В движке отдельного «тика героя»
+  // не существует: 0x413894 перебирает все отряды, и игрок — просто первая
+  // запись отряда №0. Его рассудок, движение, кадры и удары идут этим же
+  // кодом; особых веток у него три — клавиатура (ввод вместо приказа),
+  // отсутствие деревенских дел и зеркало combat.target для интерфейса.
+  for (const unit of roster(units)) {
+    const isHero = unit === hero;
+    // Скрытый — исчезнувшая тварь или ушедший с карты (removed): он лежит
+    // в массиве только ради снимка карты, жить ему нечем.
+    if (unit.hidden) continue;
     if (unit.hurt > 0) unit.hurt = Math.max(0, unit.hurt - dt);
     if (unit.cooldown > 0) unit.cooldown = Math.max(0, unit.cooldown - dt);
 
     if (unit.alive) {
       // Разговор кончился — «стой, с тобой говорят» снимается (0x413894:140).
       waitTalkTick(unit);
-      // Цель: ближайший из враждебных (см. оговорку у enemyOf).
-      const target = enemyOf(unit);
-      const distance = target ? cellDistance(unit, target) : Infinity;
-      // ПОДОШЛИ ВПЛОТНУЮ — БЕРЁМСЯ ЗА РУКУ (VA 0x416B50, третья команда:
-      // `+0xEE = 0`). Движок, начиная ближний удар, сбрасывает режим стрельбы
-      // безусловно и без всяких проверок расстояния.
-      //
-      // У нас он не сбрасывался никогда, и юнит с луком или самострелом
-      // попадал в мёртвую зону: стрелять ближе трёх клеток нельзя
-      // (VA 0x414AF8), а на руку он не переходил — стоял столбом, пока его
-      // добивали. Замер на карте 23: Асбад с охотничьим самострелом простоял
-      // вплотную к герою десять секунд без единой позы атаки.
-      //
-      // Порог берём тот же, что запрещает выстрел: ближе него стрельбы нет,
-      // значит и держаться за метательное незачем.
-      const closeCells = hero.data?.rules?.accuracy?.ranged_min_cells ?? 3;
-      if (unit.rangedMode && target && distance < closeCells) unit.rangedMode = false;
-      // РАДИУСА ОБЗОРА В ДВИЖКЕ НЕТ. Здесь стояло `distance <= unit.sight`, и
-      // само поле `sight` было нашей выдумкой: в паке оно зашито числом 10 и
-      // из данных игры не читалось ни разу.
-      //
-      // Движок решает иначе, и решает это ОТРЯД, а не юнит:
-      //   0x415B20  война объявляется, когда чужой попал в ПРЯМОУГОЛЬНИК отряда
-      //   0x410010  юнит воюющего отряда идёт к цели — БЕЗ всякого предела
-      //             расстояния; если отряд не в войне, юнит сбрасывается в покой
-      //   0x41F234  цель — ближайший живой враг, верхней границы нет
-      //             (счётчик начинается с 0x7FFFFFFF)
-      //   0x410784  война держится, пока есть пара ближе 840 пикселей ПО КАЖДОЙ
-      //             оси; нет такой пары — отряд выходит из боя
-      //
-      // Обе половины уже живут в warband.js (`insideZone` и `engaged`), так что
-      // гейт по расстоянию здесь был лишним слоем поверх канона: он мешал
-      // воюющему отряду дойти до врага, стоящего дальше десяти клеток.
-      const sees = Boolean(target);
       const acting = Boolean(data().animations.actions?.[unit.pose]);
-      unit.target = sees ? target : null;
-      if (!acting) {
+      // ТРЕНИРОВКА ТИКАЕТ И В АНИМАЦИИ УДАРА.
+      //
+      // Гейт `acting` ниже поставлен против дребезга ВЫБОРА ЦЕЛИ, и к
+      // приказам 9 и 10 он отношения не имеет: цели у них нет вовсе, а в
+      // движке их такт (0x413894) идёт раз в 16 мировых тактов независимо
+      // от того, что юнит играет. Играет же тренирующийся почти всегда
+      // удар — и получал оттого один такт из двадцати: махал, но опыт не
+      // капал и с места не уходил. Замер: три такта из шестидесяти трёх.
+      //
+      // Здесь же убывает и срок пребывания (+0xF5): в движке он стоит в
+      // той же ветке приказа, а не в рассудке.
+      if (unit.alive && workPhase && unitSparring(unit)) {
+        unit.workRest = Math.max(0, (unit.workRest ?? 0) - workPhase);
+        sparringTick(unit);
+      }
+      // РЕШЕНИЯ ПРИНИМАЮТСЯ РАЗ В МИРОВОЙ ТАКТ, а не на каждый кадр браузера.
+      //
+      // В движке весь такт юнита (0x413894) идёт один раз за такт мира, и
+      // рассудок внутри него заперт байтом приказа:
+      //
+      //     if ((local_3c[0x16] & 0xfU) == 0) FUN_004111e8(...);   (:50)
+      //
+      // У нас `unitsTick` зовётся из кадра отрисовки, и вся эта цепочка
+      // крутилась шестьдесят раз в секунду вместо двенадцати с половиной.
+      // Отсюда дребезг: юнит перерешал по нескольку раз внутри одного такта,
+      // а журнал игрока показал это в чистом виде — замах начинался заново
+      // каждые 12-22 мс. Сюда же перенесён и ВЫБОР ЦЕЛИ: он тоже часть
+      // рассудка и по кадрам крутиться не должен.
+      //
+      // Ниже по циклу движение и анимация остаются ПОКАДРОВЫМИ: рисовать
+      // рывками нельзя, а решать — только по тактам.
+      if (!acting && clock.elapsed) {
+        // ЦЕЛЬ БОЯ ЛИПКАЯ (0x410A08, случай 1): однажды выбранная — приказом
+        // игрока (0x61) или рассудком (0x21) — держится в +0x10 до смерти
+        // или сброса (0x416E24), и обработчик приказа каждый такт лишь
+        // обновляет клетку цели. Перевыбор — только когда цели нет: тогда
+        // рассудок берёт соседа (0x4107EC) либо дальнюю (0x410010).
+        const kindTarget = orderKinds().target ?? 1;
+        let target = null;
+        if ((unit.orderKind ?? 0) === kindTarget) {
+          const held = unit.orderTarget;
+          if (held && held.alive !== false && !held.hidden) target = held;
+          else orderClear(unit);              // цель кончилась — 0x416E24
+        }
+        // ПОД РУКОЙ ИГРОКА ЦЕЛЬ НЕ ИЩУТ. Разница между `adjacentFoe` и
+        // `enemyOf` — это и есть разница между двумя состояниями движка:
+        //
+        //   бит +0x19 & 0x40 стоит  — приказ игрока; рассудок не зовётся
+        //                             вовсе, берётся только сосед (0x4107EC)
+        //   бит снят                — рассудок ищет дальнюю жертву (0x410010)
+        //                             и гонит юнита к ней
+        //
+        // Бит ставит КАЖДЫЙ приказ игрока мышью (0x4240BC и ветка 0x26 в
+        // 0x421690) и снимают ровно три события: щелчок по врагу (0x61),
+        // «Все ко мне» (0x420BFC) и подъём по разговору (0x4333A4). Завершение
+        // приказа его НЕ снимает — 0x416E24 пишет только +0x10 и +0x16.
+        if (!target) target = unit.busy ? adjacentFoe(unit) : enemyOf(unit);
+        const distance = target ? cellDistance(unit, target) : Infinity;
+        // ПОДОШЛИ ВПЛОТНУЮ — БЕРЁМСЯ ЗА РУКУ (VA 0x416B50, третья команда:
+        // `+0xEE = 0`): движок, начиная ближний удар, сбрасывает режим
+        // стрельбы безусловно. Порог — тот же, что запрещает выстрел
+        // (VA 0x414AF8): ближе него держаться за метательное незачем.
+        const closeCells = hero.data?.rules?.accuracy?.ranged_min_cells ?? 3;
+        if (unit.rangedMode && target && distance < closeCells) unit.rangedMode = false;
+        // ...И ОБРАТНО: задумывание пересчитывает режим стрельбы заново
+        // (VA 0x412FF4 — стреляет тот, у кого есть И метательное, И
+        // боеприпас). Без подъёма лучник, сбитый в рукопашную (близким
+        // врагом или тренировочным замахом 0x416B50), не стрелял бы уже
+        // никогда.
+        else if (!unit.rangedMode && target && distance >= closeCells &&
+                 unit.equipment?.ranged && unit.equipment?.ammo) {
+          unit.rangedMode = true;
+        }
+        // РАДИУСА ОБЗОРА В ДВИЖКЕ НЕТ. Здесь стояло `distance <= unit.sight`,
+        // и само поле `sight` было нашей выдумкой. Движок решает ОТРЯДОМ:
+        //   0x415B20  война объявляется по прямоугольнику отряда
+        //   0x410010  юнит воюющего отряда идёт к цели без предела расстояния
+        //   0x41F234  цель — ближайший живой враг, верхней границы нет
+        //   0x410784  война держится, пока есть пара ближе 840 пикселей
+        // Обе половины живут в warband.js (`insideZone` и `engaged`).
+        const sees = Boolean(target);
+        unit.target = sees ? target : null;
         // Ветки решают ТОЛЬКО «куда идти»; сам шаг делает общая для всех
         // unitMove — в движке шагают все одним кодом (VA 0x41615A).
         //
@@ -1278,22 +1763,35 @@ export function unitsTick(now, dt) {
         if (waitingToTalk(unit)) {
           faceEachOther(unit);
           if (!unit.step) setPose(unit, "stand");
-        } else if (unit.orderKind && walkToOrder(unit)) {
-          // ПРИКАЗ ИГРОКА СИЛЬНЕЕ СОБСТВЕННЫХ ДЕЛ, и это не наш выбор, а
-          // устройство движка: рассудок юнита — цель, строй, работа — живёт
-          // в VA 0x4111E8, а главный такт зовёт его ТОЛЬКО при нулевой
-          // младшей половине байта приказа (VA 0x413894: `if ((+0x16 & 0xF)
-          // == 0)`). Есть приказ — юнит его и выполняет.
-          //
-          // Раньше бой стоял ВЫШЕ приказа, и дерущимся спутником нельзя
-          // было ни командовать, ни увести: он всё равно шёл на врага.
+        } else if ((unit.orderKind ?? 0) === (orderKinds().talk ?? 2) &&
+                   world.onUnitArrived?.(unit)) {
+          // РАЗГОВОР МЕРИТСЯ КАЖДЫЙ ТАКТ прямоугольником 7×4 (VA 0x4115AC),
+          // а не равенством клеток: на клетку собеседника не встать — её
+          // держит он сам, и точного прибытия у talk-приказа НЕ БЫВАЕТ.
+          // Ветка «дошли, насколько можно» в unitMove честно ставила юнита
+          // рядом, но прибытие после этого никто не разбирал: walkToOrder
+          // строил путь в занятую клетку, шаг его отвергал — и так каждый
+          // такт, вечно. Разговор по приказу не открывался ни на одной
+          // карте; кликом в упор — тем же кругом. orderArrived сам мерит
+          // withinTalk: не достаёт — вернёт null, и ниже идёт ходьба.
+        } else if (unit.orderKind && unit.orderKind !== kindTarget &&
+                   walkToOrder(unit)) {
+          // ПРИКАЗ ИГРОКА СИЛЬНЕЕ СОБСТВЕННЫХ ДЕЛ (VA 0x413894: рассудок
+          // только при нулевой младшей половине приказа) — но БОЕВОЙ приказ
+          // (вид 1) сюда не входит: движок ведёт его тем же случаем 1
+          // обработчика 0x410A08, что и рассудочный 0x21, — это общая
+          // боевая ветка ниже, с погоней за ТЕКУЩЕЙ клеткой цели. Раньше
+          // приказ «бей» шёл этой веткой в клетку, где враг стоял в миг
+          // клика, а не за самим врагом.
         } else if (sees &&
                    withinReach(unit, target, distance, actorReach(unit)) &&
                    canStrike(unit, target, distance)) {
+          // Враг вплотную — боевой приказ на себя, как 0x4107EC пишет
+          // `+0x16 = 1` и цель в +0x10 перед самым ударом.
+          combatOrder(unit, target);
           unit.path = [];
           unit.goal = null;
           unit.goalTarget = null;
-          unit.chaseFail = null;
           //: ПОКА БЛОК ДЕЙСТВИЯ НЕ ДОИГРАН, ЗАНОВО НИЧЕГО НЕ РЕШАЕТСЯ. В
           //: движке поза держится сама: случаи 5/8/9 крутят замах до конца
           //: блока и лишь тогда зовут 0x416B50 за новым отсчётом. Раньше эту
@@ -1312,7 +1810,33 @@ export function unitsTick(now, dt) {
             actorFrames(data(), unit)?.length;
           if (playing) { active = true; }
           else { attack(unit); active = true; }
+        } else if (sees && unit.busy) {
+          // ДАЛЬНЯЯ ЦЕЛЬ ПОД РУКОЙ ИГРОКА ПРОСТО ОТБРАСЫВАЕТСЯ. Тот же бит
+          // запирает и шаг к цели, причём у движка там не «стоять с целью в
+          // руках», а именно снятие приказа (0x410A08, случай 1, цель жива):
+          //
+          //     if ((…) && ((param_1[0x19] & 0x40) == 0))
+          //          FUN_00416574(param_1, клеткаЦели…, 1);   // идти
+          //     else FUN_00416e24(param_1);                   // снять приказ
+          //
+          // И это не мелочь. Держать цель — значит держать вид приказа 1, а
+          // отряд игрока выходит из боя ровно тогда, когда единицы нет ни у
+          // кого (warband.js, ветка `band.player`). Оставь мы цель в руке —
+          // война не кончилась бы никогда, то самое «агро висит».
+          //
+          // Вплотную подошедшего бьём веткой ВЫШЕ: этот случай — только про
+          // недосягаемого, за которым пришлось бы идти.
+          orderClear(unit);
+          unit.target = null;
+          unit.path = [];
+          unit.goal = null;
+          unit.goalTarget = null;
+          unit.chaseAt = null;
+          if (!unit.step) setPose(unit, "stand");
         } else if (sees) {
+          // Дальняя цель — тот же боевой приказ: рассудок ставит 0x21, и
+          // случай 1 в 0x410A08 ведёт юнита за ТЕКУЩЕЙ клеткой цели.
+          combatOrder(unit, target);
           drawWeapons(unit);
           // НА ВРАГА ИДУТ БЕГОМ (VA 0x416574). Постановка приказа поднимает
           // бит бега `+0x19 |= 0x80` безусловно, как только вид приказа равен
@@ -1322,25 +1846,14 @@ export function unitsTick(now, dt) {
           //     if ((вид == 1) && (-1 < скорость(+0x1D)) && ((+0x1A & 0x40) == 0))
           //         +0x19 |= 0x80;
           //
-          // Здесь стояло `unit.running = false`, то есть ровно наоборот:
-          // люди шли на врага шагом. Блок хода движок выбирает потом теми же
-          // двумя битами — бег и боевая стойка дают 0x07, шаг в стойке 0x01.
-          unit.running = !isBeast(unit) && (unit.speed ?? 2) >= 0;
+          // Скорость здесь ТЕКУЩАЯ по канону (carry.js): у NPC — из записи,
+          // формула из характеристик — только отряду игрока.
+          unit.running = !isBeast(unit) && (world.unitSpeed?.(unit) ?? 0) >= 0;
           // Идём В САМУ КЛЕТКУ ЦЕЛИ: движок принимает её занятой, потому что
           // на ней стоит именно тот, к кому мы идём (VA 0x441441 сверяет
           // занявшего с полем +0x10). Дойдя вплотную, шагнуть туда не выйдет
           // — и это не тупик, а вход в удар: занятую клетку разбирает
           // VA 0x415090 и переводит юнита в бой.
-          //
-          // ПРОВАЛ ПОИСКА НЕ ПОВТОРЯЕМ КАЖДЫЙ КАДР. Движок на неудаче снимает
-          // приказ (VA 0x416E24) и к той же клетке больше не идёт. Без этой
-          // памяти недостижимый враг — например, лучник, которому нельзя
-          // стрелять в упор, — заставлял перестраивать маршрут в КАЖДОМ
-          // кадре, а один поиск стоит дороже целого кадра.
-          const failed = unit.chaseFail;
-          const same = failed && failed.row === target.cell.row &&
-            failed.col === target.cell.col && failed.fromRow === unit.cell.row &&
-            failed.fromCol === unit.cell.col;
           // ЦЕЛЬ УШЛА С КЛЕТКИ — МАРШРУТ УСТАРЕЛ.
           //
           // Раньше путь строился ТОЛЬКО когда кончился прежний, и погоня шла
@@ -1395,33 +1908,44 @@ export function unitsTick(now, dt) {
           // трогает вовсе — за той же чертой бой и так кончается.
           const inZone = Math.abs(unit.x - target.x) < KEEP_RANGE &&
             Math.abs(unit.y - target.y) < KEEP_RANGE;
-          // Застрявший (пути нет вовсе) важнее просто устаревшего: он стоит.
+          // ПРОВАЛ ПОИСКА НЕ ЗАПОМИНАЕТСЯ — ПОВТОР КАЖДЫЙ ТАКТ, ПОД БЮДЖЕТОМ.
+          //
+          // Движок на неудаче снимает приказ (VA 0x416E24: цель в ноль,
+          // младшая половина погашена) — и на СЛЕДУЮЩЕМ такте рассудок
+          // ставит 0x21 заново, путь прокладывается снова. Так он долбит
+          // 12.5 раз в секунду, пока кольцо вокруг цели не освободится, — и
+          // юнит занимает освободившуюся клетку сразу.
+          //
+          // Стоявшая здесь памятка провала (`chaseFail`) хранила пару «моя
+          // клетка × клетка цели» и не пускала к поиску, пока обе не
+          // сменятся. Освобождение соседней клетки ТРЕТЬИМ юнитом (умер,
+          // отошёл) пары не меняет — юнит замирал навсегда: «враг завис,
+          // пока я не сменю позицию» и «отряд не может навалиться на
+          // одного». Это было прямо против канона.
+          //
+          // Цену держит общий бюджет: ПОВТОРНЫЙ поиск после провала (путь
+          // пуст, клетка цели та же) идёт из REPLAN_PER_TICK наравне с
+          // обновлением курса — при толпе застрявших каждый пробует раз в
+          // несколько тактов, и сходимость остаётся, а цена ограничена.
+          // Свежая цель (клетка сменилась) планируется без бюджета, как и
+          // раньше, — иначе приказ игрока отзывался бы с задержкой.
+          const retry = !unit.path.length && !stale;
           const need = !unit.path.length || (stale && inZone);
-          if (need && !same && (!unit.path.length || replanBudget > 0)) {
-            if (unit.path.length) replanBudget -= 1;
+          if (need && (!retry || replanBudget > 0)) {
+            if (retry || unit.path.length) replanBudget -= 1;
             unit.path = heroPlanPath(unit.cell, target.cell, unit, target) ?? [];
             unit.chaseAt = { row: target.cell.row, col: target.cell.col };
-            unit.chaseFail = unit.path.length ? null
-              : { row: target.cell.row, col: target.cell.col,
-                  fromRow: unit.cell.row, fromCol: unit.cell.col };
             // ПРОВАЛ ПОИСКА СНИМАЕТ ЦЕЛЬ, А НЕ МОРОЗИТ ЮНИТА (VA 0x416E24):
             //
             //     *(short *)(+0x10) = 0;          // цель обнуляется
             //     *(byte *)(+0x16) &= 0xB0;       // младшая половина приказа
             //     FUN_00416CF0(...);              // и юнит встаёт
             //
-            // Погашенная половина приказа значит, что рассудок отработает на
-            // следующем такте — то есть юнит не ждёт, он просто перестаёт
-            // считать эту цель своей и живёт дальше обычной жизнью.
-            //
-            // У нас цель оставалась, а перестройку держала памятка `chaseFail`,
-            // и юнит замирал НАВСЕГДА, пока игрок не сойдёт с клетки. Ловилось
-            // это ровно там, где памятка бесполезна: игрока обступили, кому-то
-            // не досталось свободной клетки рядом — и он застывал столбом.
+            // Рассудок отработает на следующем такте: перевыберет цель и
+            // попробует путь снова — уже из бюджета (см. `retry`).
             if (!unit.path.length) {
               unit.target = null;
-              unit.orderByte = (unit.orderByte ?? 0) & 0xB0;
-              unit.orderKind = 0;
+              orderClear(unit);
               unit.goal = null;
               unit.goalTarget = null;
               if (!unit.step) setPose(unit, "stand");
@@ -1434,6 +1958,10 @@ export function unitsTick(now, dt) {
             unit.goal = null;
             unit.goalTarget = null;
           }
+        } else if (isHero) {
+          // Герою деревенские дела не положены: без цели и приказа он
+          // просто стоит — как юнит отряда игрока без наряда (+0xE3 < 0)
+          // и вне прямоугольника чужого отряда.
         } else if (unit.ally && follows(unit) && !unit.busy) {
           // Бит «за вожаком» — единственное, по чему спутник идёт следом,
           // но САМОСТОЯТЕЛЬНОСТЬ юнита целиком заперта битом «занят
@@ -1458,12 +1986,36 @@ export function unitsTick(now, dt) {
             }
           } else if (!unit.step) {
             unit.stance = hero.stance === "combat" ? "combat" : "peace";
+            unit.running = false;         // догнал — бег гаснет (0x416740)
             unit.path = [];
             unit.goal = null;
             unit.goalTarget = null;
           }
         } else if (!unit.step && !unit.path.length) {
-          unit.stance = "peace";
+          // ДЕЛ НЕТ — ОРУЖИЕ УБИРАЕТСЯ (VA 0x411448, рассудок юнита):
+          //
+          //     test byte [eax+0x1a], 0x40   ; зверю бит не трогают
+          //     test byte [eax+0x19], 4      ; стойка боевая?
+          //     xor  byte [eax+0x19], 4      ; снять
+          //     push 0x10 / call 0x416740    ; и встать в блок 16 — мирный
+          //
+          // Отсюда и повадка: житель входит в казарму нейтральным,
+          // тренируется в боевой стойке и уходит снова нейтральным.
+          //
+          // ТРЕНИРУЮЩЕГОСЯ НЕ ТРОГАЕМ: у него дело есть, и рассудок до
+          // этой ветки не доходит вовсе — он заперт ненулевым приказом
+          // (0x413894:50 зовёт 0x4111E8 только при нулевой младшей
+          // половине). Без оговорки сброс боролся с замахом каждый кадр, и
+          // боец мигал между мирной стойкой и ударом.
+          //
+          // Снятий бита в движке четыре, и искать их надо ВСЕМИ формами:
+          // `and 0xfb` (0x410DCA, разговор) и `xor 4` (0x41145F — вот
+          // это, 0x420577, 0x420D0F). По одной форме поиск лжёт.
+          if (!unitSparring(unit)) unit.stance = "peace";
+          // Бит бега гаснет вместе с боем: движок снимает его при любом
+          // не-беговом блоке (VA 0x416740: `if (блок != 7 && блок != 0x13)
+          // +0x19 &= 0x7F`). Без этого житель после погони бегал на работу.
+          unit.running = false;
           // Житель занят делом: ждёт свой срок на месте, потом выбирает
           // следующее и идёт туда (VA 0x412C0C).
           //
@@ -1472,9 +2024,35 @@ export function unitsTick(now, dt) {
           // По кадрам счётчик шёл примерно в 50 раз быстрее, и жители
           // метались между рабочими местами.
           if (unit.workRest > 0) {
-            unit.workRest = Math.max(0, unit.workRest - workPhase);
-            if (workPhase) sparringTick(unit);
+            // ПРИШЁЛ — БЕРЁТСЯ ЗА ДЕЛО СРАЗУ, А НЕ ПО ИСТЕЧЕНИИ СРОКА.
+            //
+            // Занятие ставится по прибытии: движок отправляет юнита в путь
+            // приказом 4/0xB (0x416574) и переставляет приказ на рабочий,
+            // когда клетка совпала (0x412C0C:112 -> 0x416CF0). У нас это
+            // делала ТОЛЬКО ветка выбора места, а она заперта сроком
+            // пребывания — и тот ставится ещё при отправке в путь, на
+            // 60…240 тактов деревни. Боец доходил до бочки и стоял минуту,
+            // а то и три, прежде чем взяться за меч.
+            const место = (workplaceTable(unit) ?? []).find(
+              (row) => row.slot === (unit.workplaces ?? [])[0]);
+            if (место && unit.cell.row === место.row
+                && unit.cell.col === место.col
+                && ((unit.orderByte ?? 0) & 0x0F) !== 7 && !unitSparring(unit)) {
+              unit.orderByte = orderFromWorkplace(unit.orderByte ?? 0, место);
+            }
+            //: Тренирующийся оттикал выше, до гейта анимации, — второй раз
+            //: срок убавлять нельзя, иначе он уйдёт с места вдвое раньше.
+            if (!unitSparring(unit)) {
+              unit.workRest = Math.max(0, unit.workRest - workPhase);
+            }
           } else {
+            //: ОРУЖИЕ УБИРАЕТСЯ ДО ВЫБОРА НОВОГО ДЕЛА. В движке снятие
+            //: стойки — САМО ПО СЕБЕ действие рассудка: ветка 0x411448
+            //: снимает бит, ставит блок 16 и тут же возвращает «сделано»,
+            //: не доходя до выбора работы. Значит доработавший боец сперва
+            //: убирает меч и лишь следующим тактом идёт дальше — потому и
+            //: уходит из казармы нейтральным, а не с оружием наперевес.
+            if (!unit.beast) unit.stance = "peace";
             const workplace = pickWorkplace(unit);
             if (workplace) {
               //: Выбранное место движок переставляет в начало списка жителя
@@ -1484,17 +2062,8 @@ export function unitsTick(now, dt) {
                 ...(unit.workplaces ?? []).filter((slot) => slot !== workplace.slot)];
               if (unit.cell.row === workplace.row && unit.cell.col === workplace.col) {
                 unit.workRest = workplace.stayFor;      // пришёл — работает
-                // ПРИКАЗ БЕРЁТСЯ ИЗ СТАРШЕЙ ПОЛОВИНЫ ВИДА МЕСТА (VA 0x412C0C):
-                //
-                //     0x90 или 0xA0 -> 9   спарринг у казармы
-                //     0x70 или 0x80 -> 10
-                //     иначе         -> 7
-                //
-                // Младшая половина байта +0x16 и есть занятие; девятку потом
-                // разбирает такт поведения (0x413894) и раз в 1024 такта даёт
-                // напарнику через клетку единицу опыта. Пока приказ не
-                // ставился, девятка не появлялась НИ РАЗУ — оттого в казарме
-                // никто и не тренировался.
+                //: Занятие — из старшей половины вида места (0x412C0C:112),
+                //: разбор всей казармы в docs/VILLAGE_TRAINING_SPEC.md.
                 unit.orderByte = orderFromWorkplace(unit.orderByte ?? 0, workplace);
               } else {
                 unit.path = heroPlanPath(unit.cell,
@@ -1502,6 +2071,14 @@ export function unitsTick(now, dt) {
                 unit.goal = { row: workplace.row, col: workplace.col };
                 unit.goalTarget = null;       // рабочее место занимать некому
                 unit.workRest = workplace.stayFor;
+                // ПРИКАЗ НА ВРЕМЯ ДОРОГИ (VA 0x412C0C:127 -> 0x416574): у
+                // движка это param_4, и он ЗАТИРАЕТ младшую половину. Без
+                // него прежняя девятка ехала с бойцом дальше, и тот махал
+                // мечом всю дорогу до следующего места — тренировка должна
+                // идти только на своей клетке.
+                const шаг = ((workplace.kind ?? 0) & 0xF0) >= WORKPLACE_COMBAT_FROM
+                  ? WALK_TO_COMBAT_ORDER : WALK_TO_WORK_ORDER;
+                unit.orderByte = ((unit.orderByte ?? 0) & 0xF0) | шаг;
               }
             }
           }
@@ -1510,8 +2087,30 @@ export function unitsTick(now, dt) {
       }
 
       // ОДНО движение на всех: та же функция, что двигает игрока.
-      if (unitMove(unit, dt)) active = true;
-      if (unit.moving) setPose(unit, unitMovePose(unit));
+      // Клавиатура — ввод самого игрока (WASD/стрелки), остальными правят
+      // приказы; в unitMove это тот же аргумент, что был у heroMove.
+      if (unitMove(unit, dt, { keyboard: isHero })) active = true;
+      // ХОДЬБА НЕ СБИВАЕТ НАЧАТЫЙ БЛОК ДЕЙСТВИЯ. Здесь стояло безусловное
+      // `if (unit.moving) setPose(...)`, и поза бега возвращалась поверх
+      // только что начатого замаха — пока юнит доводил шаг по клетке.
+      //
+      // Круг выходил такой: кадр N — поза «бег», решения не заперты, ветка
+      // удара зовёт attack(), поза становится замахом И ИГРАЕТ ЗВУК; тот же
+      // кадр, эта строка — поза обратно в «бег»; кадр N+1 — всё сначала.
+      // По журналу игрока (убегал от одного врага) это давало замах с
+      // НУЛЕВОГО кадра каждые 12-22 мс, то есть на каждый кадр браузера:
+      //
+      //     ⚔ замах Асбад  поза attack_shield  кадр 0
+      //         setPose ← attack ← unitsTick (units.js:1314)
+      //
+      // Отсюда и «звук удара по четыре-пять раз за раз», и тридцать четыре
+      // одновременных источника при пределе сорок пять — а сверх предела
+      // playEffect молча возвращает null, и настоящие звуки пропадают.
+      //
+      // Позу СЕЙЧАС проверяем заново: `acting` считался в начале кадра, до
+      // того как ветка удара её сменила.
+      const blocked = Boolean(data().animations.actions?.[unit.pose]);
+      if (unit.moving && !blocked) setPose(unit, unitMovePose(unit));
       else if (!acting && (unit.pose === "walk" || unit.pose === "run")) {
         setPose(unit, "stand");
       }
@@ -1565,13 +2164,19 @@ export function unitsTick(now, dt) {
       //: кадр 9 — гнездо 4. Раньше сюда уходил один общий удар, а обе руки
       //: разом наносил уже `meleeStrikes`; с таблицей из двух кадров это дало
       //: бы четыре удара за замах вместо двух.
-      const hand = unit.alive && data().animations.actions?.[unit.pose] &&
+      const hand = unit.alive && !unitTraining(unit) &&
+        data().animations.actions?.[unit.pose] &&
         isStrikePose(unit.pose) ? strikeHand(unit, before, next) : null;
       if (hand) {
         unit.struck = true;
         world.onUnitStrike?.(unit, hand);
       }
-    } else if (unit.step) {
+    } else if (unit.step && !data().animations.actions?.[unit.pose]) {
+      // ПО КРУГУ ХОДЯТ ТОЛЬКО ПОЗЫ СТОЙКИ. Проверка «юнит шагает» стояла
+      // здесь ПЕРВОЙ и ловила заодно все действия: получив удар на бегу,
+      // герой вечно отыгрывал «вздрогнуть» и к бегу не возвращался, потому
+      // что разбор действий ниже до него не доходил. Сюда же попадали смерть
+      // и труп, если шаг не успели снять.
       unit.frame = next % frames.length;
     } else if (unit.pose.startsWith("corpse_")) {
       unit.frame = 0;
@@ -1600,7 +2205,7 @@ export function unitsTick(now, dt) {
         setPose(unit, data().animations.actions?.[`corpse_${variant}`]
           ? `corpse_${variant}` : "corpse_1");
       }
-    } else if (data().animations.actions?.[unit.pose] || unit.pose === "rise") {
+    } else if (data().animations.actions?.[unit.pose] || SET_ACTIONS.has(unit.pose)) {
       // УДАРЫ СЧИТАЕТ ТАБЛИЦА КАДРОВ (`strikeHand`): у выстрела это «всего −
       // 6», у ближнего боя — числа из 0x45FE90, и у одноручного замаха их
       // ДВА, по руке на кадр. Раньше здесь стоял ЕЩЁ ОДИН безусловный удар в
@@ -1611,7 +2216,8 @@ export function unitsTick(now, dt) {
       // шести у выстрела) «всего − 6» уходит в ноль, и кадр удара не
       // пересекается никогда. Поэтому бьём в конце ТОЛЬКО если ни на одном
       // своём кадре не ударили, и только основной рукой.
-      if (unit.alive && isStrikePose(unit.pose) && !unit.struck) {
+      if (unit.alive && !unitTraining(unit) && isStrikePose(unit.pose)
+          && !unit.struck) {
         world.onUnitStrike?.(unit, "main");
       }
       unit.struck = false;
@@ -1623,8 +2229,21 @@ export function unitsTick(now, dt) {
       // лезла из-под земли. Кончаться она должна стойкой — дальше юнитом
       // распоряжается разбор занятия, а он позу подъёма не ставит.
       setPose(unit, "stand");
+    } else if (unit.pose === "idle") {
+      // простой доигрывает и возвращается в стойку (таблица 0x45A0C0)
+      setPose(unit, "stand");
     } else {
       unit.frame = 0;
+      // ЖРЕБИЙ ПРОСТОЯ (VA 0x416D92): каждый раз, когда доигрывает стойка,
+      // бросается 1 из N — и юнит уходит в простой. Правило общее: в
+      // движке жребий бросает разбор такта для любого стоящего, раньше он
+      // жил только у героя в heroTick.
+      const chance = data().rules?.idle_chance ?? 10;
+      if (!unit.beast && unit.alive && unit.pose === "stand" && chance > 0 &&
+          Math.floor(Math.random() * chance) === 0 &&
+          data().animations?.[unit.stance ?? "peace"]?.idle) {
+        setPose(unit, "idle");
+      }
     }
     active = true;
   }
@@ -1644,26 +2263,51 @@ export function selectionCircle(unit) {
   return isSelected(unit) ? sprites : null;
 }
 
+// СВЕТЛЫЕ ЮНИТЫ И ОКНА К НИМ. Правило целиком — в docs/RENDER_DEPTH.md,
+// здесь только его исполнение.
+//
+// Клетка с битом 22: движок блитит ЛЮБОГО юнита статичной палитрой
+// (VA 0x425E81), мимо пересчёта под сутки, — не только игрока. У нас фильтр
+// суток — сплошная заливка слоя сцены, поэтому такой юнит рисуется на сам
+// кадр, ПОД слоем, а из слоя вырезается окно, через которое он виден.
+//
 export function renderUnit(unit) {
+  if (unit.hidden) return;            // ушедший с карты не рисуется
   // Круг ложится ДО тела и только под выбранными своими.
   if (selectionCircle(unit)) {
     drawSelectionCircle(unit, Math.round(unit.x), Math.round(unit.y));
   }
-  // Клетка с битом 22: движок блитит ЛЮБОГО юнита статичной палитрой
-  // (VA 0x425E81), мимо пересчёта под сутки, — не только игрока. Как и
-  // герой, такой юнит идёт прямо на кадр, а из слоя сцены вырезается его
-  // силуэт. Иначе житель в доме темнел ночью на дневном полу.
   if (layeredFrame && unit.bright) {
     withMainContext(() => drawActor(data(), unit));
-    context.save();
-    context.globalCompositeOperation = "destination-out";
-    drawActor(data(), unit, { silhouette: true });
-    context.restore();
+    //: ОКНО РЕЖЕМ СРАЗУ, КАК ГЕРОЮ. Раньше юнит становился в очередь
+    //: `brightCuts`, а та в конце прохода спрашивала `coveredLater` — и по
+    //: РАМКЕ соседнего объекта отменяла вырез. Юнит при этом уже нарисован
+    //: ПОД слоем сцены, и без окна он оставался под домом: у тестеров это
+    //: выглядело как «спутнику полтела срезало зданием», причём у героя того
+    //: же не случалось никогда — он всегда режет сразу
+    //: (hero.drawHeroAtDepth → punchHeroSilhouette).
+    //:
+    //: Глубину это не ломает по той же причине, что и у героя: объекты
+    //: переднего плана рисуются ПОЗЖЕ и закрашивают вырез сами.
+    punchSilhouette(unit);
     return;
   }
   drawActor(data(), unit);
 }
 
+//: Вырезать силуэт юнита из слоя сцены — тем же приёмом, что
+//: `punchHeroSilhouette`, только кадр берётся общий для любого актёра.
+function punchSilhouette(unit) {
+  context.save();
+  context.globalCompositeOperation = "destination-out";
+  context.globalAlpha = 1;
+  drawActor(data(), unit, { silhouette: true });
+  context.restore();
+}
+
+//: Прорезать окна к отложенным светлым юнитам — зовёт сцена, когда все
+//: объекты уже легли в слой. Резать по ходу прохода нельзя: юниты
+//: чередуются с объектами по глубине, и слой под ними ещё не готов.
 //: Юнит стоит на полу постройки (бит 15 клетки). Движок кладёт таких в
 //: отложенный список 0x866F5C и рисует ПОСЛЕ всей сцены полупрозрачной
 //: копией (VA 0x428900) — иначе стена закрывает их целиком. У героя это
@@ -1686,7 +2330,10 @@ export function renderUnitsOverlay(alpha = 0.5, bright = null) {
   for (const unit of units) {
     if (!unitOverlay(unit)) continue;
     if (bright !== null && Boolean(unit.bright) !== bright) continue;
-    drawActor(data(), unit, { alpha });
+    //: Полупрозрачная копия едет тем же якорем, что и сам юнит, — иначе она
+    //: отвяжется от него ровно на величину перспективы.
+    withPerspective(context, unit.x, unit.y,
+                    () => drawActor(data(), unit, { alpha }));
     drawn += 1;
   }
   return drawn;
@@ -1860,3 +2507,7 @@ export function partyRegroup() {
 //: Свисток зовут из разбора диковин (carry.js) — тем же путём, что и
 //: раскрытие тайников зеркалом.
 world.scareBeasts = scareBeasts;
+
+//: Список живых для тех, кому нельзя нас импортировать. Свободный снаряд
+//: (projectiles.js) ищет, в кого попал, перебором — цели у него нет.
+world.unitsInPlay = () => units;

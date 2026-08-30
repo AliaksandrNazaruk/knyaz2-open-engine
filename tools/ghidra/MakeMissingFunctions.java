@@ -21,6 +21,11 @@
 //       -preScript MakeMissingFunctions.java \
 //       -postScript ExportDecompiled.java <куда>
 //
+// ЧИСЛА МОЖНО ПЕРЕДАТЬ ДОВОДАМИ — они у каждой сборки свои:
+//       -preScript MakeMissingFunctions.java 0x410100 0x44FE00 0x465898 93
+// (граница кода снизу и сверху, таблица обработчиков и её длина). Без
+// доводов берутся канонные, и прежний прогон работает как работал.
+//
 //@category Knyaz2
 import ghidra.app.script.GhidraScript;
 import ghidra.program.model.address.Address;
@@ -36,16 +41,23 @@ public class MakeMissingFunctions extends GhidraScript {
 
     //: Секция кода BEGTEXT. Нижняя граница поднята на 0x100: в данных
     //: попадаются мелкие числа вроде 0x410002, и это не адреса.
-    private static final long CODE_LO = 0x410100L;
-    private static final long CODE_HI = 0x44B800L;
+    private static final long DEFAULT_CODE_LO = 0x410100L;
+    private static final long DEFAULT_CODE_HI = 0x44B800L;
 
     //: Таблица обработчиков разговора: адрес и сколько в ней записей
     //: (konung2/quests.py: HANDLERS_VA, HANDLERS).
-    private static final long HANDLER_TABLE = 0x462E90L;
-    private static final int HANDLER_COUNT = 76;
+    private static final long DEFAULT_HANDLER_TABLE = 0x462E90L;
+    private static final int DEFAULT_HANDLER_COUNT = 76;
 
     //: Точки входа, на которые ссылается не таблица, а одиночное поле.
+    //: Адрес канонный; у чужой сборки оконная процедура своя, и её найдёт
+    //: общий подметатель — отдельного числа для неё не заводим.
     private static final long[] SINGLE = { 0x42F22CL };
+
+    private long codeLo = DEFAULT_CODE_LO;
+    private long codeHi = DEFAULT_CODE_HI;
+    private long handlerTable = DEFAULT_HANDLER_TABLE;
+    private int handlerCount = DEFAULT_HANDLER_COUNT;
 
     private int made = 0;
     private int already = 0;
@@ -53,22 +65,33 @@ public class MakeMissingFunctions extends GhidraScript {
 
     @Override
     public void run() throws Exception {
+        String[] args = getScriptArgs();
+        if (args.length >= 4) {
+            codeLo = Long.decode(args[0]);
+            codeHi = Long.decode(args[1]);
+            handlerTable = Long.decode(args[2]);
+            handlerCount = Integer.decode(args[3]);
+        }
         println("== завожу пропущенные функции ==");
+        println(String.format("код 0x%X..0x%X, таблица 0x%X на %d записей",
+                              codeLo, codeHi, handlerTable, handlerCount));
 
         List<Long> targets = new ArrayList<>();
 
         // 1. Таблица обработчиков разговора.
-        for (int i = 0; i < HANDLER_COUNT; i++) {
-            long value = Integer.toUnsignedLong(getInt(toAddr(HANDLER_TABLE + i * 4L)));
-            if (value >= CODE_LO && value < CODE_HI) {
+        for (int i = 0; i < handlerCount; i++) {
+            long value = Integer.toUnsignedLong(getInt(toAddr(handlerTable + i * 4L)));
+            if (value >= codeLo && value < codeHi) {
                 targets.add(value);
             }
         }
-        println("из таблицы 0x462E90 взято адресов: " + targets.size());
+        println("из таблицы обработчиков взято адресов: " + targets.size());
 
-        // 2. Одиночные ссылки (оконная процедура).
+        // 2. Одиночные ссылки (оконная процедура канона).
         for (long address : SINGLE) {
-            targets.add(address);
+            if (address >= codeLo && address < codeHi) {
+                targets.add(address);
+            }
         }
 
         // 3. Общий подметатель: все dword'ы данных, показывающие в код.
@@ -99,7 +122,7 @@ public class MakeMissingFunctions extends GhidraScript {
             memory.getBytes(block.getStart(), bytes);
             for (int at = 0; at + 4 <= size; at += 4) {
                 long value = bigEndian ? readBig(bytes, at) : readLittle(bytes, at);
-                if (value < CODE_LO || value >= CODE_HI) {
+                if (value < codeLo || value >= codeHi) {
                     continue;
                 }
                 Address address = toAddr(value);

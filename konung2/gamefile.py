@@ -26,6 +26,7 @@ GAME.0 … GAME.5 ↔ JSON. Это стартовые состояния мир�
 """
 import json
 import struct
+from pathlib import Path
 
 from .binrec import RecordTable
 from .effects import OIL_MARK_AT
@@ -81,19 +82,35 @@ GROUND_SPRITE_AT, GROUND_MONEY_AT, GROUND_SLOTS_AT = 0x0B, 0x0F, 0x11
 GROUND_SLOTS = 42
 GROUND_ON_FLOOR = -1
 GROUND_REGROW_STEP, GROUND_REGROW_AFTER = 0x168, 0x1517
+#: БАЙТ +0x07 — РАЗГОВОР КУЧИ, И ЭТО НОВОВВЕДЕНИЕ «ПРОДОЛЖЕНИЯ ЛЕГЕНДЫ».
+#: Приказ «обыскать» на её клетке открывает не обмен, а диалог БЕЗ
+#: СОБЕСЕДНИКА номер 0x100 + байт (донорский 0x411BC6: `if (byte < 0xFE)
+#: FUN_0043a300(0, byte + 0x100)`). Так сделаны семь чанов с маслом в
+#: Ущелье возле Угорья (диалоги 277…283); 0xFE и 0xFF — обычные кучи.
+#: У КАНОНА ЭТОЙ ВЕТКИ НЕТ (его 0x4115AC байт не читает), и байт у него
+#: не заполняется — в записях стоит ноль, который читался бы как
+#: несуществующий «диалог 256». Поэтому байт разбирается ТОЛЬКО у донора.
+GROUND_DIALOG_AT, GROUND_NO_DIALOG = 0x07, 0xFE
+GROUND_DIALOG_BASE = 0x100
+#: Игры, чей движок умеет разговорные кучи (по имени профиля).
+_GROUND_DIALOG_GAMES = ("Продолжение легенды",)
 
 
-def ground_items(number: int, world: int = 0, clock: int = 0) -> list[dict]:
+def ground_items(number: int, world: int = 0, clock: int = 0,
+                 profile=None) -> list[dict]:
     """Кучи на земле этой карты (VA 0x43DF48, таблица 0x2C800).
 
     ``clock`` — игровое время: собранная куча возвращается, только когда
     ``метка * 360 + время`` перевалит за 5399.
+
+    ``number`` — номер карты В ТОЙ ЖЕ ИГРЕ, что и профиль: тайники
+    донорских карт лежат в ЕГО GAME.<мир> и под ЕГО номером.
     """
-    with open(game_file(f"GAME.{world}"), "rb") as stream:
-        data = stream.read()
+    data, layout = _game_bytes(world, profile)
+    ground_at = layout["ground_items"][0]
     out = []
     for index in range(GROUND_ITEMS_COUNT):
-        start = GROUND_ITEMS_AT + index * GROUND_ITEMS_SIZE
+        start = ground_at + index * GROUND_ITEMS_SIZE
         record = data[start:start + GROUND_ITEMS_SIZE]
         if len(record) < GROUND_ITEMS_SIZE or record[GROUND_MAP_AT] != number:
             continue
@@ -131,11 +148,24 @@ def ground_items(number: int, world: int = 0, clock: int = 0) -> list[dict]:
         raw_money = struct.unpack_from("<h", record, GROUND_MONEY_AT)[0]
         money = abs(raw_money)
         buried = raw_money < 0
-        if not items and not money:
+        # РАЗГОВОРНАЯ КУЧА: байт +0x07 меньше 0xFE — щелчок открывает диалог
+        # 0x100 + байт, а не обмен. Вещей и денег у такой обычно нет вовсе,
+        # поэтому отсев пустых её пропускать не должен. Байт есть только у
+        # донора (см. GROUND_DIALOG_AT): канонский движок его не читает, а в
+        # канонских записях лежит ноль.
+        from .profile import CANON as _CANON
+        talkative = (profile or _CANON).name in _GROUND_DIALOG_GAMES
+        dialog = (GROUND_DIALOG_BASE + record[GROUND_DIALOG_AT]
+                  if talkative and record[GROUND_DIALOG_AT] < GROUND_NO_DIALOG
+                  else None)
+        if not items and not money and dialog is None:
             continue
         out.append({
             "index": index,
             "row": record[5], "col": record[6],
+            # НОМЕР РАЗГОВОРА — В СВОЕЙ ИГРЕ; сдвиг в проектную нумерацию
+            # делает сборщик вместе с деревом.
+            **({"dialog": dialog} if dialog is not None else {}),
             # 0xFF (-1) — куча лежит прямо на земле; иначе она внутри
             # объекта, и до неё добираются, обыскав его
             "on_floor": place == GROUND_ON_FLOOR,
@@ -220,7 +250,8 @@ EXIT_LEAVE = -1     # уйти с локации (движок ставит те
 EXIT_SPECIAL = -2   # особый переход (море/сюжет)
 
 
-def exit_name(target: int, places: list[str] | None = None) -> str:
+def exit_name(target: int, places: list[str] | None = None,
+              profile=None) -> str:
     """Куда ведёт выход, по-человечески.
 
     Таблица мест глобальной карты короткая — сорок четыре записи, — и в ней
@@ -234,18 +265,28 @@ def exit_name(target: int, places: list[str] | None = None) -> str:
     карте, — потом общий список карт, и только для −1 и −2 служебные подписи
     движка. Отрицательное, кроме них, — дверь под ключ на карту |куда|
     (0x420900: класс 25 «Связка ключей» проверяется и тратится).
+
+    ЧУЖОЙ ИГРЕ НАШ СПИСОК КАРТ НЕ ПОДСТАВЛЯЕМ. `LOCATIONS` — это наши
+    названия по нашим номерам, и у донора карта 37 не «Пещера у Дубков»
+    наша, а его собственная. Поэтому с чужим профилем остаётся честное
+    «карта N».
     """
     from .names import LOCATIONS
+    from .profile import CANON
     if places is None:
-        places = location_names()
+        places = location_names(profile=profile)
     if 0 <= target < len(places) and places[target]:
         return places[target]
     if target > 0:
+        if profile is not None and profile is not CANON:
+            return f"карта {target}"
         return LOCATIONS.get(target) or f"карта {target}"
     if target == EXIT_LEAVE:
         return "глобальная карта"
     if target == EXIT_SPECIAL:
         return "особый переход"
+    if profile is not None and profile is not CANON:
+        return f"запертая дверь: карта {-target}"
     return f"запертая дверь: {LOCATIONS.get(-target) or ('карта %d' % -target)}"
 
 
@@ -283,10 +324,18 @@ T_UNITS = RecordTable('units', 0x46322, 2000, 256, [
 UNIT_BASE_AT, UNIT_CURRENT_AT, UNIT_SKILLS_AT = 0xC0, 0xCC, 0xD2
 
 
-def unit_stats(data: bytes, index: int) -> dict:
-    """Характеристики, навыки и снаряжение юнита из стартового мира."""
+def unit_stats(data: bytes, index: int, units_at: int | None = None) -> dict:
+    """Характеристики, навыки и снаряжение юнита из стартового мира.
+
+    ``units_at`` — начало таблицы юнитов ЭТОЙ сборки. Без него берётся
+    канонное 0x46322, и на донорских данных это читало ЧУЖОЕ место: у него
+    таблица на 0x49F68, и имя с клеткой (их map_units берёт по раскладке)
+    выходили верными, а тело, палитра и здоровье — мусором. Жители Дубков
+    оттого приезжали с телом 0 и палитрой −1 — и не рисовались вовсе.
+    """
     from .progress import CHARACTERISTICS, SKILLS
-    start = T_UNITS.offset + index * T_UNITS.size
+    start = (T_UNITS.offset if units_at is None else units_at) \
+        + index * T_UNITS.size
     record = data[start:start + T_UNITS.size]
     return {
         "index": index,
@@ -329,6 +378,14 @@ def unit_stats(data: bytes, index: int) -> dict:
         # точность: с ней сравнивается бросок при ударе (VA 0x41FDD0 передаёт
         # этот байт в расчёт попадания)
         "accuracy": record[0x1F],
+        # СКОРОСТЬ (+0x1D), знаковая. Формулу (Ловкость+Выносливость)/50
+        # движок считает ТОЛЬКО отряду игрока (0x41C944:305 пишет её под
+        # `if (отряд == 0)`, ещё герою в 0x438A00:749 и найму в 0x433070);
+        # все прочие юниты живут со значением записи — в стартовых мирах
+        # это ноль у всех. Отрицательная скорость особая: 0x41B3B8 отдаёт
+        # её как есть, юнит медленнее базы и бег ему не положен (0x416574
+        # ставит бит бега только при скорости >= 0).
+        "speed": struct.unpack_from("<b", record, 0x1D)[0],
         "side": record[0x1B],
         # Чем юнит бьётся — байт unit+0xEE. В самом мире он хранится
         # прежним, но движок его пересчитывает, когда юнит впервые
@@ -455,36 +512,129 @@ def item_poison(data: bytes, item_index: int) -> int:
     return struct.unpack_from("<H", record, ITEM_POISON_AT)[0]
 
 
-def item_class_of(data: bytes, item_index: int):
-    """Класс предмета по его номеру в стартовом мире: байт +3 записи."""
+def item_class_of(data: bytes, item_index: int, profile=None):
+    """Класс предмета по его номеру в стартовом мире: байт +3 записи.
+
+    Каталог классов — ТОЙ игры, чей это мир: таблицы двух сборок разные
+    («Береста» донора сдвигает все номера), и донорский номер по канонному
+    каталогу вернёт не ошибку, а чужой предмет.
+    """
     from .items import read_items
     if not item_index:
         return None
     record = data[T_ITEMS.offset + item_index * T_ITEMS.size:][:T_ITEMS.size]
     if not record:
         return None
-    catalogue = read_items()
+    catalogue = read_items(profile=profile) if profile is not None else read_items()
     index = record[3]
     return catalogue[index] if index < len(catalogue) else None
 
 
-def _npc_names(count: int = 206) -> list[str]:
-    """Имена и прозвища NPC — таблица указателей внутри exe (0x4D48C)."""
+def _npc_names(count: int | None = None, profile=None) -> list[str]:
+    """Имена и прозвища NPC из таблицы указателей внутри exe.
+
+    Адрес, шаг и длина берутся у профиля игры: у канона это 0x4D48C, шаг 4,
+    206 записей; у «Продолжения легенды» — 0x054054 и 211. Секции PE у него
+    тоже свои, поэтому и пересчёт виртуального адреса в файловый другой —
+    на этом легко обжечься и получить вместо имён машинный код.
+    """
+    from .profile import CANON, strings
+    profile = profile or CANON
+    names = strings(profile, profile.need("npc_names"))
+    return names[:count] if count else names
+
+
+#: ИМЕНА ТВАРЕЙ — ТАБЛИЦА ПОРОД 0x45FAE0. Печать имени юнита (VA 0x43000C)
+#: для твари пород 0x41…0x53 берёт строку прямо по породе:
+#:
+#:     if ((+0x1A & 0x40) == 0 || 0x53 < (+0x1A & 0x7F))  имя + прозвище
+#:     else  FUN_00442cac(..., PTR_0045FAE0[порода & 0x7F])
+#:
+#: Пока твари шли общим путём «имя+прозвище», у них выходило пустое имя с
+#: заглушкой «житель N» — отсюда «все монстры не имеют своих названий».
+BREED_NAMES_VA, BREED_NAMES_COUNT = 0x45FAE0, 0x54
+
+
+def breed_names(profile=None) -> list[str]:
+    """Названия пород тварей: индекс — порода (+0x1A & 0x7F)."""
+    from .profile import CANON, strings
+    profile = profile or CANON
+    try:
+        return strings(profile, profile.need("breed_names"))
+    except (KeyError, AttributeError):
+        pass
+    # канонный exe: прямое чтение таблицы указателей
     from .exetables import va_to_foff
+    from .interf import _string_at
     with open(game_file("konung2.exe"), "rb") as stream:
-        blob = stream.read()
-    names = []
-    for index in range(count):
-        pointer = struct.unpack_from("<I", blob, 0x4D48C + index * 4)[0]
-        offset = va_to_foff(pointer)
-        names.append(blob[offset:blob.index(b"\0", offset)].decode("cp866", "replace")
-                     if offset else "")
-    return names
+        data = stream.read()
+    offset = va_to_foff(BREED_NAMES_VA)
+    out = []
+    for breed in range(BREED_NAMES_COUNT):
+        pointer = struct.unpack_from("<I", data, offset + breed * 4)[0]
+        out.append(_string_at(data, pointer)
+                   if 0x440000 < pointer < 0x470000 else "")
+    return out
 
 
-def location_names(count: int = 44) -> list[str]:
-    """Названия локаций: таблица 0x4616D4, индекс — номер карты."""
+#: ПРОЗВИЩА — ОТДЕЛЬНАЯ ТАБЛИЦА УКАЗАТЕЛЕЙ. Печать имени (VA 0x43000C)
+#: читает имя из PTR_0046188C[+0xF0], а прозвище — из PTR_00461B70[+0xF1]:
+#: это РАЗНЫЕ базы, и вторая начинается ровно через 185 указателей после
+#: первой ((0x461B70 − 0x46188C) / 4 = 185). Пока прозвище бралось из
+#: общей таблицы прямым индексом, наёмники получали чужие ИМЕНА вместо
+#: прозвищ: «Оттар Исток» (имя №19) вместо «Оттар Волчий клык» (прозвище
+#: №19 = запись 185+19=204). Сверка по мирам: Адльстайн Рыжий, Лейф
+#: Тюлень, Кетиль Ворон, Харальт Острый клык — все сходятся.
+#: Нулевое прозвище — «нет прозвища» (0x43000C: `if (+0xF1 != 0)`).
+NPC_NICKNAMES_FROM = 185
+
+
+def _npc_nickname(names: list[str], nick_id: int) -> str:
+    """Прозвище по номеру — из хвоста таблицы имён (VA 0x461B70)."""
+    if not nick_id:
+        return ""
+    at = NPC_NICKNAMES_FROM + nick_id
+    return names[at] if at < len(names) else ""
+
+
+#: ЧТЕНИЕ GAME.<мир> ИДЁТ ЧЕРЕЗ ПРОФИЛЬ ИГРЫ. Раскладка у двух сборок одного
+#: движка разная — у «Продолжения легенды» отрядов 255 вместо 200, поселений
+#: 20 вместо 12, выходов 350 по 16 байт вместо 250 по 17, — поэтому смещения
+#: не берутся константами, а считаются профилем как нарастающая сумма длин.
+#: Без профиля берётся канон, и всё работает как раньше.
+def _game_bytes(world: int, profile=None):
+    """Байты GAME.<мир> нужной игры и раскладка её таблиц.
+
+    СОБРАННЫЙ МИР ПРИОРИТЕТЕН: если редактор пересобрал мир из
+    исходников (project/worlds/build/GAME.N — наш M_UNIT,
+    konung2/worlds.py), канонное чтение берёт его, и вся сборка пака
+    видит правленый мир одной точкой. Файла нет — оригинал игры, как
+    всегда. На чужие профили (донор) оверлей не распространяется.
+    """
+    from .profile import CANON
+    profile = profile or CANON
+    if profile is CANON:
+        built = (Path(__file__).resolve().parents[1] / "project"
+                 / "worlds" / "build" / f"GAME.{world}")
+        if built.is_file():
+            return built.read_bytes(), profile.game_layout()
+    with open(profile.file(f"GAME.{world}"), "rb") as stream:
+        return stream.read(), profile.game_layout()
+
+
+def location_names(count: int = 44, profile=None) -> list[str]:
+    """Названия локаций: таблица 0x4616D4, индекс — номер карты.
+
+    С профилем читается таблица ТОЙ игры: у донора это не массив указателей,
+    а поле внутри 46-байтовой записи локации, и подпись «карта 64 „Овраги у
+    Комариной топи“» без него не получить — по канонному адресу чужая
+    сборка отдаст не ошибку, а посторонние строки.
+    """
     from .exetables import va_to_foff
+    if profile is not None:
+        from .profile import CANON, strings
+        if profile is not CANON:
+            return strings(profile, profile.need("location_names"))
     with open(game_file("konung2.exe"), "rb") as stream:
         blob = stream.read()
     names = []
@@ -497,16 +647,25 @@ def location_names(count: int = 44) -> list[str]:
     return names
 
 
-#: ЗОНА ПОЯВЛЕНИЯ ОТРЯДА (VA 0x415764). Юнит не встаёт туда, где записан:
-#: движок при свежем входе на карту рассыпает весь отряд по прямоугольнику
-#: из ЕГО ЖЕ записи, беря центр и случайное смещение в половину зоны:
+#: ЗОНА ПОЯВЛЕНИЯ ОТРЯДА (VA 0x415764). Движок при свежем входе на карту
+#: рассыпает весь отряд по прямоугольнику из ЕГО ЖЕ записи, беря центр и
+#: случайное смещение в половину зоны:
 #:
 #:     строка  = (строкаДо + строкаОт + 1) / 2 ± rand() % ((строкаДо − строкаОт) / 2)
 #:     столбец = (столбецДо + столбецОт + 1) / 2 ± rand() % ((столбецДо − столбецОт) / 2)
 #:
 #: Знак каждой оси — свой бросок монеты. Попыток сто; годится клетка, у
 #: которой младшие 12 бит нулевые, то есть проходимая. Не нашлось за сто —
-#: отряд на этом обрывается (VA 0x43DFA9 пишет длину в +0x0E).
+#: отряд на этом обрывается (VA 0x43DFA9 пишет длину в +0x1C, то есть в
+#: счётчик бойцов; «+0x0E» в прежней записи было short-индексом Ghidra).
+#:
+#: НО РАССЫПАЕТ НЕ ВСЕХ. Вызов огорожен двумя условиями (0x0043DF48):
+#: обход отрядов начинается с записи 1 — отряд игрока не трогают вовсе, —
+#: и у отряда должен быть СНЯТ бит 0x10 байта 0x1E (PARTY_KEEP_CELLS).
+#: Стоит бит — записанные клетки в силе. Прежняя запись здесь утверждала
+#: безусловно, что координаты игнорируются; на живых данных мира 0 это
+#: неверно: бит стоит у 49 отрядов из 118, и все их 243 юнита несут
+#: настоящие клетки, тогда как у остальных 423 из 432 записаны нули.
 #:
 #: Отсюда и звери с координатами (0,0) в GAME.x: их место назначает зона,
 #: а не запись юнита. Без этого правила они все лежат в углу карты.
@@ -545,6 +704,10 @@ PARTY_FLAGS_AT, PARTY_KEEP_CELLS = 0x1E, 0x10
 #: обнуляется и приказы снимаются.
 PARTY_WAR_AT = 0x1F
 PARTY_IS_PLAYER = 0x01           # в +0x1E
+#: Карта отряда — u16 +0x08. У отряда игрока это стартовая карта героя:
+#: загрузка мира берёт номер текущей карты ровно отсюда (VA 0x438A00,
+#: `0x8496C8 = отряд+0x08`).
+PARTY_MAP_AT = 0x08
 WAR_ON_PLAYER, WAR_ON_PARTIES = 0x01, 0x04
 WAR_ONLY_IF_FIGHTING, WAR_ON_SPECIAL = 0x08, 0x80
 WAR_ANY = 0x4F                   # маска VA 0x4159DC
@@ -623,8 +786,22 @@ WORKPLACE_NIGHT_BIT = 0x10
 WORKPLACE_LONG_KINDS = (0x70, 0x80, 0x90, 0xA0)
 
 
-def workplaces(party_record: bytes, count: int = 32) -> list[dict]:
-    """Таблица рабочих мест отряда."""
+def workplaces(party_record: bytes, count: int | None = None) -> list[dict]:
+    """Таблица рабочих мест отряда — до конца записи, а не первые тридцать два.
+
+    ТРИДЦАТЬ ДВА БЫЛО ДОГАДКОЙ. Юниты ссылаются на слоты 32…38 у канона и до
+    55 у донора, а обрезанная таблица их не содержала: житель искал своё
+    место, не находил и оставался стоять. Сплошная проверка пака поймала это
+    на тринадцати картах — Беглое, Поднебесье, Нижний лагерь и другие.
+
+    Что таблица и правда идёт до конца записи, показал перебор: за 32-м
+    слотом у канона 942 непустые записи, у донора 3093, и НИ ОДНОЙ с
+    негодной клеткой (строка вне 1…255 или столбец вне 1…159). Будь там
+    другие поля, мусор бы попался.
+    """
+    if count is None:
+        count = max(0, (len(party_record) - WORKPLACE_TABLE_AT)
+                    // WORKPLACE_STRIDE)
     out = []
     for slot in range(count):
         at = WORKPLACE_TABLE_AT + slot * WORKPLACE_STRIDE
@@ -655,7 +832,7 @@ def unit_workplaces(unit_record: bytes) -> list[int]:
     return out
 
 
-def map_parties(number: int, world: int = 0) -> list[dict]:
+def map_parties(number: int, world: int = 0, profile=None) -> list[dict]:
     """Отряды, стоящие на карте, вместе с их боевыми полями.
 
     Отряд — единица враждебности: нападает не юнит, а отряд, и решает это
@@ -663,11 +840,11 @@ def map_parties(number: int, world: int = 0) -> list[dict]:
     равна НОМЕРУ его отряда, поэтому по стороне отряд и находится:
     ``0x71E56C + сторона * 0x100``.
     """
-    with open(game_file(f"GAME.{world}"), "rb") as stream:
-        data = stream.read()
+    data, layout = _game_bytes(world, profile)
+    at, count, size = layout["parties"]
     out: list[dict] = []
-    for party in range(T_PARTIES.count):
-        record = data[T_PARTIES.offset + party * T_PARTIES.size:][:T_PARTIES.size]
+    for party in range(count):
+        record = data[at + party * size:][:size]
         if struct.unpack_from("<H", record, 0x08)[0] != number:
             continue
         if record[0x1C] == 0:
@@ -683,7 +860,33 @@ def map_parties(number: int, world: int = 0) -> list[dict]:
     return out
 
 
-def map_units(number: int, world: int = 0) -> list[dict]:
+def player_party(world: int = 0, profile=None) -> dict | None:
+    """Отряд игрока — запись №0 массива отрядов, в том же виде, что у
+    ``map_parties``.
+
+    Движок держит весь массив ``0x71E56C`` глобально: запись №0 существует
+    на любой карте, и именно в неё замах врага по нашему юниту пишет войну
+    (0x413894 кадр 2 -> 0x4159DC; гейт ``+0x1F & 0x4F`` проходит, потому
+    что в GAME.x у отряда №0 стоит бит 0x40). Фильтр ``map_parties`` по
+    номеру карты эту запись терял везде, кроме стартовой карты мира, — и
+    автоответ отряда был мёртв.
+    """
+    data, layout = _game_bytes(world, profile)
+    at, count, size = layout["parties"]
+    if count < 1:
+        return None
+    record = data[at:at + size]
+    entry = {
+        "side": 0,
+        "first_unit": struct.unpack_from("<H", record, 0x00)[0],
+        "count": record[0x1C],
+        "zone": spawn_zone(record),
+    }
+    entry.update(party_combat(record))
+    return entry
+
+
+def map_units(number: int, world: int = 0, profile=None) -> list[dict]:
     """Жители карты из стартового мира GAME.<world>.
 
     Юниты живут не в карте, а в отрядах: запись отряда называет номер карты
@@ -692,29 +895,49 @@ def map_units(number: int, world: int = 0) -> list[dict]:
     текущей. Клетка юнита — байты +0x14 (столбец) и +0x12 (строка), сторона
     +0x1B, лицо +0xEF, имя и прозвище — номера в таблице имён из exe.
     """
-    with open(game_file(f"GAME.{world}"), "rb") as stream:
-        data = stream.read()
-    names = _npc_names()
+    data, layout = _game_bytes(world, profile)
+    names = _npc_names(profile=profile)
+    breeds = breed_names(profile=profile)
+    parties_at, parties_n, parties_size = layout["parties"]
+    units_at, units_n, units_size = layout["units"]
     units: list[dict] = []
-    for party in range(T_PARTIES.count):
-        record = data[T_PARTIES.offset + party * T_PARTIES.size:][:T_PARTIES.size]
+    for party in range(parties_n):
+        record = data[parties_at + party * parties_size:][:parties_size]
         if struct.unpack_from("<H", record, 0x08)[0] != number:
             continue
         first = struct.unpack_from("<H", record, 0x00)[0]
         count = record[0x1C]
         for step in range(count):
             index = first + step
-            unit = data[T_UNITS.offset + index * T_UNITS.size:][:T_UNITS.size]
-            stats = unit_stats(data, index)
-            name = names[unit[0xF0]] if unit[0xF0] < len(names) else ""
-            nick = names[unit[0xF1]] if unit[0xF1] < len(names) else ""
+            if index >= units_n:
+                continue
+            unit = data[units_at + index * units_size:][:units_size]
+            stats = unit_stats(data, index, units_at)
+            # ТВАРЬ ЗОВЁТСЯ ПОРОДОЙ (VA 0x43000C): породы 0x41…0x53 берут
+            # строку из таблицы 0x45FAE0, люди и породы старше — имя и
+            # прозвище из своих таблиц.
+            breed = unit[0x1A] & 0x7F
+            if (unit[0x1A] & 0x40) and breed < BREED_NAMES_COUNT:
+                full = breeds[breed] if breed < len(breeds) else ""
+            else:
+                name = names[unit[0xF0]] if unit[0xF0] < len(names) else ""
+                # прозвище — из СВОЕЙ таблицы (0x461B70), см. _npc_nickname
+                nick = _npc_nickname(names, unit[0xF1])
+                full = f"{name} {nick}".strip()
             units.append({
                 "index": index, "party": party,
-                "name": (f"{name} {nick}".strip() or f"житель {index}"),
+                "name": (full or f"житель {index}"),
+                # НОМЕРА ИМЕНИ И ПРОЗВИЩА, а не только собранная строка:
+                # сами строки живут в exe, и по имени запись не
+                # восстановить. Без этих чисел добавленный редактором
+                # житель обречён быть тёзкой того, с кого снят
+                # (см. worlds._write_unit).
+                "name_id": unit[0xF0], "nick_id": unit[0xF1],
                 "col": unit[0x14], "row": unit[0x12],
-                # ЗОНА ПОЯВЛЕНИЯ отряда: по ней движок и расставляет юнитов
-                # при входе на карту, а записанные координаты игнорирует —
-                # у зверей там нули (см. spawn_zone).
+                # ЗОНА ПОЯВЛЕНИЯ отряда: по ней движок расставляет юнитов
+                # при входе на карту — но ТОЛЬКО когда у отряда снят бит
+                # keep_cells; стоит бит — координаты записи в силе. У
+                # зверей в зоне-без-бита там нули (см. spawn_zone).
                 "spawn_zone": spawn_zone(record),
                 # Рабочие места: по ним житель и ходит по деревне.
                 "workplaces": unit_workplaces(unit),
@@ -722,10 +945,27 @@ def map_units(number: int, world: int = 0) -> list[dict]:
                 # сравнивает с ним свой довод). Имя выправлено; читателей у
                 # старого не было — проверено поиском.
                 "side": unit[0x1B], "pose": unit[0x17], "flags": unit[0x1A],
+                # ПОВОРОТ (+0x18). Без него все жители смотрели в одну
+                # сторону: клиент подставлял своё умолчание, и на входе в
+                # локацию деревня стояла лицом вниз, пока ИИ не разводил её
+                # по делам.
+                #
+                # Что это именно поворот, показали три схождения. Перебор
+                # байтов +0x10…+0x2F у 865 жителей карт: условию «значения
+                # только 0…7 и хотя бы три разных» отвечает ОДИН байт, этот.
+                # В движке в него пишут переход между картами (0x420900:56 —
+                # байтом +2 записи выхода, а это и есть её поле `facing`),
+                # таблица входов с шагом шесть (0x422CCC, 0x435AA0, 0x4360A8)
+                # и действия разговора (0x436C48 ставит 1 и 2). Нумерация та
+                # же, что у нас: клиент уже применяет `facing` перехода прямо
+                # как `direction`, без пересчёта.
+                "direction": unit[0x18],
                 # номер диалога юнита: с него начинается разговор (VA 0x4369A0)
                 "dialog": unit[0xF2],
                 "face": stats["face"], "level": stats["level"],
                 "accuracy": stats["accuracy"],
+                # скорость записи (+0x1D): у NPC движок её не пересчитывает
+                "speed": stats["speed"],
                 # отрава: своя у твари и та, что на самих вещах
                 "venom": stats["venom"], "poison_on": stats["poison_on"],
                 # порода и тело: по ним юнит и выглядит собой
@@ -795,7 +1035,26 @@ def map_units(number: int, world: int = 0) -> list[dict]:
     return units
 
 
-def all_exits(world: int = 0) -> list[dict]:
+#: ЗАПИСЬ ВЫХОДА ЧИТАЕТСЯ СО СДВИГОМ ПРОФИЛЯ. Поля одни и те же, но у
+#: «Продолжения легенды» запись на байт короче нашей, и всё, кроме первого
+#: заполнителя, лежит на байт раньше. Держим разбор одной функцией, чтобы
+#: смещения не расходились между «всем графом» и «выходами карты».
+def _exit_record(record: bytes, shift: int) -> dict:
+    """Поля записи выхода. ``shift`` — насколько они ближе к началу."""
+    return {
+        "facing": record[2 - shift],
+        "from_map": record[3 - shift],
+        "to_map": struct.unpack_from("<b", record, 4 - shift)[0],
+        "entry_row": struct.unpack_from("<H", record, 5 - shift)[0],
+        "entry_col": struct.unpack_from("<H", record, 7 - shift)[0],
+        "row1": struct.unpack_from("<H", record, 9 - shift)[0],
+        "col1": struct.unpack_from("<H", record, 11 - shift)[0],
+        "row2": struct.unpack_from("<H", record, 13 - shift)[0],
+        "col2": struct.unpack_from("<H", record, 15 - shift)[0],
+    }
+
+
+def all_exits(world: int = 0, profile=None) -> list[dict]:
     """ВЕСЬ граф переходов: 250 записей, номер = место в таблице.
 
     `map_exits` отдаёт только переходы одной карты, а действие разговора 69
@@ -808,53 +1067,60 @@ def all_exits(world: int = 0) -> list[dict]:
     Пустые записи (карта-источник 0 и назначение 0) остаются в списке: их
     места заняты, и номера сдвигать нельзя.
     """
-    with open(game_file(f"GAME.{world}"), "rb") as stream:
-        data = stream.read()
-    places = location_names()
+    from .profile import CANON
+    profile = profile or CANON
+    data, layout = _game_bytes(world, profile)
+    at, count, size = layout["exits"]
+    shift = profile.game_exit_shift
+    places = location_names(profile=profile)
     out = []
-    for index in range(T_EXITS.count):
-        record = data[T_EXITS.offset + index * T_EXITS.size:][:T_EXITS.size]
-        target = struct.unpack_from("<b", record, 4)[0]
+    for index in range(count):
+        fields = _exit_record(data[at + index * size:][:size], shift)
+        target = fields["to_map"]
         out.append({
             "index": index,
-            "from_map": record[3],
+            "from_map": fields["from_map"],
             "to_map": target,
             "to_name": (places[target] if 0 <= target < len(places) else
                         ("глобальная карта" if target == EXIT_LEAVE
                          else "особый переход")),
-            "facing": record[2],
-            "entry_row": struct.unpack_from("<H", record, 5)[0],
-            "entry_col": struct.unpack_from("<H", record, 7)[0],
+            "facing": fields["facing"],
+            "entry_row": fields["entry_row"],
+            "entry_col": fields["entry_col"],
         })
     return out
 
 
-def map_exits(number: int, world: int = 0) -> list[dict]:
+def map_exits(number: int, world: int = 0, profile=None) -> list[dict]:
     """Выходы с карты: зона на ней, куда ведёт и куда ставит отряд.
 
     Запись выхода (T_EXITS) называет карту-источник (+0x03), назначение
     (+0x04: −1 уйти на глобальную карту, −2 особый переход), клетку прибытия
     и прямоугольник-триггер в клетках исходной карты.
+
+    ``number`` — номер карты В ТОЙ ЖЕ ИГРЕ, что и профиль: у донора это его
+    собственный номер, а не проектный. Перевод номеров — дело сборщика.
     """
-    with open(game_file(f"GAME.{world}"), "rb") as stream:
-        data = stream.read()
-    places = location_names()
+    from .profile import CANON
+    profile = profile or CANON
+    data, layout = _game_bytes(world, profile)
+    at, count, size = layout["exits"]
+    shift = profile.game_exit_shift
+    places = location_names(profile=profile)
     exits = []
-    for index in range(T_EXITS.count):
-        record = data[T_EXITS.offset + index * T_EXITS.size:][:T_EXITS.size]
-        if record[3] != number:
+    for index in range(count):
+        fields = _exit_record(data[at + index * size:][:size], shift)
+        if fields["from_map"] != number:
             continue
-        target = struct.unpack_from("<b", record, 4)[0]
-        rows = sorted((struct.unpack_from("<H", record, 9)[0],
-                       struct.unpack_from("<H", record, 13)[0]))
-        cols = sorted((struct.unpack_from("<H", record, 11)[0],
-                       struct.unpack_from("<H", record, 15)[0]))
+        target = fields["to_map"]
+        rows = sorted((fields["row1"], fields["row2"]))
+        cols = sorted((fields["col1"], fields["col2"]))
         exits.append({
             "index": index, "to_map": target,
-            "to_name": exit_name(target, places),
-            "facing": record[2],
-            "entry_row": struct.unpack_from("<H", record, 5)[0],
-            "entry_col": struct.unpack_from("<H", record, 7)[0],
+            "to_name": exit_name(target, places, profile=profile),
+            "facing": fields["facing"],
+            "entry_row": fields["entry_row"],
+            "entry_col": fields["entry_col"],
             "row1": rows[0], "row2": rows[1],
             "col1": cols[0], "col2": cols[1],
         })
@@ -879,30 +1145,66 @@ def map_exits(number: int, world: int = 0) -> list[dict]:
 T_EVENTS_AT, T_EVENTS_COUNT, T_EVENTS_SIZE = 0xC6AAE, 10, 16
 
 
-def map_events(number: int, world: int = 0) -> list[dict]:
-    """События, привязанные к карте: чей отряд и жив ли он."""
-    with open(game_file(f"GAME.{world}"), "rb") as stream:
-        data = stream.read()
+def map_events(number: int, world: int = 0, profile=None) -> list[dict]:
+    """Слоты заводчика бродячих отрядов, привязанные к этой карте.
+
+    Это НЕ «сюжетные события»: десять записей `0x7B2ACC` — заводчик, и раз в
+    шестнадцать тактов каждый свободный слот бросает жребий. Разбор целиком —
+    в docs/LOCATION_SPEC.md, разрез 2. Раскладка записи снята дизассемблером:
+
+        +0 dword  вес жребия: слот заводится, когда `rand() % 10000` БОЛЬШЕ
+                  веса (0x41CE39). В GAME.0 веса 9997 и 9996, то есть
+                  3-4 случая из 10000 за фазу — событие редкое.
+        +4 байт   ЗАВЕДЁННЫЙ отряд, ноль — слот свободен (0x435214)
+        +5, +7    копии +6 и +8, кладутся при заводе
+        +6 байт   образец: что заводить
+        +8 байт   образец: на какой карте
+        +9 байт   карта заведённого, 0xFF — ещё нигде
+
+    ПРЕЖНИЙ РАЗБОР БРАЛ ЗА НОМЕР ОТРЯДА БАЙТ +1 — а это второй байт веса:
+    9997 это `0D 27 00 00`, и «отряд 39» (0x27) выходил у всех событий
+    одинаковым. Бойцы, напечённые по этому номеру, к событию отношения не
+    имели вовсе. Тем же промахом `kind` был младшим байтом веса.
+
+    В отгруженных мирах заведённых событий НЕТ: `+4` всюду ноль, слоты ждут
+    жребия. Поэтому у всех записей пака `active` ложно, а `units` пуст — и
+    это правда о состоянии мира, а не потеря данных.
+
+    ``number`` — номер карты В ТОЙ ЖЕ игре, что и профиль, как у `village`.
+    """
+    data, layout = _game_bytes(world, profile)
+    at, count, size = layout["events"]
+    parties_at, _, party_size = layout["parties"]
+    units_at, _, unit_size = layout["units"]
     events = []
-    for index in range(T_EVENTS_COUNT):
-        record = data[T_EVENTS_AT + index * T_EVENTS_SIZE:][:T_EVENTS_SIZE]
-        active_party, active_map = record[4], record[9]
-        party = active_party or record[1]
-        target = active_map if active_party else record[8]
-        if not party or target != number:
+    for index in range(count):
+        record = data[at + index * size:][:size]
+        # Ноль в весе — слот не заведён вовсе: на нём движок обрывает обход
+        # (`*local_48 != 0` в условии цикла 0x41C944).
+        weight = struct.unpack_from("<I", record, 0)[0]
+        if not weight:
+            break
+        party = record[4]
+        target = record[9] if party else record[8]
+        if target != number:
             continue
-        party_record = data[T_PARTIES.offset + party * T_PARTIES.size:][:T_PARTIES.size]
-        first = struct.unpack_from("<H", party_record, 0x00)[0]
-        count = party_record[0x1C]
         units = []
-        for step in range(count):
-            unit = data[T_UNITS.offset + (first + step) * T_UNITS.size:][:T_UNITS.size]
-            units.append({"index": first + step, "col": unit[0x14], "row": unit[0x12],
-                          "side": unit[0x1B], "level": unit[0xF3],
-                          "health": struct.unpack_from("<h", unit, 0x4E)[0]})
+        if party:
+            party_record = data[parties_at + party * party_size:][:party_size]
+            first = struct.unpack_from("<H", party_record, 0x00)[0]
+            for step in range(party_record[0x1C]):
+                unit = data[units_at + (first + step) * unit_size:][:unit_size]
+                units.append({
+                    "index": first + step, "col": unit[0x14], "row": unit[0x12],
+                    "side": unit[0x1B], "level": unit[0xF3],
+                    "health": struct.unpack_from("<h", unit, 0x4E)[0],
+                    # Ими и решается «жив ли отряд события» (0x435214):
+                    # бит 0x80 в +0x1A — труп, поза +0x17 из 3/0xB/0xC — тоже.
+                    "flags": unit[0x1A], "pose": unit[0x17]})
         events.append({"index": index, "party": party, "map": target,
-                       "active": bool(active_party),
-                       "kind": record[0], "when": record[6], "units": units})
+                       "active": bool(party), "weight": weight,
+                       # образец: что заводить и куда — их копирует завод
+                       "pattern": record[6], "home": record[8], "units": units})
     return events
 
 
@@ -985,23 +1287,40 @@ PARTY_MONEY_AT, COIN_VALUE, COIN_CLASS, COIN_KIND = 0x26, 50, 0x24, 0x0B
 PARTY_CAPACITY_AT, PARTY_COUNT_AT = 0x1A, 0x1C
 
 
-def party(index: int = 0, world: int = 0) -> dict:
-    """Отряд из стартового мира: место, вместимость и его юниты."""
-    with open(game_file(f"GAME.{world}"), "rb") as stream:
-        data = stream.read()
-    names = _npc_names()
-    record = data[T_PARTIES.offset + index * T_PARTIES.size:][:T_PARTIES.size]
+def party(index: int = 0, world: int = 0, profile=None) -> dict:
+    """Отряд из стартового мира: место, вместимость и его юниты.
+
+    С профилем читается мир ТОЙ игры: раскладка таблиц и каталог классов
+    у донора свои. Классы предметов здесь остаются в НАТИВНОЙ нумерации
+    той же игры — перевод в наши номера делает сборщик пака.
+    """
+    data, layout = _game_bytes(world, profile)
+    parties_at, _, parties_size = layout["parties"]
+    units_at = layout["units"][0]
+    names = _npc_names(profile=profile)
+
+    def class_of(item):
+        return item_class_of(data, item, profile)
+
+    record = data[parties_at + index * parties_size:][:parties_size]
     first = struct.unpack_from("<H", record, 0x00)[0]
     count = record[PARTY_COUNT_AT]
+    # Родная карта бойцов — карта самого отряда (+0x08). В движке слот юнита
+    # глобален, а в паке слоты разных карт пересекаются, поэтому клиент
+    # различает записи парой «родная карта : слот»; без неё запись отряда
+    # прятала чужого юнита с тем же слотом — «Ярл превращался в Белуна».
+    home_map = struct.unpack_from("<H", record, PARTY_MAP_AT)[0]
     members = []
     for step in range(count):
         number = first + step
-        unit = data[T_UNITS.offset + number * T_UNITS.size:][:T_UNITS.size]
-        stats = unit_stats(data, number)
+        unit = data[units_at + number * T_UNITS.size:][:T_UNITS.size]
+        stats = unit_stats(data, number, units_at=units_at)
         name = names[unit[0xF0]] if unit[0xF0] < len(names) else ""
-        nick = names[unit[0xF1]] if unit[0xF1] < len(names) else ""
+        # прозвище — из СВОЕЙ таблицы (0x461B70), см. _npc_nickname
+        nick = _npc_nickname(names, unit[0xF1])
         members.append({
-            "index": number, "name": (f"{name} {nick}".strip() or f"юнит {number}"),
+            "index": number, "home": home_map,
+            "name": (f"{name} {nick}".strip() or f"юнит {number}"),
             "face": stats["face"], "level": stats["level"],
             # тело (+0xFC) — это и АКТЁР голоса: восьмёрка откликов на выбор
             # 32+тело*8 (VA 0x42D308) и приветствия 5500+тело*5 (0x438A00)
@@ -1017,17 +1336,17 @@ def party(index: int = 0, world: int = 0) -> dict:
             "characteristics": stats["characteristics"],
             "current": stats["current"], "skills": stats["skills"],
             "equipment": {
-                slot: (item_class_of(data, item).name
-                       if item_class_of(data, item) else None)
+                slot: (class_of(item).name
+                       if class_of(item) else None)
                 for slot, item in stats["equipment"].items()
             },
             "equipment_classes": {
-                slot: (item_class_of(data, item).index
-                       if item_class_of(data, item) else None)
+                slot: (class_of(item).index
+                       if class_of(item) else None)
                 for slot, item in stats["equipment"].items()
             },
             "equipment_item_records": {
-                slot: (item if item and item_class_of(data, item) else None)
+                slot: (item if item and class_of(item) else None)
                 for slot, item in stats["equipment"].items()
             },
             "dialog": unit[0xF2],
@@ -1041,45 +1360,45 @@ def party(index: int = 0, world: int = 0) -> dict:
             "next_level": stats["next_level"],
             "free_xp": stats["free_xp"],
             "progress_lock": stats["progress_lock"],
-            "bag": [item_class_of(data, item).name
-                    if item_class_of(data, item) else None
+            "bag": [class_of(item).name
+                    if class_of(item) else None
                     for item in stats["bag"]],
             "bag_classes": [
-                (item_class_of(data, item).index
-                 if item and item_class_of(data, item) else None)
+                (class_of(item).index
+                 if item and class_of(item) else None)
                 for item in stats["bag"]
             ],
             "bag_item_records": [
-                (item if item and item_class_of(data, item) else None)
+                (item if item and class_of(item) else None)
                 for item in stats["bag"]
             ],
             # экземплярные поля мешка и надетого (В10): крепость, чары
             "bag_details": [item_instance(data, item)
-                            if item and item_class_of(data, item) else {}
+                            if item and class_of(item) else {}
                             for item in stats["bag"]],
             "equipment_details": {
                 slot: item_instance(data, item)
                 for slot, item in stats["equipment"].items()
-                if item and item_class_of(data, item)
+                if item and class_of(item)
             },
             "second": {
-                slot: (item_class_of(data, item).name
-                       if item_class_of(data, item) else None)
+                slot: (class_of(item).name
+                       if class_of(item) else None)
                 for slot, item in stats["second"].items()
             },
             "second_classes": {
-                slot: (item_class_of(data, item).index
-                       if item_class_of(data, item) else None)
+                slot: (class_of(item).index
+                       if class_of(item) else None)
                 for slot, item in stats["second"].items()
             },
             "second_item_records": {
-                slot: (item if item and item_class_of(data, item) else None)
+                slot: (item if item and class_of(item) else None)
                 for slot, item in stats["second"].items()
             },
             "second_details": {
                 slot: item_instance(data, item)
                 for slot, item in stats["second"].items()
-                if item and item_class_of(data, item)
+                if item and class_of(item)
             },
             "poison_on": stats["poison_on"],
         })
@@ -1127,7 +1446,7 @@ def _village_culture(map_number: int) -> int:
     return VILLAGE_CULTURES.get(map_number, 0)
 
 
-def village(number: int, world: int = 0) -> dict | None:
+def village(number: int, world: int = 0, profile=None) -> dict | None:
     """Поселение карты: постройки, люди и казна.
 
     Запись 0x4A1 байт, ищется по байту +0x03 — номеру карты (VA 0x43E6E4).
@@ -1135,12 +1454,15 @@ def village(number: int, world: int = 0) -> dict | None:
     карты. Первые семь мест — «особые»: именно их номерами спрашивает
     обработчик разговора 4 (VA 0x434AF0), а дальше идут обычные дома,
     сколько их — говорят байты +0x00 и +0x01 (n1 + n2 + 7).
+
+    ``number`` — номер карты В ТОЙ ЖЕ ИГРЕ, что и профиль. У донора записей
+    двадцать вместо наших двенадцати, и лежат они по своему смещению.
     """
-    with open(game_file(f"GAME.{world}"), "rb") as stream:
-        data = stream.read()
+    data, layout = _game_bytes(world, profile)
+    at, count, size = layout["villages"]
     kinds = {kind["kind"]: kind["name"] for kind in building_kinds()}
-    for index in range(T_VILLAGES.count):
-        record = data[T_VILLAGES.offset + index * T_VILLAGES.size:][:T_VILLAGES.size]
+    for index in range(count):
+        record = data[at + index * size:][:size]
         if record[3] != number:
             continue
         total = record[0] + record[1] + 7
@@ -1162,6 +1484,12 @@ def village(number: int, world: int = 0) -> dict | None:
         # места плюс один (VA 0x415190), и по ней же выбирается прилавок.
         officials = [struct.unpack_from("<H", record, 0x3D0 + step * 2)[0]
                      for step in range(VILLAGE_ROLES)]
+        # Часы варки знахаря — dword +0x04 (VA 0x4176C8: декремент каждую
+        # фазу, при значении < 1 перезаряд на 0x5A0 И выдача всех трёх
+        # жетонов разом). В стартовых мирах везде ноль, то есть ПЕРВЫЙ же
+        # тик деревни даёт знахарю полный набор жетонов — прилавок обязан
+        # наполниться сразу, а не через полный круг в полчаса.
+        brew_timer = struct.unpack_from("<i", record, 0x04)[0]
         # Прилавки торговцев: свой список на должность (VA 0x43346C).
         counters = {}
         for role, (offset, count) in VILLAGE_GOODS.items():
@@ -1226,19 +1554,54 @@ def village(number: int, world: int = 0) -> dict | None:
             "officials": officials,
             "people": [unit for unit in officials if unit],
             "goods": counters,
+            # часы варки знахаря (+0x04): в мирах нули — первый тик даёт
+            # все три жетона сразу (0x4176C8, ветка «< 1»)
+            "brew_timer": brew_timer,
         }
     return None
 
 
-def hero_stats(index: int = 0) -> dict:
+def villages(world: int = 0, profile=None) -> list[dict]:
+    """ВСЕ поселения мира, а не только своё на карте.
+
+    Движок держит блок целиком (0x83D408 у нас) и читает его один раз, а
+    вход на карту лишь находит в нём свою запись. Разговор при этом может
+    спросить про деревню, где игрок не был: обработчик 35 «Продолжения
+    легенды» ищет поселение по номеру карты среди двадцати (FUN_0043f670).
+
+    Перебираем ЗАПИСИ, а не номера карт: каждая сама называет свою карту
+    байтом +0x03, и перебор номеров заставлял бы перечитывать файл сотни раз.
+    """
+    data, layout = _game_bytes(world, profile)
+    at, count, size = layout["villages"]
+    out = []
+    for index in range(count):
+        number = data[at + index * size + 3]
+        if not number:
+            continue
+        record = village(number, world, profile=profile)
+        if record:
+            out.append(record)
+    return out
+
+
+def hero_stats(index: int = 0, profile=None) -> dict:
     """Герой стартового мира GAME.<index> — юнит номер 0.
 
     Снаряжение отдаётся уже названиями классов: номера в слотах указывают на
     записи таблицы предметов того же файла, а класс лежит в их байте +3.
+
+    С профилем читается мир ТОЙ игры: смещение таблицы юнитов и каталог
+    классов у донора свои (см. game_layout), по канонным адресам его файл
+    отдаёт не ошибку, а мусор — тело 0 и палитру −1, как это уже было с
+    жителями.
     """
-    with open(game_file(f"GAME.{index}"), "rb") as stream:
-        data = stream.read()
-    stats = unit_stats(data, 0)
+    data, layout = _game_bytes(index, profile)
+    stats = unit_stats(data, 0, units_at=layout["units"][0])
+
+    def classify(number):
+        return item_class_of(data, number, profile)
+
     # Сохраняем номера записей до замены оборудования подписями классов.
     # Это единственный канонический ключ экземпляра внутри GAME.<index>.
     stats["equipment_item_records"] = dict(stats["equipment"])
@@ -1247,35 +1610,33 @@ def hero_stats(index: int = 0) -> dict:
     stats["equipment_details"] = {
         slot: item_instance(data, number)
         for slot, number in stats["equipment"].items()
-        if number and item_class_of(data, number)
+        if number and classify(number)
     }
     stats["bag_details"] = [
         item_instance(data, number)
-        if number and item_class_of(data, number) else {}
+        if number and classify(number) else {}
         for number in stats["bag"]
     ]
     stats["second_details"] = {
         slot: item_instance(data, number)
         for slot, number in stats["second"].items()
-        if number and item_class_of(data, number)
+        if number and classify(number)
     }
     stats["equipment_classes"] = {
-        slot: (item_class_of(data, number).index
-               if item_class_of(data, number) else None)
+        slot: (classify(number).index if classify(number) else None)
         for slot, number in stats["equipment"].items()
     }
     stats["bag_classes"] = [
-        (item_class_of(data, number).index
-         if number and item_class_of(data, number) else None)
+        (classify(number).index
+         if number and classify(number) else None)
         for number in stats["bag"]
     ]
     stats["second_classes"] = {
-        slot: (item_class_of(data, number).index
-               if item_class_of(data, number) else None)
+        slot: (classify(number).index if classify(number) else None)
         for slot, number in stats["second"].items()
     }
     stats["equipment"] = {
-        slot: (item_class_of(data, number).name if item_class_of(data, number) else None)
+        slot: (classify(number).name if classify(number) else None)
         for slot, number in stats["equipment"].items()
     }
     return stats

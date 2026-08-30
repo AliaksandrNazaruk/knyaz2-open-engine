@@ -150,5 +150,75 @@ class BeastShadow(unittest.TestCase):
             self.assertGreater(sdy, dy, f"тело {body}: тень должна быть ниже")
 
 
+class PlayerCommandBit(unittest.TestCase):
+    """Бит «этим юнитом распоряжается игрок» — unit+0x19 & 0x40.
+
+    Разобрано по пяти функциям:
+
+        VA 0x4111E8  рассудок: ВСЯ ветка под `(unit[0x19] & 0x40) == 0`
+        VA 0x410A08  случай 1: со стоящим битом — только сосед (0x4107EC),
+                     а к дальней цели не идут, приказ снимается (0x416E24)
+        VA 0x4240BC  щелчок по земле: цель в ноль и `+0x19 |= 0x40`
+        VA 0x420BFC  «Все ко мне»: война снята, у спутников `+0x19 &= 0xBF`
+        VA 0x416E24  завершение приказа: пишет ТОЛЬКО +0x10 и +0x16
+
+    Из последней и растёт всё правило: раз завершение приказа байта
+    состояния не касается, рука игрока лежит на герое и ПОСЛЕ того, как он
+    дошёл. Иначе каждый дошедший герой возвращался под рассудок, тот брал
+    ближайшего врага и гнал героя на него — «агро висит, гг сам бежит».
+    """
+
+    def client(self, name: str) -> str:
+        from pathlib import Path
+        return (Path("knyaz2/web/static") / name).read_text(encoding="utf-8")
+
+    def test_order_clear_does_not_touch_the_state_byte(self) -> None:
+        source = self.client("orders.js")
+        body = source.split("export function orderClear(unit) {")[1]
+        body = body.split("}")[0]
+        # 0x416E24 пишет цель, вид приказа и сам байт приказа — и ничего больше
+        self.assertIn("unit.orderTarget = null", body)
+        self.assertIn("0xB0", body)
+        # …а «занят» живёт в ДРУГОМ байте, и маска 0xB0 до него не достаёт
+        self.assertNotIn("busy", body)
+
+    def test_only_the_players_own_units_get_the_bit(self) -> None:
+        source = self.client("orders.js")
+        # Оба движковых места ставят бит по списку выбранных игроком
+        # (0x840B94); деревенскому наряду по хозяйству он не достаётся.
+        self.assertIn("unit === fallbackUnit", source)
+        self.assertIn("if (ofPlayer) unit.busy =", source)
+
+    def test_the_bit_locks_both_choosing_and_chasing(self) -> None:
+        source = self.client("units.js")
+        # выбор цели: со стоящим битом — только сосед 0x4107EC
+        self.assertIn("unit.busy ? adjacentFoe(unit) : enemyOf(unit)", source)
+        # …и погоня заперта тем же битом, причём цель ОТБРАСЫВАЕТСЯ
+        self.assertIn("} else if (sees && unit.busy) {", source)
+        chase = source.split("} else if (sees && unit.busy) {")[1]
+        chase = chase.split("} else if (sees) {")[0]
+        self.assertIn("orderClear(unit)", chase)
+        self.assertIn("unit.target = null", chase)
+        # Держать цель нельзя: отряд игрока выходит из боя только когда вида
+        # приказа 1 нет ни у кого — иначе война не кончилась бы никогда.
+        self.assertNotIn("combatOrder(unit, target)", chase)
+
+    def test_the_rally_button_releases_the_party(self) -> None:
+        source = self.client("ui.js")
+        # 0x420BFC: третья строка тела гасит войну, а в цикле по спутникам
+        # стоит `+0x19 &= 0xBF`
+        call = source.split("call_party: {")[1].split("},")[0]
+        self.assertIn("ours.fighting = false", call)
+        self.assertIn("mate.busy = false", call)
+
+    def test_a_quarrel_in_talk_releases_the_hero(self) -> None:
+        source = self.client("warband.js")
+        # 0x4333A4 пишет герою цель 0, приказ 0x21 и снимает бит
+        alarm = source.split("export function warbandAlarm(")[1]
+        alarm = alarm.split("export function")[0]
+        self.assertIn("attacker.busy = false", alarm)
+
+
+
 if __name__ == "__main__":
     unittest.main()

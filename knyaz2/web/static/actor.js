@@ -15,15 +15,49 @@
 import { world } from "./world.js";
 import { drawSprite, spriteReady, context } from "./viewport.js";
 
-// КЛЮЧ ГЛУБИНЫ ЮНИТА — низ его холста, а не точка ног. Движок кладёт юнита
-// в таблицу строк по `экранный Y + высота холста` (VA 0x426D45 в общем
-// проходе сцены, VA 0x424514:43 в проходе нутра постройки), а холст человека
-// 256 на 150 с якорем ног (127, 144) — отсюда и шестёрка.
+// КЛЮЧ ГЛУБИНЫ ЮНИТА — НИЗ ЕГО ХОЛСТА.
 //
-// Число одно на все проходы: общий, внутренностей постройки и куч. Раньше
-// оно стояло числом в трёх местах, и порядок внутри дома успел разъехаться с
-// порядком снаружи.
-export const UNIT_SORT_BIAS = 6;
+//     ключ = юнит[+0x3A] + (юнит[+0x54] >> 16)      (VA 0x4267B8:84,93)
+//
+// Оба слагаемых прочитаны из живой памяти, и у человека со зверем они
+// значат РАЗНОЕ (замер на восьми юнитах Борья, docs/RENDER_DEPTH.md):
+//
+//   человек — `+0x3A` лежит на 144 точки ВЫШЕ якоря ног (верхний угол
+//     холста 256×150 с якорем (127, 144)), `+0x54` = 150. Итого ключ =
+//     ноги − 144 + 150 = НОГИ ПЛЮС ШЕСТЬ;
+//   тварь — `+0x3A` равен самому якорю, `+0x54` — высота её кадра (67…75 у
+//     разных пород), а перед ключом движок добавляет ещё и смещение кадра
+//     (VA 0x4267B8:85-88). Итого ключ = НИЗ ЕЁ КАДРА.
+//
+// Правило одно на обоих: ключ — нижний край того прямоугольника, которым
+// юнит нарисован. Просто у человека этот прямоугольник фиксированный, а у
+// твари свой на каждый кадр.
+//
+// ШЕСТЁРКУ ОТСЮДА УЖЕ УБИРАЛИ. Поле `+0x54` замерили на тварях, где
+// `+0x3A` совпадает с якорем, и перенесли вывод на людей — ключ уехал на
+// 144 точки вниз, и всякий, кто стоял ЗА домом, оказывался на крыше.
+// Проверять такие поля надо на том виде юнита, о котором идёт речь.
+//
+// Владелец правила ОДИН — эта функция; ключ построек считает пак
+// (konung2/world/geometry.py, `Bounds.sort_key`).
+const HUMAN_CANVAS_BOTTOM = 6;
+
+export function unitSortKey(actor) {
+  const y = Math.round(actor.y);
+  if (isBeast(actor)) {
+    const frames = creatureFrames(actor);
+    const frame = frames?.[Math.min(actor.frame ?? 0, frames.length - 1)];
+    if (frame) return y + frame.offset_y + frame.height;
+  }
+  return y + HUMAN_CANVAS_BOTTOM;
+}
+
+// Ключ набора кадров тела: игра, форма и палитра. Игру юнит несёт в поле
+// `game` (его кладёт выпечка карты), у канонных его нет.
+export function bodyKey(actor) {
+  const body = actor?.body ?? 0, palette = actor?.palette ?? 0;
+  return actor?.game ? `${actor.game}:${body}:${palette}` : `${body}:${palette}`;
+}
 
 export function actorClassRef(ref, items = world.map?.items) {
   if (!ref || !items) return null;
@@ -94,6 +128,15 @@ export function creatureFrames(actor, pose = actor.pose,
   return named?.[direction] ?? null;
 }
 
+//: Несёт ли набор именно эту позу. `creatureFrames` откатывается к `stand`,
+//: и по нему нельзя спросить «а есть ли такая поза вообще» — а спрашивать
+//: надо: разовое действие героя пускать без своих кадров бессмысленно.
+export function actorPoseKnown(actor, pose) {
+  const sets = world.map?.creatures?.sets?.[String(actor?.body)]
+    ?.[String(actor?.palette ?? 0)];
+  return Boolean(sets?.[pose]?.length);
+}
+
 export function isBeast(actor) {
   const bit = world.map?.hero?.rules?.creatures?.beast_bit ?? 0x40;
   return Boolean((actor?.breed ?? 0) & bit);
@@ -154,7 +197,8 @@ export function actorSheetPaths(data, actors) {
     if (!actor || isBeast(actor)) continue;      // у тварей свои листы
     const body = actor.body ?? 0, palette = actor.palette ?? 0;
     addSheetsOf(body
-      ? (data.body_layers?.[`${body}:${palette}`] ??
+      ? (data.body_layers?.[bodyKey(actor)] ??
+         data.body_layers?.[`${body}:${palette}`] ??
          data.body_layers?.[String(body)])
       : (palette ? data.bodies?.[String(palette)] : null), records, used);
     for (const reference of Object.values(actor.equipment ?? {})) {
@@ -215,11 +259,20 @@ export function actorReach(actor) {
 // он нулевой, всегда играется удар со щитом, даже когда левая рука пуста.
 // И только при ненулевом навыке он смотрит, ЧТО в левой руке: пусто или
 // второе оружие (вид записи 0) — удар одной рукой, щит — удар со щитом.
-export function actorAttackPose(data, actor) {
+// ДВЕ ФУНКЦИИ ДВИЖКА, А НЕ ОДНА. Ближний замах ставит `FUN_00416B50`
+// (позы 5, 8, 9 по руке и щиту), выстрел — `FUN_00416AC8` (4 или 10), и
+// вторую движок зовёт ТОЛЬКО после проверки цели (0x414AF8). У нас они
+// сведены сюда, и обычно это верно: в бою «стрелять или бить» решено
+// раньше, полем `rangedMode`.
+//
+// Но тренировке у казармы цели нет вовсе — там зовётся ровно 0x416B50, —
+// и лучник с пустой рукой вставал стрелять в напарника вместо того,
+// чтобы махать. Для таких мест зовите с `melee`.
+export function actorAttackPose(data, actor, { melee = false } = {}) {
   const rules = data?.rules?.attack_by_item;
   const hand = actor.rangedMode ? null : actorItem(actor.equipment?.hand);
   const ranged = actorItem(actor.equipment?.ranged);
-  if (!hand && ranged) {
+  if (!melee && !hand && ranged) {
     return ranged.layer === rules?.crossbow_group
       ? rules.ranged.crossbow : rules?.ranged?.other ?? "shoot_bow";
   }
@@ -353,9 +406,13 @@ export function actorBody(data, actor, frame) {
   if (isBeast(actor)) return frame;
   if (actor.body) {
     const sets = data?.body_layers ?? {};
-    // сперва форма в СВОЕЙ палитре, и лишь потом — форма как есть
+    // Сперва форма СВОЕЙ ИГРЫ в своей палитре, затем общий ключ, и лишь
+    // потом форма как есть. Игра в ключе нужна потому, что из 256 палитр
+    // у двух игр совпадают 218, а форм у «Продолжения легенды» больше:
+    // без этого его жители выходили красными с шумом, а Иззарк — чёрным.
     const shaped = (actor.palette
-      ? sets[`${actor.body}:${actor.palette}`]?.frames?.[String(frame.record)]
+      ? (sets[bodyKey(actor)]?.frames?.[String(frame.record)]
+         ?? sets[`${actor.body}:${actor.palette}`]?.frames?.[String(frame.record)])
       : null) ?? sets[String(actor.body)]?.frames?.[String(frame.record)];
     // Своё тело приезжает фоном, как и крашеные кадры: пока картинки нет,
     // юнит должен стоять базовым телом, а не пропадать совсем.
@@ -387,6 +444,33 @@ export function actorBody(data, actor, frame) {
 export function heroSheets() { return world.map?.hero?.sheets ?? null; }
 
 //: Листы кадров тварей — своя «арена», отдельная от геройской.
+// ЛИСТЫ ТВАРЕЙ, КОТОРЫЕ ЕСТЬ НА ЭТОЙ КАРТЕ.
+//
+// Скопом их тянуть нельзя — 83 листа на 43.4 МБ, — а лениво, по первому
+// обращению, тварь проявляется уже ПОСЛЕ того, как экран загрузки погас:
+// игрок входит в локацию и видит, как из пустоты возникают волки. Поэтому
+// берём ровно те наборы, что нужны стоящим тут породам: их горстка.
+export function creatureSheetPaths(actors) {
+  const sets = world.map?.creatures?.sets;
+  const sheets = world.map?.creatures?.sheets ?? [];
+  if (!sets || !sheets.length) return [];
+  const used = new Set();
+  for (const actor of actors ?? []) {
+    if (!actor || !isBeast(actor)) continue;
+    const own = sets[String(actor.body)]?.[String(actor.palette ?? 0)];
+    if (!own) continue;
+    for (const poses of Object.values(own)) {
+      for (const directions of Object.values(poses ?? {})) {
+        for (const frame of directions ?? []) {
+          if (frame?.sheet !== undefined) used.add(frame.sheet);
+          if (frame?.shadow?.sheet !== undefined) used.add(frame.shadow.sheet);
+        }
+      }
+    }
+  }
+  return [...used].map((index) => sheets[index]?.path).filter(Boolean);
+}
+
 export function creatureSheets() { return world.map?.creatures?.sheets ?? null; }
 
 //: Чьи листы у этого юнита: у твари свой набор из OBJECTS.RES, у человека

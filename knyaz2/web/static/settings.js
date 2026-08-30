@@ -24,7 +24,23 @@ export const settings = {
   fullscreen: true,
   //: идут ли сутки. Выключено — вечное позднее утро, см. DAY_FIXED
   daynight: true,
+  //: во сколько раз быстрее канона идёт игровое время; 1 — как в оригинале
+  speed: 1,
+  // ПЕРСПЕКТИВА — ЕДИНСТВЕННОЕ ЗДЕСЬ, ЧТО ВКЛЮЧЕНО ВОПРЕКИ ПРАВИЛУ ВЫШЕ.
+  //
+  // Все прочие уступки браузеру канон не трогают, а эта трогает: у движка
+  // проекция ортогональная, и объёма в ней нет. Закон снят с Diablo II
+  // (таблица VA 0x50DCD0, разбор в docs/PERSPECTIVE.md) — там перспектива
+  // тоже штатная опция, а не свойство рисунка. Включено по решению игрока:
+  // объём того стоит. Снявшему галочку возвращается ровно прежний кадр —
+  // без флага модуль не делает ничего.
+  perspective: true,
 };
+
+//: Ступени ускорения. Восьмикратное — потолок: выше кадр браузера уже не
+//: успевает отдать столько тактов, и мир начинает дёргаться вместо того чтобы
+//: идти быстро.
+export const SPEEDS = [1, 2, 4, 8];
 
 // ВРЕМЯ ПРИ ВЫКЛЮЧЕННЫХ СУТКАХ. В движке это одна из галочек KONUNG2.CFG:
 // при нулевом `_DAT_008495B4` расчёт освещения первым же условием отдаёт
@@ -45,6 +61,13 @@ export function runAlways() { return settings.run !== false; }
 //: Идут ли сутки. Снятая галочка держит вечное позднее утро (DAY_FIXED).
 export function dayNightRuns() { return settings.daynight !== false; }
 
+//: Во сколько раз ускорено время. Чужое значение из хранилища не должно
+//: останавливать игру или разгонять её до неиграбельного, поэтому ступени
+//: перечислены, а не проверяются диапазоном.
+export function timeScale() {
+  return SPEEDS.includes(settings.speed) ? settings.speed : 1;
+}
+
 export function settingsLoad() {
   let saved = null;
   try {
@@ -57,6 +80,10 @@ export function settingsLoad() {
   if (typeof saved?.run === "boolean") settings.run = saved.run;
   if (typeof saved?.fullscreen === "boolean") settings.fullscreen = saved.fullscreen;
   if (typeof saved?.daynight === "boolean") settings.daynight = saved.daynight;
+  if (typeof saved?.perspective === "boolean") {
+    settings.perspective = saved.perspective;
+  }
+  if (SPEEDS.includes(saved?.speed)) settings.speed = saved.speed;
   const step = saved?.difficulty;
   if (Number.isInteger(step) && step >= 0 && step < DIFFICULTY.length) {
     settings.difficulty = step;

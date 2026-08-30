@@ -23,6 +23,7 @@
 //: Таблица ступеней общая с игрой: и подпись здесь, и множители там читают
 //: один и тот же файл, чтобы обещанное меню совпадало с игрой.
 import { DIFFICULTY, DIFFICULTY_DEFAULT, difficultyHint } from './difficulty.js';
+import { SPEEDS } from './settings.js';
 
 // МЕНЮ ЖИВЁТ В ДВУХ МЕСТАХ: своей страницей и накладкой поверх игры. Разница
 // только в трёх пунктах, и узнаётся она по разметке — на странице игры есть
@@ -68,7 +69,7 @@ const SETTINGS = 'knyaz2.settings';
 //: а канон — по желанию. Сутки тоже идут, как в оригинале.
 const DEFAULT_SETTINGS = { difficulty: DIFFICULTY_DEFAULT, music: 55, sound: 80,
                            follow: true, run: true, fullscreen: true,
-                           daynight: true };
+                           daynight: true, speed: 1 };
 
 function readJson(key, fallback = null) {
   try {
@@ -211,6 +212,18 @@ const followNode = document.getElementById('opt-follow');
 const runNode = document.getElementById('opt-run');
 const fullscreenNode = document.getElementById('opt-fullscreen');
 const daynightNode = document.getElementById('opt-daynight');
+const perspectiveNode = document.getElementById('opt-perspective');
+const speedNode = document.getElementById('opt-speed');
+//: Сутки в тактах и такт в секундах — те же числа, что в daylight.js и
+//: clock.js; сколько это минут, считаем здесь, чтобы подпись не врала при
+//: смене ступени.
+const СУТКИ_МИНУТ = (21600 * 0.078) / 60;
+for (const шаг of SPEEDS) {
+  const option = document.createElement('option');
+  option.value = String(шаг);
+  option.textContent = шаг === 1 ? 'как в оригинале' : `${шаг}×`;
+  speedNode.append(option);
+}
 
 //: Список ступеней строится один раз из общей таблицы.
 for (const [at, step] of DIFFICULTY.entries()) {
@@ -248,11 +261,20 @@ function paintSettings() {
     : 'играть в окне браузера';
   // Смена дня и ночи — галочка самого движка (KONUNG2.CFG, VA 0x4295D8):
   // снятая держит вечный день.
+  const темп = SPEEDS.includes(settings.speed) ? settings.speed : 1;
+  speedNode.value = String(темп);
+  document.getElementById('opt-speed-hint').textContent =
+    `сутки за ${(СУТКИ_МИНУТ / темп).toFixed(0)} мин, из них половина ночь`;
   const сутки = settings.daynight !== false;
   daynightNode.checked = сутки;
   document.getElementById('opt-daynight-hint').textContent = сутки
     ? 'как в оригинале: утро, день, вечер, ночь'
     : 'всегда позднее утро';
+  const объём = settings.perspective !== false;
+  perspectiveNode.checked = объём;
+  document.getElementById('opt-perspective-hint').textContent = объём
+    ? 'дальнее мельче, ближнее крупнее — как в Diablo'
+    : 'как в оригинале: чистая изометрия';
   music.volume = settings.music / 100;
 }
 
@@ -501,6 +523,8 @@ bindToggle(followNode, 'follow', () => playClick());
 bindToggle(runNode, 'run', () => playClick());
 bindToggle(fullscreenNode, 'fullscreen', () => playClick());
 bindToggle(daynightNode, 'daynight', () => playClick());
+bindToggle(perspectiveNode, 'perspective', () => playClick());
+bindSetting(speedNode, 'speed', () => playClick());
 paintSettings();
 
 // В ИГРЕ СВОЙ ТРЕК МЕНЮ НЕ ЗАВОДИМ. Накладка открывается поверх идущей игры,

@@ -26,6 +26,7 @@ QUESTS.RES ↔ проект. Диалоги, журнал квестов и ст
 import json
 import os
 import struct
+from pathlib import Path
 
 from .paths import game_file
 
@@ -156,8 +157,18 @@ CMD_KIND_MASK, CMD_SET, CMD_AND = 0x3F000000, 0x80000000, 0x40000000
 CMD_END = 0x7FFFFFFF
 
 
-def _commands(data, offset, index):
-    """Список команд действия или условия, начиная с указанного номера."""
+def _commands(data, offset, index, handler_map=None, quest_shift=0):
+    """Список команд действия или условия, начиная с указанного номера.
+
+    ``handler_map`` переводит номер обработчика в НАШУ нумерацию. У чужой
+    сборки она своя (konung2/donor.py: HANDLER_MAP), и без перевода
+    донорский разговор зовёт посторонний обработчик: совпадают только
+    первые семь номеров, дальше расходится всё.
+
+    ``quest_shift`` уводит номера квестов в проектный участок: обе игры
+    считают квесты с нуля в ОДНОЙ таблице на 300 мест, и без сдвига
+    «отметить квест N» донора взводило бы наш квест N.
+    """
     out = []
     position = offset + index * 4
     while position + 4 <= len(data):
@@ -173,12 +184,21 @@ def _commands(data, offset, index):
             argument = (word >> 8) & 0xFFFF
             if argument >= 0x8000:
                 argument -= 0x10000
-            command.update(kind='handler', handler=word & 0xFF,
+            native = word & 0xFF
+            handler = native if handler_map is None else handler_map.get(native)
+            command.update(kind='handler', handler=handler,
                            argument=argument)
+            if handler_map is not None:
+                # СВОЙ НОМЕР ОСТАВЛЯЕМ РЯДОМ. Обработчик без нашей пары даёт
+                # handler=None, и это не «сломалось», а «у нас такого нет»:
+                # молча подставить свой номер значило бы позвать чужое.
+                command['native_handler'] = native
         elif kind == CMD_UNIT_FLAG:
             command.update(kind='unit_flag', bit=word & 0xFF)
         elif kind == CMD_QUEST:
-            command.update(kind='quest', quest=word & 0xFFFF)
+            command.update(kind='quest', quest=(word & 0xFFFF) + quest_shift)
+            if quest_shift:
+                command['native_quest'] = word & 0xFFFF
         else:
             command.update(kind='unknown')
         out.append(command)
@@ -189,35 +209,127 @@ def _commands(data, offset, index):
 class Dialogs:
     """Диалоги QUESTS.RES: корни, узлы, фразы, действия и условия."""
 
-    def __init__(self, data: bytes) -> None:
+    def __init__(self, data: bytes, profile=None) -> None:
         self.data = data
+        # СМЕЩЕНИЯ СЕКЦИЙ БЕРУТСЯ У ПРОФИЛЯ. У «Продолжения легенды» тот же
+        # файл вдвое больше по узлам (32000 записей против 16000) и шире по
+        # фразам, поэтому зашитые константы для него не годятся: читались бы
+        # чужие таблицы, и разговор выходил бы связным на вид, но не тем.
+        from .profile import CANON
+        self.profile = profile or CANON
+        layout = self.profile.quests_layout()
+        self.nodes_at, nodes_size = layout['dialog_nodes']
+        self.node_count = nodes_size // NODE_STRIDE
+        self.phrases_at = layout['phrase_table'][0]
+        self.actions_at = layout['phrase_a'][0]
+        self.conditions_at = layout['phrase_b'][0]
+        self.roots_at = layout['dialog_roots'][0]
+        self.blob_at = layout['strings'][0]
+        # ПЕРЕВОД НОМЕРОВ ОБРАБОТЧИКОВ. У канона его нет и быть не может —
+        # это его собственная нумерация. У чужой сборки он обязателен.
+        self.handler_map = None if self.profile is CANON else self._handlers()
+        # ТО ЖЕ С ГОЛОСАМИ: у чужой сборки свой voices.res и своя нумерация.
+        self.voice_shift = 0 if self.profile is CANON else self._voice_shift()
+        # И С КВЕСТАМИ: одна таблица состояний на 300 мест, обе игры
+        # считают с нуля — канон 0…102, донор 0…161.
+        self.quest_shift = 0 if self.profile is CANON else self._quest_shift()
+
+    def _quest_shift(self):
+        """Куда уводить номера квестов этой сборки."""
+        from . import donor
+        if self.profile.name == donor.LEGEND_NAME:
+            return donor.PROJECT_QUEST_BASE
+        raise LookupError(
+            f"{self.profile.name}: участок номеров квестов не отведён. "
+            f"Оставить как есть нельзя: чужой разговор взведёт наш квест")
+
+    def _voice_shift(self):
+        """На сколько уводить номера голосов этой сборки."""
+        from . import donor
+        if self.profile.name == donor.LEGEND_NAME:
+            return donor.PROJECT_VOICE_BASE
+        raise LookupError(
+            f"{self.profile.name}: участок номеров голосов не отведён. "
+            f"Оставить как есть нельзя: реплика зазвучит чужим голосом")
+
+    def _handlers(self):
+        """Таблица перевода обработчиков для этой сборки.
+
+        Общие уезжают в канонные номера, собственные — в проектный участок
+        (donor.PROJECT_HANDLER_BASE). Ненайденным здесь быть уже нечему:
+        неперенесённый обработчик виден не как «нет номера», а как счётчик
+        в `dialog.missing` у клиента.
+        """
+        from . import donor
+        if self.profile.name == donor.LEGEND_NAME:
+            return donor.handler_numbers()
+        raise LookupError(
+            f"{self.profile.name}: нумерация обработчиков не замерена. "
+            f"Читать по нашей нельзя: разговор позовёт посторонний "
+            f"обработчик (см. tools/handler_diff.py)")
+
+    #: Разобранные QUESTS.RES по игре. Файл читается на каждого жителя с
+    #: разговором — у донора их 264 на 87 карт, и это 264 чтения по 600 КБ.
+    _LOADED: dict[str, 'Dialogs'] = {}
 
     @classmethod
-    def from_game(cls) -> 'Dialogs':
-        with open(game_file('QUESTS.RES'), 'rb') as stream:
-            return cls(stream.read())
+    def from_game(cls, profile=None, overlay: bool = True) -> 'Dialogs':
+        from .profile import CANON
+        profile = profile or CANON
+        # overlay=False — исторический файл игры без правок редактора:
+        # им пользуются сверки ревизий (qst_source_diff), которым нужен
+        # именно отгруженный канон, а не текущий сюжет проекта.
+        key = profile.name if overlay else profile.name + ':shipped'
+        if key not in cls._LOADED:
+            # СОБРАННЫЙ СЮЖЕТ ПРИОРИТЕТЕН: редактор компилирует правки
+            # диалогов в project/story/QUESTS.RES (наш M_QUEST-прогон,
+            # konung2/story.py) — канонное чтение берёт его, и деревья
+            # юнитов в паке пекутся из правленого сюжета одной точкой.
+            # Файла нет — оригинал игры, как всегда.
+            path = profile.file('QUESTS.RES')
+            if overlay and profile is CANON:
+                built = (Path(__file__).resolve().parents[1] / 'project'
+                         / 'story' / 'QUESTS.RES')
+                if built.is_file():
+                    path = built
+            with open(path, 'rb') as stream:
+                cls._LOADED[key] = cls(stream.read(), profile)
+        return cls._LOADED[key]
 
     def root(self, dialog: int) -> int:
-        return struct.unpack_from('<H', self.data, 0x27100 + dialog * 2)[0]
+        return struct.unpack_from('<H', self.data, self.roots_at + dialog * 2)[0]
 
     def node(self, index: int) -> dict:
         action, following, condition, phrase = struct.unpack_from(
-            '<4h', self.data, index * NODE_STRIDE)
+            '<4h', self.data, self.nodes_at + index * NODE_STRIDE)
         return {'index': index, 'action': action, 'next': following,
                 'condition': condition, 'phrase': phrase}
 
     def phrase(self, index: int) -> dict:
-        voice, offset = struct.unpack_from('<2i', self.data, 0x0FA00 + index * PHRASE_STRIDE)
-        start = BLOB_OFF + offset
+        """Реплика: номер голоса и текст.
+
+        НОМЕР ГОЛОСА УВОДИТСЯ В ПРОЕКТНЫЙ УЧАСТОК у чужой сборки. У донора
+        свой ``voices.res`` и своя нумерация, и все 1215 наших номеров
+        попадают в его диапазон: без сдвига его персонаж заговорил бы нашим
+        голосом и чужими словами. Сдвиг делается здесь, у самого чтения, —
+        дальше номер везде уже наш, и клиенту разбираться не в чем.
+        """
+        voice, offset = struct.unpack_from(
+            '<2i', self.data, self.phrases_at + index * PHRASE_STRIDE)
+        start = self.blob_at + offset
         end = self.data.index(b'\0', start)
-        return {'voice': voice,
+        return {'voice': voice + self.voice_shift if voice > 0 else voice,
                 'text': self.data[start:end].decode(ENCODING, 'replace')}
 
     def actions(self, index: int) -> list:
-        return [] if index < 0 else _commands(self.data, 0x1B580, index)
+        return [] if index < 0 else _commands(self.data, self.actions_at,
+                                              index, self.handler_map,
+                                              self.quest_shift)
 
     def conditions(self, index: int) -> list:
-        return [] if index < 0 else _commands(self.data, 0x21340, index)
+        return [] if index < 0 else _commands(self.data, self.conditions_at,
+                                              index, self.handler_map,
+                                              self.quest_shift)
 
     def branches(self, index: int) -> list[dict]:
         """Развилка: подряд идущие записи «условие -> куда».
@@ -237,7 +349,7 @@ class Dialogs:
             if node['condition'] < 0:
                 break
             step += 1
-            if step >= NODE_COUNT:      # дальше узлов нет, начинается таблица фраз
+            if step >= self.node_count:  # дальше узлов нет, начинается таблица фраз
                 break
         return out
 
@@ -314,8 +426,47 @@ class Dialogs:
                 branches = self.branches(index)
                 nodes[index] = {'kind': 'branch', 'node': index, 'branches': branches}
                 queue.extend(branch['next'] for branch in branches)
-        return {'number': number, 'root': self.root(number),
+        # НОМЕР ДЕРЕВА УВОДИТСЯ В ПРОЕКТНЫЙ УЧАСТОК вместе с квестами: это
+        # ОДНО пространство — таблица состояний на 300 мест индексируется
+        # номером диалога. По нему живут бит «подойди и заговори» и действия
+        # 61/62; без сдвига донорский Мунд-однофамилец под номером 8 получал
+        # бы канонный авто-подход.
+        return {'number': number + self.quest_shift, 'root': self.root(number),
+                # ЧЬЯ ЭТО ИГРА. Дерево уезжает в пак и там уже не помнит,
+                # откуда читалось, а помнить надо: действие «перенести отряд
+                # по переходу» адресует запись НОМЕРОМ в таблице выходов, и
+                # у донора эта таблица своя — 350 записей против наших 250.
+                'game': self.profile.name,
                 'nodes': [nodes[key] for key in sorted(nodes)]}
+
+    def handler_calls(self) -> dict[int, dict[int, int]]:
+        """Сколько раз зовут каждый обработчик: номер -> довод -> сколько.
+
+        СЧИТАЕТСЯ ПО СЫРЫМ СЕКЦИЯМ, а не обходом деревьев. Обход считает
+        только то, до чего дошёл: у него предел в 96 узлов на разговор, и на
+        доноре он покрыл шестую часть команд — 1347 из 8628. Отсюда брались
+        заниженные оценки «сколько осталось перенести».
+
+        Номер обработчика здесь СВОЙ, донорский: перевод не применяется,
+        потому что считать надо то, что написано в ресурсе.
+
+        Что мусора в счёт не попадает, видно на каноне: во всей секции
+        встречаются номера 0…75 и ни одного выше — ровно наша таблица.
+        """
+        out: dict[int, dict[int, int]] = {}
+        layout = self.profile.quests_layout()
+        for name in ('phrase_a', 'phrase_b'):
+            at, size = layout[name]
+            for offset in range(at, at + size, 4):
+                word = struct.unpack_from('<I', self.data, offset)[0]
+                if word & CMD_KIND_MASK != CMD_HANDLER:
+                    continue
+                argument = (word >> 8) & 0xFFFF
+                if argument >= 0x8000:
+                    argument -= 0x10000
+                seen = out.setdefault(word & 0xFF, {})
+                seen[argument] = seen.get(argument, 0) + 1
+        return out
 
     def dialog(self, number: int, limit: int = 64) -> list:
         """Весь диалог: реплики, до которых достают ответы."""

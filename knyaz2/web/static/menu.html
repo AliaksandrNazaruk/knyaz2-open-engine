@@ -118,6 +118,25 @@
             <input class="option__input" id="opt-daynight" type="checkbox">
             <span class="option__hint" id="opt-daynight-hint"></span>
           </label>
+          <!-- НАША ДОБАВКА, В ОРИГИНАЛЕ ЕЁ НЕТ. У движка проекция
+               ортогональная, объёма в ней нет. Закон снят с Diablo II
+               (таблица VA 0x50DCD0, разбор в docs/PERSPECTIVE.md): масштаб
+               растёт линейно сверху вниз, и из этого сам собой выходит
+               параллакс. Снявшему галочку возвращается ровно прежний кадр. -->
+          <label class="option">
+            <span class="option__name">Перспектива</span>
+            <input class="option__input" id="opt-perspective" type="checkbox">
+            <span class="option__hint" id="opt-perspective-hint"></span>
+          </label>
+          <!-- НАША ДОБАВКА, В ОРИГИНАЛЕ ЕЁ НЕТ. Сутки длятся 28 минут, и
+               половина из них ночь; без ускорения проверять механики,
+               завязанные на время, невозможно. Ступени заполняет menu.js из
+               settings.js. -->
+          <label class="option">
+            <span class="option__name">Скорость игры</span>
+            <select class="option__input" id="opt-speed"></select>
+            <span class="option__hint" id="opt-speed-hint"></span>
+          </label>
         </div>
         <button class="screen__back" type="button" data-back>Назад</button>
       </section>

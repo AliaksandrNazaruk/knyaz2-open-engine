@@ -94,6 +94,54 @@ export function buildingIgnite(object, roll = Math.floor(Math.random() * 100)) {
   return true;
 }
 
+// ОДНА СТУПЕНЬКА ЛЕСТНИЦЫ — НАД ЗАПИСЬЮ МЕСТА, а не над объектом карты.
+//
+// В движке копия одна: ступень и счётчик живут в записи поселения (+0x19 и
+// +0x1E), а объект карты по ним лишь перерисовывается (0x43DF48:222-231).
+// Нам та же лестница нужна дважды — для построек видимой карты и для
+// одиннадцати остальных поселений склада, — и разводить её в две копии
+// нельзя: это ровно тот случай, когда один адрес движка получает двух
+// владельцев и они расходятся.
+//
+// Возвращает, сдвинулось ли что-нибудь, и МЕНЯЕТ саму запись места.
+export function placeStep(place, kind, workers, set) {
+  const ready = set.states.ready;
+  const ashes = set.states.ashes;
+  // Пепелище расчищают РУКИ: без свободных работников оно так и лежит
+  // (VA 0x41D6xx, ветка состояния 6 под тем же `0 < работники`).
+  if (place.state === ashes && !place.timer) {
+    if (workers < 1) return false;
+    place.state = 0;                          // место очистилось
+    place.timer = buildStepTime(kind, workers, set);
+    return true;
+  }
+  if (!place.timer) return false;
+  // Стройка (ступени ниже «стоит») идёт только пока есть работники;
+  // пожар тикает сам по себе.
+  //
+  // ОТСТУПЛЕНИЕ ОТ КАНОНА, ОСОЗНАННОЕ. В движке недострой без работников не
+  // замирает, а ДОГОРАЕТ по burn_step: 3 → 4 → 5 → 6, то есть отлучился —
+  // и вместо кузницы пепелище. Мы держим паузу: тестеры и без того жалуются,
+  // что стройка стоит, а канонное поведение наказывало бы их вдвое. Если
+  // решим вернуть — менять здесь и только здесь.
+  if (place.state < ready && workers < 1) return false;
+  place.timer -= 1;
+  if (place.timer > 0) return false;
+  place.state += 1;
+  if (place.state < ready) place.timer = buildStepTime(kind, workers, set);
+  else if (place.state > ready && place.state < ashes) {
+    place.timer = kind?.burn_step ?? 1;
+  }
+  return true;
+}
+
+//: Срок ступени по ВИДУ, а не по объекту: чужому поселению объекта не из чего
+//: взять. Формула та же (VA 0x41D8xx).
+function buildStepTime(kind, workers, set) {
+  return Math.trunc(((kind?.build_time ?? 1) * (set?.build_minute ?? 60))
+                    / Math.max(1, workers));
+}
+
 // Мировой такт постройки: та же лестница, что в движке.
 export function buildingsTick(workers = 0) {
   const set = rules();
@@ -164,15 +212,6 @@ export function buildingFrames(object) {
   if (!ladder) return object.frames;
   const ready = Object.values(ladder).every((frame) => world.images.has(frame.asset));
   return ready ? ladder : object.frames;
-}
-
-//: Горит ли постройка — по ней видно, что поджог удался.
-export function buildingBurning(object) {
-  const set = rules();
-  const ready = set?.states?.ready ?? 3;
-  const ashes = set?.states?.ashes ?? 6;
-  // Пепелище уже не горит — оно то, что от пожара осталось.
-  return Boolean(object.states) && object.state > ready && object.state < ashes;
 }
 
 // Постройка на клетке: движок держит номер объекта прямо в клетке карты,

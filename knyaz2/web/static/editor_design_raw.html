@@ -1,0 +1,1311 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<meta name="design_doc_mode" content="canvas">
+<link rel="stylesheet" href="_ds/gateway-console-design-system-64aa70ff-81c4-4ffd-bf1b-672332282ae8/tokens/fonts.css">
+<link rel="stylesheet" href="_ds/gateway-console-design-system-64aa70ff-81c4-4ffd-bf1b-672332282ae8/tokens/colors.css">
+<link rel="stylesheet" href="_ds/gateway-console-design-system-64aa70ff-81c4-4ffd-bf1b-672332282ae8/tokens/typography.css">
+<link rel="stylesheet" href="_ds/gateway-console-design-system-64aa70ff-81c4-4ffd-bf1b-672332282ae8/tokens/spacing.css">
+<link rel="stylesheet" href="_ds/gateway-console-design-system-64aa70ff-81c4-4ffd-bf1b-672332282ae8/tokens/status.css">
+<link rel="stylesheet" href="_ds/gateway-console-design-system-64aa70ff-81c4-4ffd-bf1b-672332282ae8/styles.css">
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="_ds/gateway-console-design-system-64aa70ff-81c4-4ffd-bf1b-672332282ae8/_ds_bundle.js"></script>
+<style>
+body{margin:0;background:#e8ebf0;font-family:'IBM Plex Sans',system-ui,sans-serif}
+a{color:#1d4ed8;text-decoration:none}a:hover{color:#1e40af;text-decoration:underline}
+.dv-turn{padding:40px 44px 32px;border-bottom:1px solid rgba(0,0,0,.08);scroll-margin-top:16px}
+.dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 8px}
+.dv-tid{font:600 10px 'IBM Plex Mono',monospace;padding:3px 7px;background:#0f172a;color:#fff;border-radius:4px;text-decoration:none}
+.dv-tname{font:600 13px/1.2 'IBM Plex Sans',sans-serif;color:#0f172a}
+.dv-opts{display:flex;flex-wrap:wrap;gap:36px;align-items:flex-start}
+.dv-opt{flex:none;display:flex;flex-direction:column;gap:9px;scroll-margin-top:16px}
+.dv-oid{font:600 10.5px 'IBM Plex Mono',monospace;padding:3px 7px;background:rgba(2,6,23,.08);color:#0f172a;border-radius:5px;text-decoration:none}
+.dv-olabel{display:flex;align-items:baseline;gap:8px;font:400 11.5px/1.3 'IBM Plex Sans',sans-serif;color:rgba(2,6,23,.6)}
+.dv-card{max-width:100%;background:#fff;border:1px solid rgba(2,6,23,.12);border-radius:8px;box-shadow:0 1px 3px rgba(2,6,23,.07);overflow:hidden}
+.dv-opt:target .dv-oid{background:#2563eb;color:#fff}
+.dv-next{margin:22px 0 0;font:12px/1.5 'IBM Plex Sans',sans-serif;color:rgba(2,6,23,.5)}
+@keyframes k2pulse{0%,100%{opacity:.9}50%{opacity:.35}}
+@keyframes k2spin{to{transform:rotate(360deg)}}
+</style>
+</helmet>
+<section class="dv-turn" id="t1">
+  <div class="dv-thd"><a class="dv-tid" href="#t1">1</a><span class="dv-tname">Редактор карт «Князь 2» — 9 экранов поверх API v2</span></div>
+  <div style="max-width:980px;margin:0 0 24px;font:12px/1.65 'IBM Plex Sans',sans-serif;color:#475569">
+    <div style="display:flex;gap:24px;flex-wrap:wrap">
+      <div style="flex:1;min-width:300px"><b style="color:#0f172a">Опора.</b> EDITOR_SPEC.md (API v2, трёхпанельная раскладка H3/WC3), EDITOR_VISION.md (валидатор, язык хоткеев старого редактора), Gateway Console DS. Холст, палитры и превью собраны из реальных ассетов пака (tiles19, catalog/objects, creatures, icons).</div>
+      <div style="flex:1;min-width:300px"><b style="color:#0f172a">Решения.</b> Тёмный хром (рейл инструментов, топбар, статус-строка) вокруг светлых панелей; холст — near-black, рендер из проекта. Draft-правки всюду помечены янтарным <span style="font-family:'IBM Plex Mono',monospace">draft</span>. Статус-строка говорит хоткеями старого редактора (Space · Ins · Del · Enter · F2 · TAB · PgUp/PgDn).</div>
+    </div>
+  </div>
+  <div class="dv-opts">
+
+  <div class="dv-opt" id="1a" data-screen-label="1a Стартовый экран — выбор карты">
+    <div class="dv-olabel"><a class="dv-oid" href="#1a">1a</a>Стартовый экран — карты проекта <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px">GET /maps · POST /maps</span></div>
+    <div class="dv-card" style="width:1600px">
+      <div style="width:1600px;height:860px;display:flex;flex-direction:column;background:#f8fafc;color:#0f172a">
+        <div style="display:flex;align-items:center;gap:14px;height:52px;padding:0 16px;background:#0f172a;border-bottom:1px solid rgba(255,255,255,.08);flex:none">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:28px;height:28px;border-radius:6px;background:#2563eb;display:flex;align-items:center;justify-content:center"><i data-lucide="map" style="width:16px;height:16px;color:#fff"></i></div>
+            <div style="display:flex;flex-direction:column;line-height:1.1"><span style="font:700 11px 'IBM Plex Sans';color:#fff;letter-spacing:.14em">КНЯЗЬ 2</span><span style="font:500 9px 'IBM Plex Sans';color:#94a3b8;letter-spacing:.22em">РЕДАКТОР КАРТ</span></div>
+          </div>
+          <div style="width:1px;height:24px;background:rgba(255,255,255,.1)"></div>
+          <span style="font:500 12px 'IBM Plex Sans';color:#e2e8f0">Карты проекта</span>
+          <span style="font:11px 'IBM Plex Mono';color:#64748b">project/maps/ · 52 карты</span>
+          <div style="flex:1"></div>
+          <span style="font:11px 'IBM Plex Mono';color:#64748b">дев-сервер</span>
+          <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.StatusBadge" state="online" size="sm" hint-size="70px,20px"></x-import>
+          <span style="font:11px 'IBM Plex Mono';color:#475569">127.0.0.1:8767</span>
+        </div>
+        <div style="flex:1;overflow:hidden;padding:20px 24px;display:flex;flex-direction:column;gap:16px">
+          <div style="display:flex;align-items:center;gap:12px">
+            <div style="position:relative;width:320px">
+              <i data-lucide="search" style="position:absolute;left:9px;top:8px;width:14px;height:14px;color:#94a3b8"></i>
+              <div style="height:30px;border:1px solid #cbd5e1;border-radius:4px;background:#fff;display:flex;align-items:center;padding:0 10px 0 30px;font:12px 'IBM Plex Sans';color:#94a3b8">имя или номер карты…</div>
+            </div>
+            <div style="display:flex;border:1px solid #cbd5e1;border-radius:4px;overflow:hidden;font:500 11.5px 'IBM Plex Sans'">
+              <div style="padding:6px 12px;background:#0f172a;color:#fff">все · 52</div>
+              <div style="padding:6px 12px;background:#fff;color:#475569;border-left:1px solid #cbd5e1">с draft-правками · 3</div>
+              <div style="padding:6px 12px;background:#fff;color:#475569;border-left:1px solid #cbd5e1">не собраны · 7</div>
+            </div>
+            <div style="flex:1"></div>
+            <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="primary" size="sm" icon="plus" hint-size="120px,28px">Новая карта</x-import>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;align-content:start">
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;box-shadow:inset 3px 0 0 #2563eb,0 0 0 3px rgba(59,130,246,.18);cursor:pointer">
+              <div style="height:150px;background:#020617 url('assets/thumbs/map23.png') center/cover;border-bottom:1px solid #e2e8f0"></div>
+              <div style="padding:10px 12px;display:flex;flex-direction:column;gap:6px">
+                <div style="display:flex;align-items:baseline;gap:8px"><span style="font:600 15px 'IBM Plex Mono'">23</span><span style="font:600 12.5px 'IBM Plex Sans'">Морской лагерь</span><div style="flex:1"></div><x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.StatusBadge" family="warn" label="3 draft" size="sm" hint-size="60px,18px"></x-import></div>
+                <div style="font:10.5px 'IBM Plex Mono';color:#94a3b8">maps/23 · grid.txt · layer1/2.png · map.json</div>
+                <div style="display:flex;gap:10px;font:10.5px 'IBM Plex Mono';color:#64748b"><span>объекты 214</span><span>юниты 46</span><span>отряды 3</span><span>клады 12</span></div>
+                <div style="display:flex;align-items:center;gap:6px;font:10.5px 'IBM Plex Mono';color:#16a34a"><i data-lucide="package-check" style="width:12px;height:12px"></i>пак собран · 14:32</div>
+              </div>
+            </div>
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;cursor:pointer">
+              <div style="height:150px;background:#020617 url('assets/thumbs/map19.png') center/cover;border-bottom:1px solid #e2e8f0"></div>
+              <div style="padding:10px 12px;display:flex;flex-direction:column;gap:6px">
+                <div style="display:flex;align-items:baseline;gap:8px"><span style="font:600 15px 'IBM Plex Mono'">19</span><span style="font:600 12.5px 'IBM Plex Sans'">Черный Бор</span><div style="flex:1"></div><x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.StatusBadge" family="ok" label="синхронен" size="sm" hint-size="70px,18px"></x-import></div>
+                <div style="font:10.5px 'IBM Plex Mono';color:#94a3b8">maps/19 · деревня руссов · 10 построек</div>
+                <div style="display:flex;gap:10px;font:10.5px 'IBM Plex Mono';color:#64748b"><span>объекты 187</span><span>юниты 62</span><span>отряды 2</span><span>клады 9</span></div>
+                <div style="display:flex;align-items:center;gap:6px;font:10.5px 'IBM Plex Mono';color:#16a34a"><i data-lucide="package-check" style="width:12px;height:12px"></i>пак собран · 12:05</div>
+              </div>
+            </div>
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;cursor:pointer">
+              <div style="height:150px;background:#020617 url('assets/thumbs/map33.png') center/cover;border-bottom:1px solid #e2e8f0"></div>
+              <div style="padding:10px 12px;display:flex;flex-direction:column;gap:6px">
+                <div style="display:flex;align-items:baseline;gap:8px"><span style="font:600 15px 'IBM Plex Mono'">33</span><span style="font:600 12.5px 'IBM Plex Sans'">Борье</span><div style="flex:1"></div><x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.StatusBadge" family="ok" label="синхронен" size="sm" hint-size="70px,18px"></x-import></div>
+                <div style="font:10.5px 'IBM Plex Mono';color:#94a3b8">maps/33 · деревня · порт</div>
+                <div style="display:flex;gap:10px;font:10.5px 'IBM Plex Mono';color:#64748b"><span>объекты 243</span><span>юниты 71</span><span>отряды 4</span><span>клады 15</span></div>
+                <div style="display:flex;align-items:center;gap:6px;font:10.5px 'IBM Plex Mono';color:#16a34a"><i data-lucide="package-check" style="width:12px;height:12px"></i>пак собран · 12:05</div>
+              </div>
+            </div>
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;cursor:pointer">
+              <div style="height:150px;background:#020617 url('assets/thumbs/map20.png') center/cover;border-bottom:1px solid #e2e8f0"></div>
+              <div style="padding:10px 12px;display:flex;flex-direction:column;gap:6px">
+                <div style="display:flex;align-items:baseline;gap:8px"><span style="font:600 15px 'IBM Plex Mono'">20</span><span style="font:600 12.5px 'IBM Plex Sans'">Приволье</span><div style="flex:1"></div><x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.StatusBadge" family="idle" label="не собран" size="sm" hint-size="70px,18px"></x-import></div>
+                <div style="font:10.5px 'IBM Plex Mono';color:#94a3b8">maps/20 · грид изменён 22.08</div>
+                <div style="display:flex;gap:10px;font:10.5px 'IBM Plex Mono';color:#64748b"><span>объекты 198</span><span>юниты 54</span><span>отряды 2</span><span>клады 11</span></div>
+                <div style="display:flex;align-items:center;gap:6px;font:10.5px 'IBM Plex Mono';color:#d97706"><i data-lucide="package-x" style="width:12px;height:12px"></i>нужна сборка — Build ▶</div>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;font:11px 'IBM Plex Mono';color:#94a3b8;padding:2px 2px 0"><i data-lucide="chevron-left" style="width:14px;height:14px"></i><span style="color:#0f172a">стр 1/13</span><i data-lucide="chevron-right" style="width:14px;height:14px"></i><span style="margin-left:12px">PgUp / PgDn — листать · Enter — открыть карту</span></div>
+        </div>
+        <div style="height:30px;background:#0f172a;display:flex;align-items:center;gap:16px;padding:0 14px;font:11px 'IBM Plex Mono';color:#94a3b8;flex:none">
+          <span>project: Knyaz2Modding</span><span>пак: content_build · 52/52 карт</span><span>git: чисто</span>
+          <div style="flex:1"></div>
+          <span>API v2 · /editor/api</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="dv-opt" id="1b" data-screen-label="1b Объекты — каталог и постановка">
+    <div class="dv-olabel"><a class="dv-oid" href="#1b">1b</a>Инструмент «Объекты» — каталог T_OBJECTS, постановка, выбор, удаление <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px">GET /catalog/objects · POST·DELETE /maps/23/objects</span></div>
+    <div class="dv-card" style="width:1600px">
+      <div style="width:1600px;height:940px;display:flex;flex-direction:column;background:#f8fafc;color:#0f172a">
+        <div style="display:flex;align-items:center;gap:12px;height:52px;padding:0 16px;background:#0f172a;border-bottom:1px solid rgba(255,255,255,.08);flex:none">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:28px;height:28px;border-radius:6px;background:#2563eb;display:flex;align-items:center;justify-content:center"><i data-lucide="map" style="width:16px;height:16px;color:#fff"></i></div>
+            <div style="display:flex;flex-direction:column;line-height:1.1"><span style="font:700 11px 'IBM Plex Sans';color:#fff;letter-spacing:.14em">КНЯЗЬ 2</span><span style="font:500 9px 'IBM Plex Sans';color:#94a3b8;letter-spacing:.22em">РЕДАКТОР КАРТ</span></div>
+          </div>
+          <div style="width:1px;height:24px;background:rgba(255,255,255,.1)"></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:5px 10px;border:1px solid rgba(255,255,255,.14);border-radius:4px;cursor:pointer">
+            <span style="font:600 12px 'IBM Plex Mono';color:#fff">23</span><span style="font:500 12px 'IBM Plex Sans';color:#e2e8f0">Морской лагерь</span><i data-lucide="chevrons-up-down" style="width:13px;height:13px;color:#64748b"></i>
+          </div>
+          <div style="display:flex;gap:4px">
+            <span title="Ctrl+Z · POST /undo" style="width:28px;height:28px;border:1px solid rgba(255,255,255,.16);border-radius:4px;display:flex;align-items:center;justify-content:center;color:#e2e8f0;cursor:pointer"><i data-lucide="undo-2" style="width:14px;height:14px"></i></span>
+            <span title="Ctrl+Y · POST /redo" style="width:28px;height:28px;border:1px solid rgba(255,255,255,.07);border-radius:4px;display:flex;align-items:center;justify-content:center;color:#475569"><i data-lucide="redo-2" style="width:14px;height:14px"></i></span>
+          </div>
+          <span style="font:10.5px 'IBM Plex Mono';color:#64748b">maps/23 · сохранено 16:02</span>
+          <div style="flex:1"></div>
+          <div style="display:flex;align-items:center;gap:6px;padding:4px 9px;border-radius:999px;background:rgba(245,158,11,.14);border:1px solid rgba(245,158,11,.35);cursor:pointer"><i data-lucide="triangle-alert" style="width:12px;height:12px;color:#f59e0b"></i><span style="font:500 11px 'IBM Plex Sans';color:#fcd34d">валидатор: 2 · 3</span></div>
+          <span style="font:10.5px 'IBM Plex Mono';color:#f59e0b">3 правки вне пака</span>
+          <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="primary" size="sm" icon="hammer" hint-size="90px,28px">Build</x-import>
+          <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="default" size="sm" icon="play" hint-size="80px,28px">Play</x-import>
+        </div>
+        <div style="flex:1;display:flex;min-height:0">
+          <div style="width:56px;background:#0f172a;border-right:1px solid rgba(255,255,255,.08);display:flex;flex-direction:column;flex:none">
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="mountain" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Ландш</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="waves" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Вода</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="footprints" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Проход</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#fff;background:#1e293b;box-shadow:inset 3px 0 0 #2563eb"><i data-lucide="warehouse" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Объект</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="shrub" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Декор</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="users" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Сущ-ва</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="flag" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Отряды</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="gem" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Клады</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#64748b"><i data-lucide="git-branch" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">События</span></div>
+            <div style="flex:1"></div>
+            <div style="height:44px;display:flex;align-items:center;justify-content:center;color:#64748b;border-top:1px solid rgba(255,255,255,.08)"><span style="font:9.5px 'IBM Plex Mono'">TAB ⟳</span></div>
+          </div>
+          <div style="width:250px;background:#fff;border-right:1px solid #e2e8f0;display:flex;flex-direction:column;flex:none">
+            <div style="padding:10px 12px 8px;border-bottom:1px solid #e2e8f0">
+              <div style="display:flex;align-items:baseline;gap:6px"><span style="font:600 12.5px 'IBM Plex Sans'">Объекты</span><span style="font:10px 'IBM Plex Mono';color:#94a3b8">T_OBJECTS · 882</span></div>
+              <div style="margin-top:8px;height:28px;border:1px solid #cbd5e1;border-radius:4px;display:flex;align-items:center;gap:6px;padding:0 8px;color:#94a3b8"><i data-lucide="search" style="width:13px;height:13px"></i><span style="font:11.5px 'IBM Plex Sans'">спрайт или слот…</span></div>
+              <div style="margin-top:8px;display:flex;gap:4px;font:500 10.5px 'IBM Plex Sans'">
+                <span style="padding:3px 8px;border-radius:999px;background:#0f172a;color:#fff">здания</span>
+                <span style="padding:3px 8px;border-radius:999px;background:#f1f5f9;color:#475569">реквизит</span>
+                <span style="padding:3px 8px;border-radius:999px;background:#f1f5f9;color:#475569">руины</span>
+              </div>
+            </div>
+            <div style="flex:1;overflow:hidden;padding:10px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px;align-content:start">
+              <div style="display:flex;flex-direction:column;gap:3px"><div style="height:64px;background:#0f172a;border-radius:4px;display:flex;align-items:center;justify-content:center;overflow:hidden"><img src="assets/obj/055.png" style="max-width:90%;max-height:90%;image-rendering:pixelated" alt=""></div><span style="font:9.5px 'IBM Plex Mono';color:#64748b;text-align:center">55 · изба</span></div>
+              <div style="display:flex;flex-direction:column;gap:3px"><div style="height:64px;background:#0f172a;border-radius:4px;display:flex;align-items:center;justify-content:center;overflow:hidden"><img src="assets/obj/070.png" style="max-width:90%;max-height:90%;image-rendering:pixelated" alt=""></div><span style="font:9.5px 'IBM Plex Mono';color:#64748b;text-align:center">70 · сруб</span></div>
+              <div style="display:flex;flex-direction:column;gap:3px"><div style="height:64px;background:#0f172a;border-radius:4px;display:flex;align-items:center;justify-content:center;overflow:hidden;box-shadow:0 0 0 2px #2563eb"><img src="assets/obj/085.png" style="max-width:90%;max-height:90%;image-rendering:pixelated" alt=""></div><span style="font:9.5px 'IBM Plex Mono';color:#2563eb;text-align:center;font-weight:600">85 · дом с сеном</span></div>
+              <div style="display:flex;flex-direction:column;gap:3px"><div style="height:64px;background:#0f172a;border-radius:4px;display:flex;align-items:center;justify-content:center;overflow:hidden"><img src="assets/obj/100.png" style="max-width:90%;max-height:90%;image-rendering:pixelated" alt=""></div><span style="font:9.5px 'IBM Plex Mono';color:#64748b;text-align:center">100 · длинный дом</span></div>
+              <div style="display:flex;flex-direction:column;gap:3px"><div style="height:64px;background:#0f172a;border-radius:4px;display:flex;align-items:center;justify-content:center;overflow:hidden"><img src="assets/obj/115.png" style="max-width:90%;max-height:90%;image-rendering:pixelated" alt=""></div><span style="font:9.5px 'IBM Plex Mono';color:#64748b;text-align:center">115 · хата</span></div>
+              <div style="display:flex;flex-direction:column;gap:3px"><div style="height:64px;background:#0f172a;border-radius:4px;display:flex;align-items:center;justify-content:center;overflow:hidden"><img src="assets/obj/040.png" style="max-width:90%;max-height:90%;image-rendering:pixelated" alt=""></div><span style="font:9.5px 'IBM Plex Mono';color:#64748b;text-align:center">40 · сруб большой</span></div>
+              <div style="display:flex;flex-direction:column;gap:3px"><div style="height:64px;background:#0f172a;border-radius:4px;display:flex;align-items:center;justify-content:center;overflow:hidden"><img src="assets/obj/080.png" style="max-width:90%;max-height:90%;image-rendering:pixelated" alt=""></div><span style="font:9.5px 'IBM Plex Mono';color:#64748b;text-align:center">80 · изба малая</span></div>
+              <div style="display:flex;flex-direction:column;gap:3px"><div style="height:64px;background:#0f172a;border-radius:4px;display:flex;align-items:center;justify-content:center;overflow:hidden"><img src="assets/obj/120.png" style="max-width:90%;max-height:90%;image-rendering:pixelated" alt=""></div><span style="font:9.5px 'IBM Plex Mono';color:#64748b;text-align:center">120 · сарай</span></div>
+              <div style="display:flex;flex-direction:column;gap:3px"><div style="height:64px;background:#0f172a;border-radius:4px;display:flex;align-items:center;justify-content:center;overflow:hidden"><img src="assets/obj/130.png" style="max-width:90%;max-height:90%;image-rendering:pixelated" alt=""></div><span style="font:9.5px 'IBM Plex Mono';color:#64748b;text-align:center">130 · колодец</span></div>
+              <div style="display:flex;flex-direction:column;gap:3px"><div style="height:64px;background:#0f172a;border-radius:4px;display:flex;align-items:center;justify-content:center;overflow:hidden"><img src="assets/obj/030.png" style="max-width:90%;max-height:90%;image-rendering:pixelated" alt=""></div><span style="font:9.5px 'IBM Plex Mono';color:#64748b;text-align:center">30 · загон</span></div>
+              <div style="display:flex;flex-direction:column;gap:3px"><div style="height:64px;background:#0f172a;border-radius:4px;display:flex;align-items:center;justify-content:center;overflow:hidden"><img src="assets/obj/065.png" style="max-width:90%;max-height:90%;image-rendering:pixelated" alt=""></div><span style="font:9.5px 'IBM Plex Mono';color:#64748b;text-align:center">65 · мостки</span></div>
+              <div style="display:flex;flex-direction:column;gap:3px"><div style="height:64px;background:#0f172a;border-radius:4px;display:flex;align-items:center;justify-content:center;overflow:hidden"><img src="assets/obj/090.png" style="max-width:90%;max-height:90%;image-rendering:pixelated" alt=""></div><span style="font:9.5px 'IBM Plex Mono';color:#64748b;text-align:center">90 · леса</span></div>
+            </div>
+            <div style="padding:8px 12px;border-top:1px solid #e2e8f0;display:flex;align-items:center;gap:8px;font:10.5px 'IBM Plex Mono';color:#94a3b8"><i data-lucide="chevron-left" style="width:13px;height:13px"></i><span style="color:#0f172a">стр 3/37</span><i data-lucide="chevron-right" style="width:13px;height:13px"></i><div style="flex:1"></div><span>PgUp/PgDn</span></div>
+          </div>
+          <div style="flex:1;position:relative;background:#020617;overflow:hidden;min-width:0">
+            <div style="position:absolute;inset:0;background:url('assets/ground.png') -30px -30px no-repeat"></div>
+            <div style="position:absolute;inset:0;background-image:repeating-linear-gradient(26.57deg,rgba(148,163,184,.13) 0 1px,transparent 1px 26.8px),repeating-linear-gradient(-26.57deg,rgba(148,163,184,.13) 0 1px,transparent 1px 26.8px);display: {{ gridDisplay }}"></div>
+            <img src="assets/obj/100.png" style="position:absolute;left:40px;top:130px;width:330px;image-rendering:pixelated" alt="">
+            <img src="assets/obj/055.png" style="position:absolute;left:470px;top:60px;width:250px;image-rendering:pixelated" alt="">
+            <img src="assets/obj/130.png" style="position:absolute;left:420px;top:330px;width:120px;image-rendering:pixelated" alt="">
+            <img src="assets/obj/030.png" style="position:absolute;left:130px;top:430px;width:240px;image-rendering:pixelated" alt="">
+            <img src="assets/obj/140.png" style="position:absolute;left:420px;top:560px;width:130px;image-rendering:pixelated" alt="">
+            <img src="assets/obj/065.png" style="position:absolute;left:880px;top:540px;width:250px;image-rendering:pixelated" alt="">
+            <div style="position:absolute;left:560px;top:335px">
+              <img src="assets/obj/085.png" style="width:300px;image-rendering:pixelated;outline:1.5px solid #3b82f6;outline-offset:2px" alt="">
+              <div style="position:absolute;left:-5px;top:-5px;width:7px;height:7px;background:#fff;border:1.5px solid #3b82f6"></div>
+              <div style="position:absolute;right:-5px;top:-5px;width:7px;height:7px;background:#fff;border:1.5px solid #3b82f6"></div>
+              <div style="position:absolute;left:-5px;bottom:-5px;width:7px;height:7px;background:#fff;border:1.5px solid #3b82f6"></div>
+              <div style="position:absolute;right:-5px;bottom:-5px;width:7px;height:7px;background:#fff;border:1.5px solid #3b82f6"></div>
+              <div style="position:absolute;left:0;top:-28px;display:flex;gap:4px;white-space:nowrap">
+                <span style="padding:3px 8px;border-radius:4px;background:#2563eb;color:#fff;font:600 10.5px 'IBM Plex Mono'">slot 214 · sprite 85</span>
+                <span style="padding:3px 8px;border-radius:4px;background:rgba(2,6,23,.8);color:#e2e8f0;font:10.5px 'IBM Plex Mono'">x 4224 · y 2816</span>
+              </div>
+              <div style="position:absolute;left:50%;bottom:-8px;width:9px;height:9px;background:#3b82f6;border:2px solid #fff;border-radius:999px"></div>
+            </div>
+            <div style="position:absolute;left:695px;top:120px;opacity:.62">
+              <img src="assets/obj/115.png" style="width:240px;image-rendering:pixelated;filter:drop-shadow(0 0 6px rgba(59,130,246,.9))" alt="">
+            </div>
+            <div style="position:absolute;left:740px;top:262px;width:150px;height:75px;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);background:rgba(34,197,94,.25);box-shadow:inset 0 0 0 2px #22c55e"></div>
+            <div style="position:absolute;left:640px;top:88px;padding:3px 8px;border-radius:4px;background:rgba(2,6,23,.85);border:1px solid rgba(34,197,94,.5);color:#4ade80;font:10.5px 'IBM Plex Mono';white-space:nowrap">Enter — поставить в слот 215 · Esc — отмена</div>
+            <div style="position:absolute;left:12px;top:10px;display:flex;gap:6px">
+              <span style="padding:4px 9px;border-radius:4px;background:rgba(2,6,23,.8);border:1px solid rgba(148,163,184,.25);color:#e2e8f0;font:11px 'IBM Plex Mono'">клетка 132:88</span>
+              <span style="padding:4px 9px;border-radius:4px;background:rgba(2,6,23,.8);border:1px solid rgba(148,163,184,.25);color:#94a3b8;font:11px 'IBM Plex Mono'">тайл 66:44</span>
+            </div>
+            <div style="position:absolute;right:12px;top:10px;display:flex;gap:4px;font:11px 'IBM Plex Mono'">
+              <span style="padding:4px 8px;border-radius:4px;background:rgba(2,6,23,.8);color:#94a3b8;border:1px solid rgba(148,163,184,.25)">50</span>
+              <span style="padding:4px 8px;border-radius:4px;background:#2563eb;color:#fff">100</span>
+              <span style="padding:4px 8px;border-radius:4px;background:rgba(2,6,23,.8);color:#94a3b8;border:1px solid rgba(148,163,184,.25)">200</span>
+            </div>
+            <div style="position:absolute;left:12px;bottom:12px;width:180px;background:rgba(2,6,23,.88);border:1px solid rgba(148,163,184,.3);border-radius:6px;overflow:hidden;flex-direction:column;display: {{ miniDisplay }}">
+              <div style="height:104px;position:relative;background:url('assets/ground.png') center/cover">
+                <div style="position:absolute;left:24%;top:18%;width:52%;height:58%;border:1.5px solid #fff;box-shadow:0 0 0 999px rgba(2,6,23,.45)"></div>
+              </div>
+              <div style="padding:4px 8px;font:9.5px 'IBM Plex Mono';color:#94a3b8">160×80 тайлов · 256×160 клеток</div>
+            </div>
+          </div>
+          <div style="width:320px;background:#f8fafc;border-left:1px solid #e2e8f0;padding:12px;display:flex;flex-direction:column;gap:10px;overflow:hidden;flex:none">
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px">
+              <div style="display:flex;align-items:center;gap:6px;padding:8px 12px;border-bottom:1px solid #e2e8f0"><span style="font:600 11.5px 'IBM Plex Sans'">Слои</span><div style="flex:1"></div><span style="font:9.5px 'IBM Plex Mono';color:#94a3b8">рендер из проекта</span></div>
+              <div style="padding:6px 8px;display:flex;flex-wrap:wrap;gap:4px;font:500 10.5px 'IBM Plex Sans'">
+                <span style="display:flex;align-items:center;gap:4px;padding:3px 7px;border-radius:5px;background:#f1f5f9;color:#334155"><i data-lucide="eye" style="width:11px;height:11px"></i>тайлы</span>
+                <span style="display:flex;align-items:center;gap:4px;padding:3px 7px;border-radius:5px;background:#f1f5f9;color:#334155"><i data-lucide="eye" style="width:11px;height:11px"></i>декор</span>
+                <span style="display:flex;align-items:center;gap:4px;padding:3px 7px;border-radius:5px;background:#f1f5f9;color:#334155"><i data-lucide="eye" style="width:11px;height:11px"></i>вода</span>
+                <span style="display:flex;align-items:center;gap:4px;padding:3px 7px;border-radius:5px;background:#dbeafe;color:#1d4ed8;font-weight:600"><i data-lucide="eye" style="width:11px;height:11px"></i>объекты</span>
+                <span style="display:flex;align-items:center;gap:4px;padding:3px 7px;border-radius:5px;background:#f1f5f9;color:#334155"><i data-lucide="eye" style="width:11px;height:11px"></i>юниты</span>
+                <span style="display:flex;align-items:center;gap:4px;padding:3px 7px;border-radius:5px;background:#f8fafc;color:#94a3b8"><i data-lucide="eye-off" style="width:11px;height:11px"></i>проходимость</span>
+              </div>
+            </div>
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:inset 3px 0 0 #2563eb">
+              <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #e2e8f0">
+                <span style="font:600 12px 'IBM Plex Sans'">Объект · слот 214</span>
+                <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.StatusBadge" family="warn" label="draft" size="sm" hint-size="50px,18px"></x-import>
+                <div style="flex:1"></div>
+                <span style="font:10px 'IBM Plex Mono';color:#94a3b8">T_OBJECTS</span>
+              </div>
+              <div style="padding:4px 0 8px">
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 12px"><span style="font:11px 'IBM Plex Sans';color:#64748b">Спрайт</span><span style="font:11.5px 'IBM Plex Mono'">85 · дом с сеном</span></div>
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 12px"><span style="font:11px 'IBM Plex Sans';color:#64748b">Ресурсный слот</span><span style="font:11.5px 'IBM Plex Mono'">12</span></div>
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 12px"><span style="font:11px 'IBM Plex Sans';color:#64748b">Палитра</span><div style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;border-radius:3px;background:#8a6d3b;border:1px solid #cbd5e1"></span><span style="font:11.5px 'IBM Plex Mono'">0 · дерево</span></div></div>
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 12px"><span style="font:11px 'IBM Plex Sans';color:#64748b">Состояние</span><div style="display:flex;align-items:center;gap:6px"><i data-lucide="minus" style="width:13px;height:13px;color:#94a3b8"></i><span style="font:11.5px 'IBM Plex Mono'">3/8 · целое</span><i data-lucide="plus" style="width:13px;height:13px;color:#94a3b8"></i></div></div>
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 12px"><span style="font:11px 'IBM Plex Sans';color:#64748b">Позиция</span><span style="font:11.5px 'IBM Plex Mono'">x 4224 · y 2816</span></div>
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 12px"><span style="font:11px 'IBM Plex Sans';color:#64748b">Порядок отрисовки</span><span style="font:11.5px 'IBM Plex Mono'">sort_y 2934</span></div>
+                <div style="margin:6px 12px 2px;padding:7px 9px;border-radius:5px;background:#f1f5f9;font:10.5px/1.5 'IBM Plex Mono';color:#475569">стрелки — сдвиг на 1px · Shift+стрелки — на клетку<br>форма — из GET /schema/object<br>Del компактит слоты — state перечитывается</div>
+              </div>
+              <div style="display:flex;gap:8px;padding:10px 12px;border-top:1px solid #e2e8f0">
+                <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="default" size="sm" icon="copy" hint-size="130px,28px">Дублировать · Ins</x-import>
+                <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="danger" size="sm" icon="trash-2" hint-size="110px,28px">Убрать · Del</x-import>
+              </div>
+            </div>
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:inset 3px 0 0 #f59e0b">
+              <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #e2e8f0"><span style="font:600 12px 'IBM Plex Sans'">Вне пака</span><span style="font:10.5px 'IBM Plex Mono';color:#d97706">3 правки</span><div style="flex:1"></div><span style="font:10px 'IBM Plex Mono';color:#94a3b8">scenario.json</span></div>
+              <div style="padding:4px 0">
+                <div style="display:flex;justify-content:space-between;padding:4px 12px;font:10.5px 'IBM Plex Mono'"><span style="color:#475569">editor_props_add</span><span style="color:#0f172a">+1 · slot 214</span></div>
+                <div style="display:flex;justify-content:space-between;padding:4px 12px;font:10.5px 'IBM Plex Mono'"><span style="color:#475569">editor_units_add</span><span style="color:#0f172a">+2 · unit_new_*</span></div>
+                <div style="padding:6px 12px 10px;font:10.5px/1.5 'IBM Plex Sans';color:#64748b">На холсте — уже видно. В игре — после Build.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div style="height:30px;background:#0f172a;display:flex;align-items:center;gap:14px;padding:0 14px;font:10.5px 'IBM Plex Mono';color:#94a3b8;flex:none">
+          <span style="color:#e2e8f0">Space — взять под курсором</span><span>Enter — поставить</span><span>Ins — дубль</span><span>Del — убрать</span><span>стрелки — сдвиг</span>
+          <div style="flex:1"></div>
+          <span>журнал: 12 операций · Ctrl+Z</span><span>объекты 214/1000</span><span>декор 87/1000</span><span>след. слот 215</span><span style="color:#4ade80">60 fps</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="dv-opt" id="1c" data-screen-label="1c Ландшафт — кисть тайлов">
+    <div class="dv-olabel"><a class="dv-oid" href="#1c">1c</a>Инструмент «Ландшафт» — кисть тайлов, слои низ/верх/свет <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px">GET /catalog/tiles · GET/POST /maps/23/terrain</span></div>
+    <div class="dv-card" style="width:1600px">
+      <div style="width:1600px;height:940px;display:flex;flex-direction:column;background:#f8fafc;color:#0f172a">
+        <div style="display:flex;align-items:center;gap:12px;height:52px;padding:0 16px;background:#0f172a;border-bottom:1px solid rgba(255,255,255,.08);flex:none">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:28px;height:28px;border-radius:6px;background:#2563eb;display:flex;align-items:center;justify-content:center"><i data-lucide="map" style="width:16px;height:16px;color:#fff"></i></div>
+            <div style="display:flex;flex-direction:column;line-height:1.1"><span style="font:700 11px 'IBM Plex Sans';color:#fff;letter-spacing:.14em">КНЯЗЬ 2</span><span style="font:500 9px 'IBM Plex Sans';color:#94a3b8;letter-spacing:.22em">РЕДАКТОР КАРТ</span></div>
+          </div>
+          <div style="width:1px;height:24px;background:rgba(255,255,255,.1)"></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:5px 10px;border:1px solid rgba(255,255,255,.14);border-radius:4px;cursor:pointer">
+            <span style="font:600 12px 'IBM Plex Mono';color:#fff">23</span><span style="font:500 12px 'IBM Plex Sans';color:#e2e8f0">Морской лагерь</span><i data-lucide="chevrons-up-down" style="width:13px;height:13px;color:#64748b"></i>
+          </div>
+          <div style="display:flex;gap:4px">
+            <span title="Ctrl+Z · POST /undo" style="width:28px;height:28px;border:1px solid rgba(255,255,255,.16);border-radius:4px;display:flex;align-items:center;justify-content:center;color:#e2e8f0;cursor:pointer"><i data-lucide="undo-2" style="width:14px;height:14px"></i></span>
+            <span title="Ctrl+Y · POST /redo" style="width:28px;height:28px;border:1px solid rgba(255,255,255,.07);border-radius:4px;display:flex;align-items:center;justify-content:center;color:#475569"><i data-lucide="redo-2" style="width:14px;height:14px"></i></span>
+          </div>
+          <span style="font:10.5px 'IBM Plex Mono';color:#64748b">maps/23 · layer1.png изменён</span>
+          <div style="flex:1"></div>
+          <div style="display:flex;align-items:center;gap:6px;padding:4px 9px;border-radius:999px;background:rgba(245,158,11,.14);border:1px solid rgba(245,158,11,.35)"><i data-lucide="triangle-alert" style="width:12px;height:12px;color:#f59e0b"></i><span style="font:500 11px 'IBM Plex Sans';color:#fcd34d">валидатор: 2 · 3</span></div>
+          <span style="font:10.5px 'IBM Plex Mono';color:#f59e0b">3 правки вне пака</span>
+          <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="primary" size="sm" icon="hammer" hint-size="90px,28px">Build</x-import>
+          <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="default" size="sm" icon="play" hint-size="80px,28px">Play</x-import>
+        </div>
+        <div style="flex:1;display:flex;min-height:0">
+          <div style="width:56px;background:#0f172a;border-right:1px solid rgba(255,255,255,.08);display:flex;flex-direction:column;flex:none">
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#fff;background:#1e293b;box-shadow:inset 3px 0 0 #2563eb"><i data-lucide="mountain" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Ландш</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="waves" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Вода</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="footprints" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Проход</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="warehouse" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Объект</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="shrub" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Декор</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="users" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Сущ-ва</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="flag" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Отряды</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="gem" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Клады</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#64748b"><i data-lucide="git-branch" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">События</span></div>
+            <div style="flex:1"></div>
+            <div style="height:44px;display:flex;align-items:center;justify-content:center;color:#64748b;border-top:1px solid rgba(255,255,255,.08)"><span style="font:9.5px 'IBM Plex Mono'">TAB ⟳</span></div>
+          </div>
+          <div style="width:250px;background:#fff;border-right:1px solid #e2e8f0;display:flex;flex-direction:column;flex:none">
+            <div style="padding:10px 12px 8px;border-bottom:1px solid #e2e8f0">
+              <div style="display:flex;align-items:baseline;gap:6px"><span style="font:600 12.5px 'IBM Plex Sans'">Ландшафт</span><span style="font:10px 'IBM Plex Mono';color:#94a3b8">GRAPH · 96 тайлов</span></div>
+              <div style="margin-top:8px;display:flex;border:1px solid #cbd5e1;border-radius:4px;overflow:hidden;font:500 11px 'IBM Plex Sans'">
+                <div style="flex:1;padding:5px 0;text-align:center;background:#0f172a;color:#fff">Нижний</div>
+                <div style="flex:1;padding:5px 0;text-align:center;background:#fff;color:#475569;border-left:1px solid #cbd5e1">Верхний</div>
+                <div style="flex:1;padding:5px 0;text-align:center;background:#fff;color:#475569;border-left:1px solid #cbd5e1">Свет</div>
+              </div>
+              <div style="margin-top:8px;display:flex;align-items:center;gap:8px">
+                <span style="font:11px 'IBM Plex Sans';color:#64748b">Кисть</span>
+                <div style="display:flex;gap:3px">
+                  <span style="width:22px;height:22px;border:1px solid #cbd5e1;border-radius:4px;display:flex;align-items:center;justify-content:center;font:10px 'IBM Plex Mono';color:#475569">1</span>
+                  <span style="width:22px;height:22px;border-radius:4px;display:flex;align-items:center;justify-content:center;font:10px 'IBM Plex Mono';background:#2563eb;color:#fff">2</span>
+                  <span style="width:22px;height:22px;border:1px solid #cbd5e1;border-radius:4px;display:flex;align-items:center;justify-content:center;font:10px 'IBM Plex Mono';color:#475569">3</span>
+                </div>
+                <div style="flex:1"></div>
+                <span style="display:flex;align-items:center;gap:4px;padding:3px 8px;border:1px solid #cbd5e1;border-radius:4px;font:500 10.5px 'IBM Plex Sans';color:#475569"><i data-lucide="eraser" style="width:12px;height:12px"></i>ластик</span>
+              </div>
+            </div>
+            <div style="flex:1;overflow:hidden;padding:10px;display:grid;grid-template-columns:repeat(3,1fr);gap:6px;align-content:start">
+              <div style="display:flex;flex-direction:column;gap:2px"><div style="height:44px;background:#020617;border-radius:4px;overflow:hidden;display:flex;align-items:center;justify-content:center"><img src="assets/tiles/t0_0.png" style="width:100%;object-fit:cover" alt=""></div><span style="font:9px 'IBM Plex Mono';color:#64748b;text-align:center">0 трава</span></div>
+              <div style="display:flex;flex-direction:column;gap:2px"><div style="height:44px;background:#020617;border-radius:4px;overflow:hidden;display:flex;align-items:center;justify-content:center"><img src="assets/tiles/t0_1.png" style="width:100%;object-fit:cover" alt=""></div><span style="font:9px 'IBM Plex Mono';color:#64748b;text-align:center">1 трава</span></div>
+              <div style="display:flex;flex-direction:column;gap:2px"><div style="height:44px;background:#020617;border-radius:4px;overflow:hidden;display:flex;align-items:center;justify-content:center"><img src="assets/tiles/t0_4.png" style="width:100%;object-fit:cover" alt=""></div><span style="font:9px 'IBM Plex Mono';color:#64748b;text-align:center">4 цветы</span></div>
+              <div style="display:flex;flex-direction:column;gap:2px"><div style="height:44px;background:#020617;border-radius:4px;overflow:hidden;display:flex;align-items:center;justify-content:center"><img src="assets/tiles/t0_5.png" style="width:100%;object-fit:cover" alt=""></div><span style="font:9px 'IBM Plex Mono';color:#64748b;text-align:center">5 трава</span></div>
+              <div style="display:flex;flex-direction:column;gap:2px"><div style="height:44px;background:#020617;border-radius:4px;overflow:hidden;display:flex;align-items:center;justify-content:center"><img src="assets/tiles/t0_6.png" style="width:100%;object-fit:cover" alt=""></div><span style="font:9px 'IBM Plex Mono';color:#64748b;text-align:center">6 сухая</span></div>
+              <div style="display:flex;flex-direction:column;gap:2px"><div style="height:44px;background:#020617;border-radius:4px;overflow:hidden;display:flex;align-items:center;justify-content:center"><img src="assets/tiles/t4_3.png" style="width:100%;object-fit:cover" alt=""></div><span style="font:9px 'IBM Plex Mono';color:#64748b;text-align:center">35 камень</span></div>
+              <div style="display:flex;flex-direction:column;gap:2px"><div style="height:44px;background:#020617;border-radius:4px;overflow:hidden;display:flex;align-items:center;justify-content:center"><img src="assets/tiles/t4_4.png" style="width:100%;object-fit:cover" alt=""></div><span style="font:9px 'IBM Plex Mono';color:#64748b;text-align:center">36 камень</span></div>
+              <div style="display:flex;flex-direction:column;gap:2px"><div style="height:44px;background:#020617;border-radius:4px;overflow:hidden;display:flex;align-items:center;justify-content:center"><img src="assets/tiles/t4_5.png" style="width:100%;object-fit:cover" alt=""></div><span style="font:9px 'IBM Plex Mono';color:#64748b;text-align:center">37 камень</span></div>
+              <div style="display:flex;flex-direction:column;gap:2px"><div style="height:44px;background:#020617;border-radius:4px;overflow:hidden;display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 2px #2563eb"><img src="assets/tiles/t5_0.png" style="width:100%;object-fit:cover" alt=""></div><span style="font:9px 'IBM Plex Mono';color:#2563eb;text-align:center;font-weight:700">44 мостовая</span></div>
+              <div style="display:flex;flex-direction:column;gap:2px"><div style="height:44px;background:#020617;border-radius:4px;overflow:hidden;display:flex;align-items:center;justify-content:center"><img src="assets/tiles/t5_1.png" style="width:100%;object-fit:cover" alt=""></div><span style="font:9px 'IBM Plex Mono';color:#64748b;text-align:center">45 мостовая</span></div>
+              <div style="display:flex;flex-direction:column;gap:2px"><div style="height:44px;background:#020617;border-radius:4px;overflow:hidden;display:flex;align-items:center;justify-content:center"><img src="assets/tiles/t5_2.png" style="width:100%;object-fit:cover" alt=""></div><span style="font:9px 'IBM Plex Mono';color:#64748b;text-align:center">46 скала</span></div>
+              <div style="display:flex;flex-direction:column;gap:2px"><div style="height:44px;background:#020617;border-radius:4px;overflow:hidden;display:flex;align-items:center;justify-content:center"><img src="assets/tiles/t5_4.png" style="width:100%;object-fit:cover" alt=""></div><span style="font:9px 'IBM Plex Mono';color:#64748b;text-align:center">48 песок</span></div>
+              <div style="display:flex;flex-direction:column;gap:2px"><div style="height:44px;background:#020617;border-radius:4px;overflow:hidden;display:flex;align-items:center;justify-content:center"><img src="assets/tiles/t5_5.png" style="width:100%;object-fit:cover" alt=""></div><span style="font:9px 'IBM Plex Mono';color:#64748b;text-align:center">49 песок</span></div>
+              <div style="display:flex;flex-direction:column;gap:2px"><div style="height:44px;background:#020617;border-radius:4px;overflow:hidden;display:flex;align-items:center;justify-content:center"><img src="assets/tiles/t8_7.png" style="width:100%;object-fit:cover" alt=""></div><span style="font:9px 'IBM Plex Mono';color:#64748b;text-align:center">71 вода</span></div>
+              <div style="display:flex;flex-direction:column;gap:2px"><div style="height:44px;background:#020617;border-radius:4px;overflow:hidden;display:flex;align-items:center;justify-content:center"><img src="assets/tiles/t9_0.png" style="width:100%;object-fit:cover" alt=""></div><span style="font:9px 'IBM Plex Mono';color:#64748b;text-align:center">72 вода</span></div>
+            </div>
+            <div style="padding:8px 12px;border-top:1px solid #e2e8f0;display:flex;align-items:center;gap:8px;font:10.5px 'IBM Plex Mono';color:#94a3b8"><i data-lucide="chevron-left" style="width:13px;height:13px"></i><span style="color:#0f172a">стр 1/7</span><i data-lucide="chevron-right" style="width:13px;height:13px"></i><div style="flex:1"></div><span>PgUp/PgDn</span></div>
+          </div>
+          <div style="flex:1;position:relative;background:#020617;overflow:hidden;min-width:0">
+            <div style="position:absolute;inset:0;background:url('assets/ground.png') -30px -30px no-repeat"></div>
+            <div style="position:absolute;inset:0;background-image:repeating-linear-gradient(26.57deg,rgba(148,163,184,.13) 0 1px,transparent 1px 26.8px),repeating-linear-gradient(-26.57deg,rgba(148,163,184,.13) 0 1px,transparent 1px 26.8px);display: {{ gridDisplay }}"></div>
+            <img src="assets/obj/100.png" style="position:absolute;left:40px;top:130px;width:330px;image-rendering:pixelated" alt="">
+            <img src="assets/obj/055.png" style="position:absolute;left:470px;top:60px;width:250px;image-rendering:pixelated" alt="">
+            <img src="assets/obj/130.png" style="position:absolute;left:420px;top:330px;width:120px;image-rendering:pixelated" alt="">
+            <img src="assets/obj/065.png" style="position:absolute;left:880px;top:540px;width:250px;image-rendering:pixelated" alt="">
+            <img src="assets/tiles/t5_0.png" style="position:absolute;left:560px;top:414px;width:126px;image-rendering:pixelated" alt="">
+            <img src="assets/tiles/t5_1.png" style="position:absolute;left:623px;top:445px;width:126px;image-rendering:pixelated" alt="">
+            <img src="assets/tiles/t5_0.png" style="position:absolute;left:686px;top:476px;width:126px;image-rendering:pixelated" alt="">
+            <img src="assets/tiles/t5_1.png" style="position:absolute;left:497px;top:445px;width:126px;image-rendering:pixelated" alt="">
+            <img src="assets/tiles/t5_0.png" style="position:absolute;left:560px;top:476px;width:126px;image-rendering:pixelated" alt="">
+            <div style="position:absolute;left:560px;top:414px;width:126px;height:63px;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);background:rgba(59,130,246,.14)"></div>
+            <div style="position:absolute;left:497px;top:445px;width:126px;height:63px;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);background:rgba(59,130,246,.14)"></div>
+            <div style="position:absolute;left:748px;top:445px;width:128px;height:64px;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);box-shadow:inset 0 0 0 2px #3b82f6;background:rgba(59,130,246,.22)"></div>
+            <div style="position:absolute;left:811px;top:476px;width:128px;height:64px;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);box-shadow:inset 0 0 0 2px #3b82f6;background:rgba(59,130,246,.22)"></div>
+            <div style="position:absolute;left:748px;top:477px;width:128px;height:64px;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);box-shadow:inset 0 0 0 2px #3b82f6;background:rgba(59,130,246,.22)"></div>
+            <div style="position:absolute;left:811px;top:444px;width:128px;height:64px;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);box-shadow:inset 0 0 0 2px #3b82f6;background:rgba(59,130,246,.22)"></div>
+            <div style="position:absolute;left:760px;top:388px;padding:3px 8px;border-radius:4px;background:rgba(2,6,23,.85);border:1px solid rgba(59,130,246,.5);color:#93c5fd;font:10.5px 'IBM Plex Mono';white-space:nowrap">кисть 2×2 · тайл 44</div>
+            <div style="position:absolute;left:497px;top:530px;padding:3px 8px;border-radius:4px;background:rgba(2,6,23,.85);border:1px solid rgba(148,163,184,.3);color:#94a3b8;font:10.5px 'IBM Plex Mono';white-space:nowrap">мазок: 5 тайлов → layer1.png (дифф, не весь слой)</div>
+            <div style="position:absolute;left:12px;top:10px;display:flex;gap:6px">
+              <span style="padding:4px 9px;border-radius:4px;background:rgba(2,6,23,.8);border:1px solid rgba(148,163,184,.25);color:#e2e8f0;font:11px 'IBM Plex Mono'">тайл 66:44</span>
+              <span style="padding:4px 9px;border-radius:4px;background:rgba(2,6,23,.8);border:1px solid rgba(148,163,184,.25);color:#94a3b8;font:11px 'IBM Plex Mono'">низ 44 · верх — · свет 0x00</span>
+            </div>
+            <div style="position:absolute;right:12px;top:10px;display:flex;gap:4px;font:11px 'IBM Plex Mono'">
+              <span style="padding:4px 8px;border-radius:4px;background:rgba(2,6,23,.8);color:#94a3b8;border:1px solid rgba(148,163,184,.25)">50</span>
+              <span style="padding:4px 8px;border-radius:4px;background:#2563eb;color:#fff">100</span>
+              <span style="padding:4px 8px;border-radius:4px;background:rgba(2,6,23,.8);color:#94a3b8;border:1px solid rgba(148,163,184,.25)">200</span>
+            </div>
+            <div style="position:absolute;left:12px;bottom:12px;width:180px;background:rgba(2,6,23,.88);border:1px solid rgba(148,163,184,.3);border-radius:6px;overflow:hidden;flex-direction:column;display: {{ miniDisplay }}">
+              <div style="height:104px;position:relative;background:url('assets/ground.png') center/cover">
+                <div style="position:absolute;left:24%;top:18%;width:52%;height:58%;border:1.5px solid #fff;box-shadow:0 0 0 999px rgba(2,6,23,.45)"></div>
+              </div>
+              <div style="padding:4px 8px;font:9.5px 'IBM Plex Mono';color:#94a3b8">160×80 тайлов · 256×160 клеток</div>
+            </div>
+          </div>
+          <div style="width:320px;background:#f8fafc;border-left:1px solid #e2e8f0;padding:12px;display:flex;flex-direction:column;gap:10px;overflow:hidden;flex:none">
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:inset 3px 0 0 #2563eb">
+              <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #e2e8f0"><span style="font:600 12px 'IBM Plex Sans'">Тайл под курсором</span><div style="flex:1"></div><span style="font:10px 'IBM Plex Mono';color:#94a3b8">layer1/2.png</span></div>
+              <div style="padding:4px 0 8px">
+                <div style="display:flex;justify-content:space-between;padding:5px 12px"><span style="font:11px 'IBM Plex Sans';color:#64748b">Позиция</span><span style="font:11.5px 'IBM Plex Mono'">row 44 · col 66</span></div>
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 12px"><span style="font:11px 'IBM Plex Sans';color:#64748b">Нижний слой</span><div style="display:flex;align-items:center;gap:6px"><img src="assets/tiles/t5_0.png" style="width:34px;height:17px;object-fit:cover;border-radius:2px" alt=""><span style="font:11.5px 'IBM Plex Mono'">44</span></div></div>
+                <div style="display:flex;justify-content:space-between;padding:5px 12px"><span style="font:11px 'IBM Plex Sans';color:#64748b">Верхний слой</span><span style="font:11.5px 'IBM Plex Mono';color:#94a3b8">— пусто</span></div>
+                <div style="display:flex;justify-content:space-between;padding:5px 12px"><span style="font:11px 'IBM Plex Sans';color:#64748b">Свет клетки</span><span style="font:11.5px 'IBM Plex Mono'">0x00 · дневной</span></div>
+              </div>
+            </div>
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px">
+              <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #e2e8f0"><span style="font:600 12px 'IBM Plex Sans'">Статистика слоя</span><div style="flex:1"></div><span style="font:10px 'IBM Plex Mono';color:#94a3b8">160×80</span></div>
+              <div style="padding:4px 0 8px">
+                <div style="display:flex;justify-content:space-between;padding:4px 12px;font:10.5px 'IBM Plex Mono'"><span style="color:#475569">трава 0–6</span><span>9 214 тайлов</span></div>
+                <div style="display:flex;justify-content:space-between;padding:4px 12px;font:10.5px 'IBM Plex Mono'"><span style="color:#475569">мостовая 44–45</span><span>612</span></div>
+                <div style="display:flex;justify-content:space-between;padding:4px 12px;font:10.5px 'IBM Plex Mono'"><span style="color:#475569">вода 71–72</span><span>1 964</span></div>
+                <div style="display:flex;justify-content:space-between;padding:4px 12px;font:10.5px 'IBM Plex Mono'"><span style="color:#475569">верхний слой</span><span>402</span></div>
+              </div>
+            </div>
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px">
+              <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #e2e8f0"><span style="font:600 12px 'IBM Plex Sans'">Как пишется</span></div>
+              <div style="padding:8px 12px;font:10.5px/1.6 'IBM Plex Mono';color:#475569">POST /terrain {row, col, lower}<br>→ project/maps/23/layer1.png<br>перепекается только дифф клеток;<br>холст не трогает живую сессию</div>
+            </div>
+            <div style="margin-top:auto;padding:8px 10px;border-radius:6px;background:#eff6ff;border:1px solid #bfdbfe;font:10.5px/1.5 'IBM Plex Sans';color:#1e40af">Кисть «биом» с автопереходами — этап E4 (автотайлинг по 140 картам).</div>
+          </div>
+        </div>
+        <div style="height:30px;background:#0f172a;display:flex;align-items:center;gap:14px;padding:0 14px;font:10.5px 'IBM Plex Mono';color:#94a3b8;flex:none">
+          <span style="color:#e2e8f0">ЛКМ — красить</span><span>ПКМ — пипетка</span><span>[ ] — размер кисти</span><span>Space — взять тайл под курсором</span>
+          <div style="flex:1"></div>
+          <span>слой: нижний</span><span>мазков за сессию: 38</span><span style="color:#4ade80">60 fps</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="dv-opt" id="1d" data-screen-label="1d Проходимость — биты клетки">
+    <div class="dv-olabel"><a class="dv-oid" href="#1d">1d</a>Инструмент «Проходимость» — биты сетки 256×160, оверлей поверх сцены <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px">GET /maps/23/cells · POST /maps/23/cells</span></div>
+    <div class="dv-card" style="width:1600px">
+      <div style="width:1600px;height:940px;display:flex;flex-direction:column;background:#f8fafc;color:#0f172a">
+        <div style="display:flex;align-items:center;gap:12px;height:52px;padding:0 16px;background:#0f172a;border-bottom:1px solid rgba(255,255,255,.08);flex:none">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:28px;height:28px;border-radius:6px;background:#2563eb;display:flex;align-items:center;justify-content:center"><i data-lucide="map" style="width:16px;height:16px;color:#fff"></i></div>
+            <div style="display:flex;flex-direction:column;line-height:1.1"><span style="font:700 11px 'IBM Plex Sans';color:#fff;letter-spacing:.14em">КНЯЗЬ 2</span><span style="font:500 9px 'IBM Plex Sans';color:#94a3b8;letter-spacing:.22em">РЕДАКТОР КАРТ</span></div>
+          </div>
+          <div style="width:1px;height:24px;background:rgba(255,255,255,.1)"></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:5px 10px;border:1px solid rgba(255,255,255,.14);border-radius:4px;cursor:pointer">
+            <span style="font:600 12px 'IBM Plex Mono';color:#fff">23</span><span style="font:500 12px 'IBM Plex Sans';color:#e2e8f0">Морской лагерь</span><i data-lucide="chevrons-up-down" style="width:13px;height:13px;color:#64748b"></i>
+          </div>
+          <div style="display:flex;gap:4px">
+            <span title="Ctrl+Z · POST /undo" style="width:28px;height:28px;border:1px solid rgba(255,255,255,.16);border-radius:4px;display:flex;align-items:center;justify-content:center;color:#e2e8f0;cursor:pointer"><i data-lucide="undo-2" style="width:14px;height:14px"></i></span>
+            <span title="Ctrl+Y · POST /redo" style="width:28px;height:28px;border:1px solid rgba(255,255,255,.07);border-radius:4px;display:flex;align-items:center;justify-content:center;color:#475569"><i data-lucide="redo-2" style="width:14px;height:14px"></i></span>
+          </div>
+          <span style="font:10.5px 'IBM Plex Mono';color:#64748b">grid.txt · пишется прямо в проект</span>
+          <div style="flex:1"></div>
+          <div style="display:flex;align-items:center;gap:6px;padding:4px 9px;border-radius:999px;background:rgba(245,158,11,.14);border:1px solid rgba(245,158,11,.35)"><i data-lucide="triangle-alert" style="width:12px;height:12px;color:#f59e0b"></i><span style="font:500 11px 'IBM Plex Sans';color:#fcd34d">валидатор: 2 · 3</span></div>
+          <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="primary" size="sm" icon="hammer" hint-size="90px,28px">Build</x-import>
+          <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="default" size="sm" icon="play" hint-size="80px,28px">Play</x-import>
+        </div>
+        <div style="flex:1;display:flex;min-height:0">
+          <div style="width:56px;background:#0f172a;border-right:1px solid rgba(255,255,255,.08);display:flex;flex-direction:column;flex:none">
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="mountain" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Ландш</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="waves" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Вода</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#fff;background:#1e293b;box-shadow:inset 3px 0 0 #2563eb"><i data-lucide="footprints" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Проход</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="warehouse" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Объект</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="shrub" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Декор</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="users" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Сущ-ва</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="flag" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Отряды</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="gem" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Клады</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#64748b"><i data-lucide="git-branch" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">События</span></div>
+            <div style="flex:1"></div>
+            <div style="height:44px;display:flex;align-items:center;justify-content:center;color:#64748b;border-top:1px solid rgba(255,255,255,.08)"><span style="font:9.5px 'IBM Plex Mono'">TAB ⟳</span></div>
+          </div>
+          <div style="width:250px;background:#fff;border-right:1px solid #e2e8f0;display:flex;flex-direction:column;flex:none">
+            <div style="padding:10px 12px 8px;border-bottom:1px solid #e2e8f0">
+              <div style="display:flex;align-items:baseline;gap:6px"><span style="font:600 12.5px 'IBM Plex Sans'">Проходимость</span><span style="font:10px 'IBM Plex Mono';color:#94a3b8">grid.txt · LO:HI</span></div>
+              <div style="margin-top:8px;display:flex;border:1px solid #cbd5e1;border-radius:4px;overflow:hidden;font:500 11px 'IBM Plex Sans'">
+                <div style="flex:1;padding:5px 0;text-align:center;background:#0f172a;color:#fff">Ставить</div>
+                <div style="flex:1;padding:5px 0;text-align:center;background:#fff;color:#475569;border-left:1px solid #cbd5e1">Снимать</div>
+              </div>
+            </div>
+            <div style="flex:1;overflow:hidden;padding:8px;display:flex;flex-direction:column;gap:4px">
+              <div style="display:flex;align-items:center;gap:8px;padding:8px 9px;border-radius:6px;background:#fef2f2;border:1px solid #fecaca">
+                <span style="width:14px;height:14px;border-radius:3px;background:#ef4444"></span>
+                <div style="display:flex;flex-direction:column"><span style="font:600 11.5px 'IBM Plex Sans';color:#991b1b">Глушь</span><span style="font:9.5px 'IBM Plex Mono';color:#b91c1c">LO 0xFFF · стена/вода</span></div>
+                <div style="flex:1"></div><i data-lucide="check" style="width:14px;height:14px;color:#dc2626"></i>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;padding:8px 9px;border-radius:6px;border:1px solid #e2e8f0">
+                <span style="width:14px;height:14px;border-radius:3px;background:#f59e0b"></span>
+                <div style="display:flex;flex-direction:column"><span style="font:600 11.5px 'IBM Plex Sans';color:#334155">Глухая для стрел</span><span style="font:9.5px 'IBM Plex Mono';color:#94a3b8">бит 0x4000</span></div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;padding:8px 9px;border-radius:6px;border:1px solid #e2e8f0">
+                <span style="width:14px;height:14px;border-radius:3px;background:#22c55e"></span>
+                <div style="display:flex;flex-direction:column"><span style="font:600 11.5px 'IBM Plex Sans';color:#334155">Выход с карты</span><span style="font:9.5px 'IBM Plex Mono';color:#94a3b8">переход · exit</span></div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;padding:8px 9px;border-radius:6px;border:1px solid #e2e8f0">
+                <span style="width:14px;height:14px;border-radius:3px;background:#3b82f6"></span>
+                <div style="display:flex;flex-direction:column"><span style="font:600 11.5px 'IBM Plex Sans';color:#334155">Прозрачная</span><span style="font:9.5px 'IBM Plex Mono';color:#94a3b8">transparent</span></div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;padding:8px 9px;border-radius:6px;border:1px solid #e2e8f0">
+                <span style="width:14px;height:14px;border-radius:3px;background:#64748b"></span>
+                <div style="display:flex;flex-direction:column"><span style="font:600 11.5px 'IBM Plex Sans';color:#334155">Внутренняя</span><span style="font:9.5px 'IBM Plex Mono';color:#94a3b8">inner · интерьер</span></div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;padding:8px 9px;border-radius:6px;border:1px solid #e2e8f0">
+                <span style="width:14px;height:14px;border-radius:3px;background:#0ea5e9"></span>
+                <div style="display:flex;flex-direction:column"><span style="font:600 11.5px 'IBM Plex Sans';color:#334155">Свет клетки</span><span style="font:9.5px 'IBM Plex Mono';color:#94a3b8">light</span></div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;padding:8px 9px;border-radius:6px;border:1px solid #e2e8f0">
+                <span style="width:14px;height:14px;border-radius:3px;background:#a3a3a3"></span>
+                <div style="display:flex;flex-direction:column"><span style="font:600 11.5px 'IBM Plex Sans';color:#334155">Смещение верха</span><span style="font:9.5px 'IBM Plex Mono';color:#94a3b8">upoff</span></div>
+              </div>
+              <div style="margin-top:4px;padding:7px 9px;border-radius:5px;background:#f1f5f9;font:10px/1.5 'IBM Plex Mono';color:#475569">канон бита глуши — по VA 0x4414A7; запись идемпотентна (байт-в-байт при откате)</div>
+            </div>
+          </div>
+          <div style="flex:1;position:relative;background:#020617;overflow:hidden;min-width:0">
+            <div style="position:absolute;inset:0;background:url('assets/ground.png') -30px -30px no-repeat;filter:brightness(.75)"></div>
+            <div style="position:absolute;inset:0;background-image:repeating-linear-gradient(26.57deg,rgba(148,163,184,.16) 0 1px,transparent 1px 13.4px),repeating-linear-gradient(-26.57deg,rgba(148,163,184,.16) 0 1px,transparent 1px 13.4px)"></div>
+            <img src="assets/obj/100.png" style="position:absolute;left:40px;top:130px;width:330px;image-rendering:pixelated;opacity:.85" alt="">
+            <img src="assets/obj/055.png" style="position:absolute;left:470px;top:60px;width:250px;image-rendering:pixelated;opacity:.85" alt="">
+            <img src="assets/obj/130.png" style="position:absolute;left:420px;top:330px;width:120px;image-rendering:pixelated;opacity:.85" alt="">
+            <img src="assets/obj/065.png" style="position:absolute;left:880px;top:540px;width:250px;image-rendering:pixelated;opacity:.85" alt="">
+            <div style="position:absolute;left:70px;top:210px;width:300px;height:110px;background-image:repeating-linear-gradient(26.57deg,rgba(239,68,68,.5) 0 1px,rgba(239,68,68,.28) 1px 13.4px),repeating-linear-gradient(-26.57deg,rgba(239,68,68,.5) 0 1px,rgba(239,68,68,.28) 1px 13.4px);clip-path:polygon(18% 0,100% 38%,82% 100%,0 62%)"></div>
+            <div style="position:absolute;left:500px;top:110px;width:210px;height:96px;background-image:repeating-linear-gradient(26.57deg,rgba(239,68,68,.5) 0 1px,rgba(239,68,68,.28) 1px 13.4px),repeating-linear-gradient(-26.57deg,rgba(239,68,68,.5) 0 1px,rgba(239,68,68,.28) 1px 13.4px);clip-path:polygon(18% 0,100% 38%,82% 100%,0 62%)"></div>
+            <div style="position:absolute;left:432px;top:342px;width:100px;height:52px;background:rgba(239,68,68,.35);clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);box-shadow:inset 0 0 0 1.5px rgba(239,68,68,.8)"></div>
+            <div style="position:absolute;left:892px;top:568px;width:230px;height:70px;background:rgba(245,158,11,.3);clip-path:polygon(18% 0,100% 40%,82% 100%,0 60%);box-shadow:inset 0 0 0 1.5px rgba(245,158,11,.7)"></div>
+            <div style="position:absolute;right:0;top:250px;width:60px;height:120px;background:rgba(34,197,94,.4);box-shadow:inset 2px 0 0 #22c55e"></div>
+            <div style="position:absolute;right:66px;top:296px;padding:3px 8px;border-radius:4px;background:rgba(2,6,23,.85);border:1px solid rgba(34,197,94,.5);color:#4ade80;font:10.5px 'IBM Plex Mono';white-space:nowrap">выход → карта 24 · Берег</div>
+            <div style="position:absolute;left:640px;top:405px;width:64px;height:32px;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);box-shadow:inset 0 0 0 2px #fff;background:rgba(255,255,255,.25)"></div>
+            <div style="position:absolute;left:712px;top:398px;padding:3px 8px;border-radius:4px;background:rgba(2,6,23,.85);border:1px solid rgba(148,163,184,.4);color:#e2e8f0;font:10.5px 'IBM Plex Mono';white-space:nowrap">клетка 132:88 · 0FFF:0023</div>
+            <div style="position:absolute;left:12px;top:10px;display:flex;gap:6px;font:10.5px 'IBM Plex Mono'">
+              <span style="display:flex;align-items:center;gap:5px;padding:4px 9px;border-radius:4px;background:rgba(2,6,23,.8);border:1px solid rgba(148,163,184,.25);color:#fca5a5"><span style="width:9px;height:9px;border-radius:2px;background:#ef4444"></span>глушь 3 208</span>
+              <span style="display:flex;align-items:center;gap:5px;padding:4px 9px;border-radius:4px;background:rgba(2,6,23,.8);border:1px solid rgba(148,163,184,.25);color:#fcd34d"><span style="width:9px;height:9px;border-radius:2px;background:#f59e0b"></span>стрелы 412</span>
+              <span style="display:flex;align-items:center;gap:5px;padding:4px 9px;border-radius:4px;background:rgba(2,6,23,.8);border:1px solid rgba(148,163,184,.25);color:#86efac"><span style="width:9px;height:9px;border-radius:2px;background:#22c55e"></span>выходы 4</span>
+            </div>
+            <div style="position:absolute;right:12px;top:10px;display:flex;gap:4px;font:11px 'IBM Plex Mono'">
+              <span style="padding:4px 8px;border-radius:4px;background:rgba(2,6,23,.8);color:#94a3b8;border:1px solid rgba(148,163,184,.25)">50</span>
+              <span style="padding:4px 8px;border-radius:4px;background:#2563eb;color:#fff">100</span>
+              <span style="padding:4px 8px;border-radius:4px;background:rgba(2,6,23,.8);color:#94a3b8;border:1px solid rgba(148,163,184,.25)">200</span>
+            </div>
+            <div style="position:absolute;left:12px;bottom:12px;width:180px;background:rgba(2,6,23,.88);border:1px solid rgba(148,163,184,.3);border-radius:6px;overflow:hidden;flex-direction:column;display: {{ miniDisplay }}">
+              <div style="height:104px;position:relative;background:url('assets/ground.png') center/cover">
+                <div style="position:absolute;left:24%;top:18%;width:52%;height:58%;border:1.5px solid #fff;box-shadow:0 0 0 999px rgba(2,6,23,.45)"></div>
+              </div>
+              <div style="padding:4px 8px;font:9.5px 'IBM Plex Mono';color:#94a3b8">сетка 256×160 · LO:HI</div>
+            </div>
+          </div>
+          <div style="width:320px;background:#f8fafc;border-left:1px solid #e2e8f0;padding:12px;display:flex;flex-direction:column;gap:10px;overflow:hidden;flex:none">
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:inset 3px 0 0 #2563eb">
+              <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #e2e8f0"><span style="font:600 12px 'IBM Plex Sans'">Клетка 132:88</span><div style="flex:1"></div><span style="font:10px 'IBM Plex Mono';color:#94a3b8">grid.txt</span></div>
+              <div style="padding:10px 12px;display:flex;align-items:center;gap:10px;border-bottom:1px solid #f1f5f9">
+                <span style="font:600 20px 'IBM Plex Mono';letter-spacing:.04em">0FFF:0023</span>
+                <span style="font:10px 'IBM Plex Mono';color:#94a3b8">LO:HI</span>
+              </div>
+              <div style="padding:6px 0 8px">
+                <div style="display:flex;align-items:center;gap:8px;padding:5px 12px"><span style="width:13px;height:13px;border-radius:3px;background:#ef4444;display:flex;align-items:center;justify-content:center"><i data-lucide="check" style="width:10px;height:10px;color:#fff"></i></span><span style="font:11.5px 'IBM Plex Sans'">глушь · LO 0xFFF</span></div>
+                <div style="display:flex;align-items:center;gap:8px;padding:5px 12px"><span style="width:13px;height:13px;border-radius:3px;border:1.5px solid #cbd5e1"></span><span style="font:11.5px 'IBM Plex Sans';color:#64748b">глухая для стрел · 0x4000</span></div>
+                <div style="display:flex;align-items:center;gap:8px;padding:5px 12px"><span style="width:13px;height:13px;border-radius:3px;border:1.5px solid #cbd5e1"></span><span style="font:11.5px 'IBM Plex Sans';color:#64748b">выход с карты</span></div>
+                <div style="display:flex;align-items:center;gap:8px;padding:5px 12px"><span style="width:13px;height:13px;border-radius:3px;background:#3b82f6;display:flex;align-items:center;justify-content:center"><i data-lucide="check" style="width:10px;height:10px;color:#fff"></i></span><span style="font:11.5px 'IBM Plex Sans'">прозрачная · HI 0x0020</span></div>
+                <div style="display:flex;align-items:center;gap:8px;padding:5px 12px"><span style="width:13px;height:13px;border-radius:3px;background:#64748b;display:flex;align-items:center;justify-content:center"><i data-lucide="check" style="width:10px;height:10px;color:#fff"></i></span><span style="font:11.5px 'IBM Plex Sans'">объект в клетке · HI 0x0003</span></div>
+              </div>
+            </div>
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px">
+              <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #e2e8f0"><span style="font:600 12px 'IBM Plex Sans'">Выходы карты</span><div style="flex:1"></div><span style="font:10px 'IBM Plex Mono';color:#94a3b8">4</span></div>
+              <div style="padding:4px 0 6px">
+                <div style="display:flex;justify-content:space-between;padding:4px 12px;font:10.5px 'IBM Plex Mono'"><span style="color:#16a34a">восток 254:88–96</span><span style="color:#475569">→ 24 Берег</span></div>
+                <div style="display:flex;justify-content:space-between;padding:4px 12px;font:10.5px 'IBM Plex Mono'"><span style="color:#16a34a">юг 128:158</span><span style="color:#475569">→ 26 Корабль</span></div>
+                <div style="display:flex;justify-content:space-between;padding:4px 12px;font:10.5px 'IBM Plex Mono'"><span style="color:#dc2626">запад 0:88 — заблокирован</span><span style="color:#dc2626">валидатор</span></div>
+                <div style="display:flex;justify-content:space-between;padding:4px 12px;font:10.5px 'IBM Plex Mono'"><span style="color:#16a34a">север 128:0</span><span style="color:#475569">→ 25 Торговый пост</span></div>
+              </div>
+            </div>
+            <div style="margin-top:auto;padding:8px 10px;border-radius:6px;background:#f1f5f9;font:10.5px/1.5 'IBM Plex Sans';color:#475569">Оверлей живёт поверх сцены — глушь видно вместе с постройками, из-за которых она возникла.</div>
+          </div>
+        </div>
+        <div style="height:30px;background:#0f172a;display:flex;align-items:center;gap:14px;padding:0 14px;font:10.5px 'IBM Plex Mono';color:#94a3b8;flex:none">
+          <span style="color:#e2e8f0">ЛКМ — ставить бит</span><span>ПКМ — снимать</span><span>Alt+клик — панель клетки</span><span>Shift+драг — прямоугольник</span>
+          <div style="flex:1"></div>
+          <span>глушь 3 208</span><span>прозрачных 96</span><span>внутренних 1 118</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="dv-opt" id="1e" data-screen-label="1e Вода — подложка 16×32">
+    <div class="dv-olabel"><a class="dv-oid" href="#1e">1e</a>Инструмент «Вода» — подложка 16×32, Lake/Stream, лимит 512 <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px">POST /maps/23/water {row,col,value|stream|tile}</span></div>
+    <div class="dv-card" style="width:1600px">
+      <div style="width:1600px;height:940px;display:flex;flex-direction:column;background:#f8fafc;color:#0f172a">
+        <div style="display:flex;align-items:center;gap:12px;height:52px;padding:0 16px;background:#0f172a;border-bottom:1px solid rgba(255,255,255,.08);flex:none">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:28px;height:28px;border-radius:6px;background:#2563eb;display:flex;align-items:center;justify-content:center"><i data-lucide="map" style="width:16px;height:16px;color:#fff"></i></div>
+            <div style="display:flex;flex-direction:column;line-height:1.1"><span style="font:700 11px 'IBM Plex Sans';color:#fff;letter-spacing:.14em">КНЯЗЬ 2</span><span style="font:500 9px 'IBM Plex Sans';color:#94a3b8;letter-spacing:.22em">РЕДАКТОР КАРТ</span></div>
+          </div>
+          <div style="width:1px;height:24px;background:rgba(255,255,255,.1)"></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:5px 10px;border:1px solid rgba(255,255,255,.14);border-radius:4px;cursor:pointer">
+            <span style="font:600 12px 'IBM Plex Mono';color:#fff">23</span><span style="font:500 12px 'IBM Plex Sans';color:#e2e8f0">Морской лагерь</span><i data-lucide="chevrons-up-down" style="width:13px;height:13px;color:#64748b"></i>
+          </div>
+          <div style="display:flex;gap:4px">
+            <span title="Ctrl+Z · POST /undo" style="width:28px;height:28px;border:1px solid rgba(255,255,255,.16);border-radius:4px;display:flex;align-items:center;justify-content:center;color:#e2e8f0;cursor:pointer"><i data-lucide="undo-2" style="width:14px;height:14px"></i></span>
+            <span title="Ctrl+Y · POST /redo" style="width:28px;height:28px;border:1px solid rgba(255,255,255,.07);border-radius:4px;display:flex;align-items:center;justify-content:center;color:#475569"><i data-lucide="redo-2" style="width:14px;height:14px"></i></span>
+          </div>
+          <span style="font:10.5px 'IBM Plex Mono';color:#64748b">map.json · light: 16×32 байт</span>
+          <div style="flex:1"></div>
+          <div style="display:flex;align-items:center;gap:6px;padding:4px 9px;border-radius:999px;background:rgba(245,158,11,.14);border:1px solid rgba(245,158,11,.35)"><i data-lucide="triangle-alert" style="width:12px;height:12px;color:#f59e0b"></i><span style="font:500 11px 'IBM Plex Sans';color:#fcd34d">валидатор: 2 · 3</span></div>
+          <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="primary" size="sm" icon="hammer" hint-size="90px,28px">Build</x-import>
+          <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="default" size="sm" icon="play" hint-size="80px,28px">Play</x-import>
+        </div>
+        <div style="flex:1;display:flex;min-height:0">
+          <div style="width:56px;background:#0f172a;border-right:1px solid rgba(255,255,255,.08);display:flex;flex-direction:column;flex:none">
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="mountain" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Ландш</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#fff;background:#1e293b;box-shadow:inset 3px 0 0 #2563eb"><i data-lucide="waves" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Вода</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="footprints" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Проход</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="warehouse" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Объект</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="shrub" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Декор</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="users" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Сущ-ва</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="flag" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Отряды</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="gem" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Клады</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#64748b"><i data-lucide="git-branch" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">События</span></div>
+            <div style="flex:1"></div>
+            <div style="height:44px;display:flex;align-items:center;justify-content:center;color:#64748b;border-top:1px solid rgba(255,255,255,.08)"><span style="font:9.5px 'IBM Plex Mono'">TAB ⟳</span></div>
+          </div>
+          <div style="width:250px;background:#fff;border-right:1px solid #e2e8f0;display:flex;flex-direction:column;flex:none">
+            <div style="padding:10px 12px 8px;border-bottom:1px solid #e2e8f0">
+              <div style="display:flex;align-items:baseline;gap:6px"><span style="font:600 12.5px 'IBM Plex Sans'">Вода</span><span style="font:10px 'IBM Plex Mono';color:#94a3b8">подложка 16×32</span></div>
+              <div style="margin-top:8px;display:flex;border:1px solid #cbd5e1;border-radius:4px;overflow:hidden;font:500 11px 'IBM Plex Sans'">
+                <div style="flex:1;padding:5px 0;text-align:center;background:#0f172a;color:#fff">Lake · 0x80</div>
+                <div style="flex:1;padding:5px 0;text-align:center;background:#fff;color:#475569;border-left:1px solid #cbd5e1">Stream · 0x40</div>
+              </div>
+              <div style="margin-top:6px;font:10px/1.5 'IBM Plex Mono';color:#94a3b8">тип — один на карту (OR всех клеток); переключение конвертирует всё</div>
+            </div>
+            <div style="padding:10px 12px;border-bottom:1px solid #e2e8f0">
+              <span style="font:600 11px 'IBM Plex Sans';color:#334155">Тайл воды</span>
+              <div style="margin-top:6px;display:flex;gap:6px">
+                <div style="flex:1;display:flex;flex-direction:column;gap:2px"><div style="height:40px;background:#020617;border-radius:4px;overflow:hidden;box-shadow:0 0 0 2px #2563eb"><img src="assets/tiles/t8_7.png" style="width:100%;height:100%;object-fit:cover" alt=""></div><span style="font:9px 'IBM Plex Mono';color:#2563eb;text-align:center;font-weight:700">71 · море</span></div>
+                <div style="flex:1;display:flex;flex-direction:column;gap:2px"><div style="height:40px;background:#020617;border-radius:4px;overflow:hidden"><img src="assets/tiles/t9_0.png" style="width:100%;height:100%;object-fit:cover" alt=""></div><span style="font:9px 'IBM Plex Mono';color:#64748b;text-align:center">72 · озеро</span></div>
+              </div>
+            </div>
+            <div style="padding:10px 12px">
+              <div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font:600 11px 'IBM Plex Sans';color:#334155">Клеток воды</span><span style="font:600 13px 'IBM Plex Mono';color:#d97706">498<span style="color:#94a3b8;font-weight:400">/512</span></span></div>
+              <div style="margin-top:6px;height:6px;border-radius:3px;background:#f1f5f9;overflow:hidden"><div style="width:97%;height:100%;background:#f59e0b"></div></div>
+              <div style="margin-top:5px;font:10px/1.5 'IBM Plex Sans';color:#b45309">лимит формата близко — валидатор предупредит</div>
+            </div>
+            <div style="margin-top:auto;padding:10px 12px;border-top:1px solid #e2e8f0;font:10px/1.6 'IBM Plex Mono';color:#94a3b8">анимация подложки — рантайм;<br>редактор красит только байты</div>
+          </div>
+          <div style="flex:1;position:relative;background:#020617;overflow:hidden;min-width:0">
+            <div style="position:absolute;inset:0;background:url('assets/ground.png') -540px -30px no-repeat"></div>
+            <div style="position:absolute;inset:0;background-image:repeating-linear-gradient(0deg,rgba(56,189,248,.22) 0 1px,transparent 1px 52px),repeating-linear-gradient(90deg,rgba(56,189,248,.22) 0 1px,transparent 1px 95px)"></div>
+            <img src="assets/obj/065.png" style="position:absolute;left:300px;top:500px;width:250px;image-rendering:pixelated" alt="">
+            <div style="position:absolute;left:600px;top:520px;width:95px;height:52px;background:rgba(14,165,233,.35);box-shadow:inset 0 0 0 1.5px rgba(56,189,248,.9)"></div>
+            <div style="position:absolute;left:695px;top:520px;width:95px;height:52px;background:rgba(14,165,233,.35);box-shadow:inset 0 0 0 1.5px rgba(56,189,248,.9)"></div>
+            <div style="position:absolute;left:790px;top:520px;width:95px;height:52px;background:rgba(14,165,233,.35);box-shadow:inset 0 0 0 1.5px rgba(56,189,248,.9)"></div>
+            <div style="position:absolute;left:885px;top:520px;width:95px;height:52px;background:rgba(14,165,233,.35);box-shadow:inset 0 0 0 1.5px rgba(56,189,248,.9)"></div>
+            <div style="position:absolute;left:505px;top:572px;width:95px;height:52px;background:rgba(14,165,233,.35);box-shadow:inset 0 0 0 1.5px rgba(56,189,248,.9)"></div>
+            <div style="position:absolute;left:600px;top:572px;width:95px;height:52px;background:rgba(14,165,233,.35);box-shadow:inset 0 0 0 1.5px rgba(56,189,248,.9)"></div>
+            <div style="position:absolute;left:695px;top:572px;width:95px;height:52px;background:rgba(14,165,233,.35);box-shadow:inset 0 0 0 1.5px rgba(56,189,248,.9)"></div>
+            <div style="position:absolute;left:410px;top:624px;width:190px;height:52px;background:rgba(14,165,233,.35);box-shadow:inset 0 0 0 1.5px rgba(56,189,248,.9)"></div>
+            <div style="position:absolute;left:600px;top:624px;width:285px;height:52px;background:rgba(14,165,233,.35);box-shadow:inset 0 0 0 1.5px rgba(56,189,248,.9)"></div>
+            <div style="position:absolute;left:410px;top:676px;width:475px;height:52px;background:rgba(14,165,233,.35);box-shadow:inset 0 0 0 1.5px rgba(56,189,248,.9)"></div>
+            <div style="position:absolute;left:505px;top:520px;width:95px;height:52px;background:rgba(34,211,238,.5);box-shadow:inset 0 0 0 2px #22d3ee"></div>
+            <div style="position:absolute;left:560px;top:490px;padding:3px 8px;border-radius:4px;background:rgba(2,6,23,.85);border:1px solid rgba(34,211,238,.6);color:#67e8f9;font:10.5px 'IBM Plex Mono';white-space:nowrap">+1 клетка · water 7:21 = 0x80 · осталось 14</div>
+            <div style="position:absolute;left:12px;top:10px;display:flex;gap:6px">
+              <span style="padding:4px 9px;border-radius:4px;background:rgba(2,6,23,.8);border:1px solid rgba(148,163,184,.25);color:#e2e8f0;font:11px 'IBM Plex Mono'">water 7:21</span>
+              <span style="padding:4px 9px;border-radius:4px;background:rgba(2,6,23,.8);border:1px solid rgba(148,163,184,.25);color:#94a3b8;font:11px 'IBM Plex Mono'">1 клетка воды = 16×5 клеток сетки</span>
+            </div>
+            <div style="position:absolute;right:12px;top:10px;display:flex;gap:4px;font:11px 'IBM Plex Mono'">
+              <span style="padding:4px 8px;border-radius:4px;background:rgba(2,6,23,.8);color:#94a3b8;border:1px solid rgba(148,163,184,.25)">50</span>
+              <span style="padding:4px 8px;border-radius:4px;background:#2563eb;color:#fff">100</span>
+              <span style="padding:4px 8px;border-radius:4px;background:rgba(2,6,23,.8);color:#94a3b8;border:1px solid rgba(148,163,184,.25)">200</span>
+            </div>
+            <div style="position:absolute;left:12px;bottom:12px;width:180px;background:rgba(2,6,23,.88);border:1px solid rgba(148,163,184,.3);border-radius:6px;overflow:hidden;flex-direction:column;display: {{ miniDisplay }}">
+              <div style="height:104px;position:relative;background:url('assets/ground.png') center/cover">
+                <div style="position:absolute;left:24%;top:18%;width:52%;height:58%;border:1.5px solid #fff;box-shadow:0 0 0 999px rgba(2,6,23,.45)"></div>
+              </div>
+              <div style="padding:4px 8px;font:9.5px 'IBM Plex Mono';color:#94a3b8">вода 498/512 · Lake</div>
+            </div>
+          </div>
+          <div style="width:320px;background:#f8fafc;border-left:1px solid #e2e8f0;padding:12px;display:flex;flex-direction:column;gap:10px;overflow:hidden;flex:none">
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:inset 3px 0 0 #0ea5e9">
+              <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #e2e8f0"><span style="font:600 12px 'IBM Plex Sans'">Подложка карты</span><div style="flex:1"></div><span style="font:10px 'IBM Plex Mono';color:#94a3b8">map.json · light</span></div>
+              <div style="padding:4px 0 8px">
+                <div style="display:flex;justify-content:space-between;padding:5px 12px"><span style="font:11px 'IBM Plex Sans';color:#64748b">Тип</span><span style="font:11.5px 'IBM Plex Mono'">Lake · 0x80</span></div>
+                <div style="display:flex;justify-content:space-between;padding:5px 12px"><span style="font:11px 'IBM Plex Sans';color:#64748b">Тайл</span><span style="font:11.5px 'IBM Plex Mono'">71 · море</span></div>
+                <div style="display:flex;justify-content:space-between;padding:5px 12px"><span style="font:11px 'IBM Plex Sans';color:#64748b">Клеток</span><span style="font:11.5px 'IBM Plex Mono';color:#d97706">498/512</span></div>
+                <div style="display:flex;justify-content:space-between;padding:5px 12px"><span style="font:11px 'IBM Plex Sans';color:#64748b">Stream-клеток</span><span style="font:11.5px 'IBM Plex Mono';color:#94a3b8">0</span></div>
+              </div>
+            </div>
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px">
+              <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #e2e8f0"><span style="font:600 12px 'IBM Plex Sans'">rows · hex64</span><div style="flex:1"></div><span style="font:10px 'IBM Plex Mono';color:#94a3b8">16 строк</span></div>
+              <div style="margin:8px 12px;padding:8px 9px;border-radius:5px;background:#0f172a;font:9.5px/1.7 'IBM Plex Mono';color:#7dd3fc;overflow:hidden">r5 00000000000000000080808080…<br>r6 00000000000000808080808080…<br><span style="background:rgba(34,211,238,.25);color:#a5f3fc">r7 00000000000000008080808080…</span><br>r8 00000000000080808080808080…</div>
+              <div style="padding:0 12px 10px;font:10.5px/1.5 'IBM Plex Sans';color:#64748b">Кисть льёт байт типа карты; стирание пишет 0x00.</div>
+            </div>
+            <div style="margin-top:auto;display:flex;gap:8px">
+              <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="warning" size="sm" icon="repeat" hint-size="200px,28px">Конвертировать в Stream</x-import>
+            </div>
+          </div>
+        </div>
+        <div style="height:30px;background:#0f172a;display:flex;align-items:center;gap:14px;padding:0 14px;font:10.5px 'IBM Plex Mono';color:#94a3b8;flex:none">
+          <span style="color:#e2e8f0">ЛКМ — лить воду</span><span>ПКМ — стирать</span><span>драг — область</span>
+          <div style="flex:1"></div>
+          <span style="color:#fcd34d">вода 498/512 — близко к лимиту</span><span style="color:#4ade80">60 fps</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="dv-opt" id="1f" data-screen-label="1f Существа и Отряды">
+    <div class="dv-olabel"><a class="dv-oid" href="#1f">1f</a>Инструменты «Существа» и «Отряды» — бестиарий, враги через отряды, зоны агрессии <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px">GET /catalog/bestiary · POST /maps/23/units · /warbands</span></div>
+    <div class="dv-card" style="width:1600px">
+      <div style="width:1600px;height:940px;display:flex;flex-direction:column;background:#f8fafc;color:#0f172a">
+        <div style="display:flex;align-items:center;gap:12px;height:52px;padding:0 16px;background:#0f172a;border-bottom:1px solid rgba(255,255,255,.08);flex:none">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:28px;height:28px;border-radius:6px;background:#2563eb;display:flex;align-items:center;justify-content:center"><i data-lucide="map" style="width:16px;height:16px;color:#fff"></i></div>
+            <div style="display:flex;flex-direction:column;line-height:1.1"><span style="font:700 11px 'IBM Plex Sans';color:#fff;letter-spacing:.14em">КНЯЗЬ 2</span><span style="font:500 9px 'IBM Plex Sans';color:#94a3b8;letter-spacing:.22em">РЕДАКТОР КАРТ</span></div>
+          </div>
+          <div style="width:1px;height:24px;background:rgba(255,255,255,.1)"></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:5px 10px;border:1px solid rgba(255,255,255,.14);border-radius:4px;cursor:pointer">
+            <span style="font:600 12px 'IBM Plex Mono';color:#fff">23</span><span style="font:500 12px 'IBM Plex Sans';color:#e2e8f0">Морской лагерь</span><i data-lucide="chevrons-up-down" style="width:13px;height:13px;color:#64748b"></i>
+          </div>
+          <div style="display:flex;gap:4px">
+            <span title="Ctrl+Z · POST /undo" style="width:28px;height:28px;border:1px solid rgba(255,255,255,.16);border-radius:4px;display:flex;align-items:center;justify-content:center;color:#e2e8f0;cursor:pointer"><i data-lucide="undo-2" style="width:14px;height:14px"></i></span>
+            <span title="Ctrl+Y · POST /redo" style="width:28px;height:28px;border:1px solid rgba(255,255,255,.07);border-radius:4px;display:flex;align-items:center;justify-content:center;color:#475569"><i data-lucide="redo-2" style="width:14px;height:14px"></i></span>
+          </div>
+          <span style="font:10.5px 'IBM Plex Mono';color:#64748b">scenario.json · draft-слой</span>
+          <div style="flex:1"></div>
+          <div style="display:flex;align-items:center;gap:6px;padding:4px 9px;border-radius:999px;background:rgba(245,158,11,.14);border:1px solid rgba(245,158,11,.35)"><i data-lucide="triangle-alert" style="width:12px;height:12px;color:#f59e0b"></i><span style="font:500 11px 'IBM Plex Sans';color:#fcd34d">валидатор: 2 · 3</span></div>
+          <span style="font:10.5px 'IBM Plex Mono';color:#f59e0b">3 правки вне пака</span>
+          <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="primary" size="sm" icon="hammer" hint-size="90px,28px">Build</x-import>
+          <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="default" size="sm" icon="play" hint-size="80px,28px">Play</x-import>
+        </div>
+        <div style="flex:1;display:flex;min-height:0">
+          <div style="width:56px;background:#0f172a;border-right:1px solid rgba(255,255,255,.08);display:flex;flex-direction:column;flex:none">
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="mountain" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Ландш</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="waves" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Вода</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="footprints" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Проход</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="warehouse" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Объект</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="shrub" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Декор</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#fff;background:#1e293b;box-shadow:inset 3px 0 0 #2563eb"><i data-lucide="users" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Сущ-ва</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#e2e8f0;background:#1e293b"><i data-lucide="flag" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Отряды</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="gem" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Клады</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#64748b"><i data-lucide="git-branch" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">События</span></div>
+            <div style="flex:1"></div>
+            <div style="height:44px;display:flex;align-items:center;justify-content:center;color:#64748b;border-top:1px solid rgba(255,255,255,.08)"><span style="font:9.5px 'IBM Plex Mono'">TAB ⟳</span></div>
+          </div>
+          <div style="width:250px;background:#fff;border-right:1px solid #e2e8f0;display:flex;flex-direction:column;flex:none">
+            <div style="padding:10px 12px 8px;border-bottom:1px solid #e2e8f0">
+              <div style="display:flex;align-items:baseline;gap:6px"><span style="font:600 12.5px 'IBM Plex Sans'">Существа</span><span style="font:10px 'IBM Plex Mono';color:#94a3b8">23 породы</span></div>
+              <div style="margin-top:8px;display:flex;border:1px solid #cbd5e1;border-radius:4px;overflow:hidden;font:500 11px 'IBM Plex Sans'">
+                <div style="flex:1;padding:5px 0;text-align:center;background:#0f172a;color:#fff">Бестиарий</div>
+                <div style="flex:1;padding:5px 0;text-align:center;background:#fff;color:#475569;border-left:1px solid #cbd5e1">Жители пака · 46</div>
+              </div>
+              <div style="margin-top:6px;display:flex;align-items:center;gap:6px"><span style="font:500 10.5px 'IBM Plex Sans';color:#334155">Пишем в:</span><div style="display:flex;border:1px solid #cbd5e1;border-radius:4px;overflow:hidden;font:500 10px 'IBM Plex Sans'"><span style="padding:3px 8px;background:#0f172a;color:#fff">draft-слой</span><span style="padding:3px 8px;background:#fff;color:#475569;border-left:1px solid #cbd5e1;display:flex;align-items:center;gap:4px">мир · 2 Эйнар <i data-lucide="chevron-down" style="width:10px;height:10px"></i></span></div></div>
+              <div style="margin-top:4px;font:9.5px/1.4 'IBM Plex Mono';color:#94a3b8">население 23-й разное в 6 мирах · имена героев — из GET /worlds</div>
+            </div>
+            <div style="flex:1;overflow:hidden;padding:8px;display:flex;flex-direction:column;gap:4px">
+              <div style="display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:6px;background:#eff6ff;box-shadow:0 0 0 1.5px #2563eb">
+                <div style="width:38px;height:44px;background:#0f172a;border-radius:4px;display:flex;align-items:end;justify-content:center;overflow:hidden"><img src="assets/creatures/s48.png" style="max-width:92%;max-height:96%;image-rendering:pixelated" alt=""></div>
+                <div style="display:flex;flex-direction:column;gap:1px"><span style="font:600 11.5px 'IBM Plex Sans';color:#1d4ed8">Навья</span><span style="font:9.5px 'IBM Plex Mono';color:#64748b">0x4a · lvl 2…6 · hp 22…90</span></div>
+                <div style="flex:1"></div>
+                <div style="display:flex;gap:3px"><span style="width:9px;height:9px;border-radius:999px;background:#57534e;box-shadow:0 0 0 1.5px #2563eb"></span><span style="width:9px;height:9px;border-radius:999px;background:#7f1d1d"></span><span style="width:9px;height:9px;border-radius:999px;background:#365314"></span></div>
+              </div>
+              <div style="display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:6px;border:1px solid #f1f5f9">
+                <div style="width:38px;height:44px;background:#0f172a;border-radius:4px;display:flex;align-items:end;justify-content:center;overflow:hidden"><img src="assets/creatures/s56.png" style="max-width:92%;max-height:96%;image-rendering:pixelated" alt=""></div>
+                <div style="display:flex;flex-direction:column;gap:1px"><span style="font:600 11.5px 'IBM Plex Sans';color:#334155">Скелет</span><span style="font:9.5px 'IBM Plex Mono';color:#94a3b8">0x4c · lvl 1…13 · hp 12…200</span></div>
+                <div style="flex:1"></div>
+                <div style="display:flex;gap:3px"><span style="width:9px;height:9px;border-radius:999px;background:#e7e5e4"></span><span style="width:9px;height:9px;border-radius:999px;background:#78716c"></span></div>
+              </div>
+              <div style="display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:6px;border:1px solid #f1f5f9">
+                <div style="width:38px;height:44px;background:#0f172a;border-radius:4px;display:flex;align-items:end;justify-content:center;overflow:hidden"><img src="assets/creatures/s16.png" style="max-width:92%;max-height:96%;image-rendering:pixelated" alt=""></div>
+                <div style="display:flex;flex-direction:column;gap:1px"><span style="font:600 11.5px 'IBM Plex Sans';color:#334155">Морок</span><span style="font:9.5px 'IBM Plex Mono';color:#94a3b8">0x49 · lvl 3…15 · hp 14…160</span></div>
+                <div style="flex:1"></div>
+                <div style="display:flex;gap:3px"><span style="width:9px;height:9px;border-radius:999px;background:#b45309"></span></div>
+              </div>
+              <div style="display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:6px;border:1px solid #f1f5f9">
+                <div style="width:38px;height:44px;background:#0f172a;border-radius:4px;display:flex;align-items:end;justify-content:center;overflow:hidden"><img src="assets/creatures/s8.png" style="max-width:92%;max-height:96%;image-rendering:pixelated" alt=""></div>
+                <div style="display:flex;flex-direction:column;gap:1px"><span style="font:600 11.5px 'IBM Plex Sans';color:#334155">Болотник</span><span style="font:9.5px 'IBM Plex Mono';color:#94a3b8">0x43 · lvl 10…13 · hp 140…250</span></div>
+                <div style="flex:1"></div>
+                <div style="display:flex;gap:3px"><span style="width:9px;height:9px;border-radius:999px;background:#3f6212"></span><span style="width:9px;height:9px;border-radius:999px;background:#1e3a5f"></span></div>
+              </div>
+              <div style="display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:6px;border:1px solid #f1f5f9">
+                <div style="width:38px;height:44px;background:#0f172a;border-radius:4px;display:flex;align-items:end;justify-content:center;overflow:hidden"><img src="assets/creatures/s24.png" style="max-width:92%;max-height:96%;image-rendering:pixelated" alt=""></div>
+                <div style="display:flex;flex-direction:column;gap:1px"><span style="font:600 11.5px 'IBM Plex Sans';color:#334155">Леший</span><span style="font:9.5px 'IBM Plex Mono';color:#94a3b8">0x47 · lvl 6…17 · hp 44…220</span></div>
+                <div style="flex:1"></div>
+                <div style="display:flex;gap:3px"><span style="width:9px;height:9px;border-radius:999px;background:#713f12"></span></div>
+              </div>
+              <div style="display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:6px;border:1px solid #f1f5f9">
+                <div style="width:38px;height:44px;background:#0f172a;border-radius:4px;display:flex;align-items:end;justify-content:center;overflow:hidden"><img src="assets/creatures/v32.png" style="max-width:92%;max-height:96%;image-rendering:pixelated" alt=""></div>
+                <div style="display:flex;flex-direction:column;gap:1px"><span style="font:600 11.5px 'IBM Plex Sans';color:#334155">Аспид</span><span style="font:9.5px 'IBM Plex Mono';color:#94a3b8">0x42 · lvl 7…13 · hp 130…250</span></div>
+                <div style="flex:1"></div>
+                <div style="display:flex;gap:3px"><span style="width:9px;height:9px;border-radius:999px;background:#365314"></span><span style="width:9px;height:9px;border-radius:999px;background:#7f1d1d"></span></div>
+              </div>
+              <div style="margin-top:2px;padding:8px 9px;border-radius:6px;background:#f8fafc;border:1px dashed #cbd5e1;display:flex;gap:8px;align-items:flex-start">
+                <img src="assets/units/v20.png" style="width:18px;image-rendering:pixelated;opacity:.7" alt="">
+                <span style="font:10.5px/1.5 'IBM Plex Sans';color:#64748b">Людей в бестиарии нет — жителя ставят клоном (Space по жителю) или правкой мира.</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:6px;padding:6px 9px;border-radius:6px;border:1px solid #f1f5f9;color:#64748b">
+                <i data-lucide="chevron-right" style="width:12px;height:12px"></i>
+                <span style="font:500 10.5px 'IBM Plex Sans'">уникальные · 4</span>
+                <span style="font:9.5px 'IBM Plex Mono';color:#94a3b8">Хорив · Влада · волхв · Позвизд · 0x58</span>
+              </div>
+            </div>
+            <div style="padding:8px 12px;border-top:1px solid #e2e8f0;font:10px/1.5 'IBM Plex Mono';color:#94a3b8">числа юнита — по образцу породы; вражда живёт в отряде</div>
+          </div>
+          <div style="flex:1;position:relative;background:#020617;overflow:hidden;min-width:0">
+            <div style="position:absolute;inset:0;background:url('assets/ground.png') -30px -30px no-repeat"></div>
+            <div style="position:absolute;inset:0;background-image:repeating-linear-gradient(26.57deg,rgba(148,163,184,.1) 0 1px,transparent 1px 26.8px),repeating-linear-gradient(-26.57deg,rgba(148,163,184,.1) 0 1px,transparent 1px 26.8px);display: {{ gridDisplay }}"></div>
+            <img src="assets/obj/100.png" style="position:absolute;left:40px;top:130px;width:330px;image-rendering:pixelated" alt="">
+            <img src="assets/obj/055.png" style="position:absolute;left:470px;top:60px;width:250px;image-rendering:pixelated" alt="">
+            <img src="assets/obj/130.png" style="position:absolute;left:420px;top:330px;width:120px;image-rendering:pixelated" alt="">
+            <img src="assets/obj/140.png" style="position:absolute;left:610px;top:480px;width:130px;image-rendering:pixelated" alt="">
+            <div style="position:absolute;left:520px;top:395px;width:36px;height:16px;border:1.5px solid #22c55e;border-radius:999px;opacity:.9"></div>
+            <img src="assets/units/v20.png" style="position:absolute;left:527px;top:330px;width:24px;image-rendering:pixelated" alt="">
+            <div style="position:absolute;left:610px;top:180px;width:36px;height:16px;border:1.5px solid #22c55e;border-radius:999px;opacity:.9"></div>
+            <img src="assets/units/v40.png" style="position:absolute;left:617px;top:115px;width:24px;image-rendering:pixelated" alt="">
+            <div style="position:absolute;left:700px;top:540px;width:36px;height:16px;border:1.5px solid #22c55e;border-radius:999px;opacity:.9"></div>
+            <img src="assets/units/v5.png" style="position:absolute;left:707px;top:475px;width:24px;image-rendering:pixelated" alt="">
+            <div style="position:absolute;left:120px;top:470px;width:340px;height:200px;border:1.5px dashed #ef4444;background:rgba(239,68,68,.07)"></div>
+            <div style="position:absolute;left:120px;top:446px;display:flex;gap:4px">
+              <span style="padding:3px 8px;border-radius:4px;background:#dc2626;color:#fff;font:600 10.5px 'IBM Plex Mono'">отряд 2 · разбойники</span>
+              <span style="padding:3px 8px;border-radius:4px;background:rgba(2,6,23,.85);border:1px solid rgba(239,68,68,.5);color:#fca5a5;font:10.5px 'IBM Plex Mono'">зона расстановки = зона агрессии</span>
+            </div>
+            <div style="position:absolute;left:180px;top:585px;width:40px;height:18px;border:1.5px solid #ef4444;border-radius:999px"></div>
+            <img src="assets/creatures/s56.png" style="position:absolute;left:190px;top:510px;width:26px;image-rendering:pixelated;outline:1.5px solid #3b82f6;outline-offset:3px" alt="">
+            <div style="position:absolute;left:150px;top:478px;padding:3px 8px;border-radius:4px;background:#2563eb;color:#fff;font:600 10.5px 'IBM Plex Mono';white-space:nowrap">unit_new_2 · скелет · draft</div>
+            <div style="position:absolute;left:310px;top:560px;width:40px;height:18px;border:1.5px solid #ef4444;border-radius:999px"></div>
+            <img src="assets/creatures/s48.png" style="position:absolute;left:314px;top:508px;width:34px;image-rendering:pixelated" alt="">
+            <div style="position:absolute;left:390px;top:610px;width:40px;height:18px;border:1.5px solid #ef4444;border-radius:999px;opacity:.55"></div>
+            <img src="assets/creatures/s48.png" style="position:absolute;left:394px;top:558px;width:34px;image-rendering:pixelated;opacity:.55;filter:drop-shadow(0 0 5px rgba(59,130,246,.9))" alt="">
+            <div style="position:absolute;left:436px;top:575px;padding:3px 8px;border-radius:4px;background:rgba(2,6,23,.85);border:1px solid rgba(34,197,94,.5);color:#4ade80;font:10.5px 'IBM Plex Mono';white-space:nowrap">Enter — поставить · party = 2 · id unit_new_3</div>
+            <div style="position:absolute;left:12px;top:10px;display:flex;gap:6px;font:10.5px 'IBM Plex Mono'">
+              <span style="display:flex;align-items:center;gap:5px;padding:4px 9px;border-radius:4px;background:rgba(2,6,23,.8);border:1px solid rgba(148,163,184,.25);color:#86efac"><span style="width:14px;height:7px;border:1.5px solid #22c55e;border-radius:999px"></span>жители 46</span>
+              <span style="display:flex;align-items:center;gap:5px;padding:4px 9px;border-radius:4px;background:rgba(2,6,23,.8);border:1px solid rgba(148,163,184,.25);color:#fca5a5"><span style="width:14px;height:7px;border:1.5px solid #ef4444;border-radius:999px"></span>враги 4 <span style="color:#fcd34d">+2 draft</span></span>
+            </div>
+            <div style="position:absolute;right:12px;top:10px;display:flex;gap:4px;font:11px 'IBM Plex Mono'">
+              <span style="padding:4px 8px;border-radius:4px;background:rgba(2,6,23,.8);color:#94a3b8;border:1px solid rgba(148,163,184,.25)">50</span>
+              <span style="padding:4px 8px;border-radius:4px;background:#2563eb;color:#fff">100</span>
+              <span style="padding:4px 8px;border-radius:4px;background:rgba(2,6,23,.8);color:#94a3b8;border:1px solid rgba(148,163,184,.25)">200</span>
+            </div>
+            <div style="position:absolute;left:12px;bottom:12px;width:180px;background:rgba(2,6,23,.88);border:1px solid rgba(148,163,184,.3);border-radius:6px;overflow:hidden;flex-direction:column;display: {{ miniDisplay }}">
+              <div style="height:104px;position:relative;background:url('assets/ground.png') center/cover">
+                <div style="position:absolute;left:24%;top:18%;width:52%;height:58%;border:1.5px solid #fff;box-shadow:0 0 0 999px rgba(2,6,23,.45)"></div>
+                <div style="position:absolute;left:30%;top:62%;width:18%;height:22%;border:1px dashed #ef4444"></div>
+              </div>
+              <div style="padding:4px 8px;font:9.5px 'IBM Plex Mono';color:#94a3b8">юниты 46+2 · отряды 3+1</div>
+            </div>
+          </div>
+          <div style="width:320px;background:#f8fafc;border-left:1px solid #e2e8f0;padding:12px;display:flex;flex-direction:column;gap:10px;overflow:hidden;flex:none">
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:inset 3px 0 0 #2563eb">
+              <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #e2e8f0">
+                <span style="font:600 12px 'IBM Plex Sans'">Юнит · unit_new_2</span>
+                <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.StatusBadge" family="warn" label="draft" size="sm" hint-size="50px,18px"></x-import>
+                <div style="flex:1"></div><span style="font:10px 'IBM Plex Mono';color:#94a3b8">editor_units_add</span>
+              </div>
+              <div style="padding:4px 0 6px">
+                <div style="display:flex;justify-content:space-between;padding:4px 12px"><span style="font:11px 'IBM Plex Sans';color:#64748b">Порода</span><span style="font:11.5px 'IBM Plex Mono'">Скелет · 0x4c</span></div>
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 12px"><span style="font:11px 'IBM Plex Sans';color:#64748b">Масть</span><div style="display:flex;gap:4px"><span style="width:12px;height:12px;border-radius:999px;background:#e7e5e4;box-shadow:0 0 0 2px #2563eb"></span><span style="width:12px;height:12px;border-radius:999px;background:#78716c"></span></div></div>
+                <div style="display:flex;justify-content:space-between;padding:4px 12px"><span style="font:11px 'IBM Plex Sans';color:#64748b">Отряд · party</span><span style="font:11.5px 'IBM Plex Mono';color:#dc2626">2 · разбойники</span></div>
+                <div style="display:flex;justify-content:space-between;padding:4px 12px"><span style="font:11px 'IBM Plex Sans';color:#64748b">Уровень / деньги</span><span style="font:11.5px 'IBM Plex Mono'">3 · 0</span></div>
+                <div style="display:flex;justify-content:space-between;padding:4px 12px"><span style="font:11px 'IBM Plex Sans';color:#64748b">Диалог №</span><span style="font:11.5px 'IBM Plex Mono';color:#94a3b8">0xFF — нет</span></div>
+                <div style="margin:4px 12px;padding:6px 8px;border-radius:5px;background:#f8fafc;border:1px solid #f1f5f9;display:grid;grid-template-columns:1fr 1fr 1fr;gap:3px 8px;font:10px 'IBM Plex Mono';color:#475569">
+                  <span>сила 9</span><span>ловк 7</span><span>вынс 8</span>
+                  <span>интл 2</span><span>харз 1</span><span>обуч 3</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:4px 12px"><span style="font:11px 'IBM Plex Sans';color:#64748b">Здоровье / броня</span><span style="font:11.5px 'IBM Plex Mono'">120 · 6</span></div>
+              </div>
+              <div style="display:flex;gap:8px;padding:10px 12px;border-top:1px solid #e2e8f0">
+                <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="default" size="sm" icon="copy" hint-size="110px,28px">Клон · Ins</x-import>
+                <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="danger" size="sm" icon="trash-2" hint-size="110px,28px">Убрать · Del</x-import>
+              </div>
+            </div>
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:inset 3px 0 0 #dc2626">
+              <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #e2e8f0"><span style="font:600 12px 'IBM Plex Sans'">Отряд · side 2</span><div style="flex:1"></div><span style="font:10px 'IBM Plex Mono';color:#94a3b8">editor_warbands_add</span></div>
+              <div style="padding:4px 0 8px">
+                <div style="display:flex;justify-content:space-between;padding:4px 12px"><span style="font:11px 'IBM Plex Sans';color:#64748b">Вражда</span><span style="font:11.5px 'IBM Plex Mono';color:#dc2626">игрок · жители</span></div>
+                <div style="display:flex;justify-content:space-between;padding:4px 12px"><span style="font:11px 'IBM Plex Sans';color:#64748b">Зона</span><span style="font:11.5px 'IBM Plex Mono'">клетки 20:118 → 60:146</span></div>
+                <div style="display:flex;justify-content:space-between;padding:4px 12px"><span style="font:11px 'IBM Plex Sans';color:#64748b">Юнитов в отряде</span><span style="font:11.5px 'IBM Plex Mono'">2+2 draft</span></div>
+                <div style="padding:4px 12px 2px;font:10.5px/1.5 'IBM Plex Sans';color:#64748b">Кто в зоне — бросается на игрока. Зона тянется за углы прямо на холсте.</div>
+              </div>
+            </div>
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:inset 3px 0 0 #f59e0b">
+              <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #e2e8f0"><span style="font:600 12px 'IBM Plex Sans'">Вне пака</span><span style="font:10.5px 'IBM Plex Mono';color:#d97706">3 правки</span></div>
+              <div style="padding:4px 0 8px">
+                <div style="display:flex;justify-content:space-between;padding:4px 12px;font:10.5px 'IBM Plex Mono'"><span style="color:#475569">editor_units_add</span><span>unit_new_2 · unit_new_3</span></div>
+                <div style="display:flex;justify-content:space-between;padding:4px 12px;font:10.5px 'IBM Plex Mono'"><span style="color:#475569">editor_warbands_add</span><span>side 2</span></div>
+                <div style="padding:2px 12px 0;font:10px/1.5 'IBM Plex Mono';color:#94a3b8">мир напрямую: POST /worlds/2/maps/23/units {index, patch}</div>
+                <div style="padding:4px 12px 2px;font:10.5px/1.5 'IBM Plex Sans';color:#64748b">F5 ничего не теряет — холст рендерится из проекта.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div style="height:30px;background:#0f172a;display:flex;align-items:center;gap:14px;padding:0 14px;font:10.5px 'IBM Plex Mono';color:#94a3b8;flex:none">
+          <span style="color:#e2e8f0">клик — выбрать</span><span>Ctrl+клик — перенести</span><span>Ins — клон</span><span>Del — убрать (removed)</span><span>Enter — поставить</span>
+          <div style="flex:1"></div>
+          <span>юниты 46<span style="color:#fcd34d">+2</span></span><span>отряды 3<span style="color:#fcd34d">+1</span></span><span style="color:#4ade80">60 fps</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="dv-opt" id="1g" data-screen-label="1g Клады — кучи и тайники">
+    <div class="dv-olabel"><a class="dv-oid" href="#1g">1g</a>Инструмент «Клады» — кучи, тайники, состав по классам вещей <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px">POST·DELETE /maps/23/loot · editor_loot*</span></div>
+    <div class="dv-card" style="width:1600px">
+      <div style="width:1600px;height:940px;display:flex;flex-direction:column;background:#f8fafc;color:#0f172a">
+        <div style="display:flex;align-items:center;gap:12px;height:52px;padding:0 16px;background:#0f172a;border-bottom:1px solid rgba(255,255,255,.08);flex:none">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:28px;height:28px;border-radius:6px;background:#2563eb;display:flex;align-items:center;justify-content:center"><i data-lucide="map" style="width:16px;height:16px;color:#fff"></i></div>
+            <div style="display:flex;flex-direction:column;line-height:1.1"><span style="font:700 11px 'IBM Plex Sans';color:#fff;letter-spacing:.14em">КНЯЗЬ 2</span><span style="font:500 9px 'IBM Plex Sans';color:#94a3b8;letter-spacing:.22em">РЕДАКТОР КАРТ</span></div>
+          </div>
+          <div style="width:1px;height:24px;background:rgba(255,255,255,.1)"></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:5px 10px;border:1px solid rgba(255,255,255,.14);border-radius:4px;cursor:pointer">
+            <span style="font:600 12px 'IBM Plex Mono';color:#fff">23</span><span style="font:500 12px 'IBM Plex Sans';color:#e2e8f0">Морской лагерь</span><i data-lucide="chevrons-up-down" style="width:13px;height:13px;color:#64748b"></i>
+          </div>
+          <div style="display:flex;gap:4px">
+            <span title="Ctrl+Z · POST /undo" style="width:28px;height:28px;border:1px solid rgba(255,255,255,.16);border-radius:4px;display:flex;align-items:center;justify-content:center;color:#e2e8f0;cursor:pointer"><i data-lucide="undo-2" style="width:14px;height:14px"></i></span>
+            <span title="Ctrl+Y · POST /redo" style="width:28px;height:28px;border:1px solid rgba(255,255,255,.07);border-radius:4px;display:flex;align-items:center;justify-content:center;color:#475569"><i data-lucide="redo-2" style="width:14px;height:14px"></i></span>
+          </div>
+          <span style="font:10.5px 'IBM Plex Mono';color:#64748b">клады: пак 12 · draft 1</span>
+          <div style="flex:1"></div>
+          <div style="display:flex;align-items:center;gap:6px;padding:4px 9px;border-radius:999px;background:rgba(245,158,11,.14);border:1px solid rgba(245,158,11,.35)"><i data-lucide="triangle-alert" style="width:12px;height:12px;color:#f59e0b"></i><span style="font:500 11px 'IBM Plex Sans';color:#fcd34d">валидатор: 2 · 3</span></div>
+          <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="primary" size="sm" icon="hammer" hint-size="90px,28px">Build</x-import>
+          <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="default" size="sm" icon="play" hint-size="80px,28px">Play</x-import>
+        </div>
+        <div style="flex:1;display:flex;min-height:0">
+          <div style="width:56px;background:#0f172a;border-right:1px solid rgba(255,255,255,.08);display:flex;flex-direction:column;flex:none">
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="mountain" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Ландш</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="waves" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Вода</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="footprints" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Проход</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="warehouse" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Объект</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="shrub" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Декор</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="users" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Сущ-ва</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="flag" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Отряды</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#fff;background:#1e293b;box-shadow:inset 3px 0 0 #2563eb"><i data-lucide="gem" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Клады</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#64748b"><i data-lucide="git-branch" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">События</span></div>
+            <div style="flex:1"></div>
+            <div style="height:44px;display:flex;align-items:center;justify-content:center;color:#64748b;border-top:1px solid rgba(255,255,255,.08)"><span style="font:9.5px 'IBM Plex Mono'">TAB ⟳</span></div>
+          </div>
+          <div style="width:250px;background:#fff;border-right:1px solid #e2e8f0;display:flex;flex-direction:column;flex:none">
+            <div style="padding:10px 12px 8px;border-bottom:1px solid #e2e8f0">
+              <div style="display:flex;align-items:baseline;gap:6px"><span style="font:600 12.5px 'IBM Plex Sans'">Клады карты</span><span style="font:10px 'IBM Plex Mono';color:#94a3b8">12 + 1 draft</span></div>
+              <div style="margin-top:8px;display:flex;gap:4px;font:500 10.5px 'IBM Plex Sans'">
+                <span style="padding:3px 8px;border-radius:999px;background:#0f172a;color:#fff">все</span>
+                <span style="padding:3px 8px;border-radius:999px;background:#f1f5f9;color:#475569">кучи · 8</span>
+                <span style="padding:3px 8px;border-radius:999px;background:#f1f5f9;color:#475569">тайники · 5</span>
+              </div>
+            </div>
+            <div style="flex:1;overflow:hidden;padding:8px;display:flex;flex-direction:column;gap:3px">
+              <div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:6px;border:1px solid #f1f5f9"><i data-lucide="coins" style="width:14px;height:14px;color:#d97706"></i><span style="font:11px 'IBM Plex Mono';color:#334155">pile_3</span><span style="font:10px 'IBM Plex Mono';color:#94a3b8">120 · 2 вещи</span><div style="flex:1"></div></div>
+              <div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:6px;border:1px solid #f1f5f9"><i data-lucide="coins" style="width:14px;height:14px;color:#d97706"></i><span style="font:11px 'IBM Plex Mono';color:#334155">pile_5</span><span style="font:10px 'IBM Plex Mono';color:#94a3b8">40 · 1 вещь</span><div style="flex:1"></div></div>
+              <div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:6px;background:#eff6ff;box-shadow:0 0 0 1.5px #2563eb"><i data-lucide="eye-off" style="width:14px;height:14px;color:#1d4ed8"></i><span style="font:600 11px 'IBM Plex Mono';color:#1d4ed8">pile_7</span><span style="font:10px 'IBM Plex Mono';color:#475569">250 · 4 вещи · тайник</span><div style="flex:1"></div></div>
+              <div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:6px;border:1px solid #f1f5f9"><i data-lucide="eye-off" style="width:14px;height:14px;color:#94a3b8"></i><span style="font:11px 'IBM Plex Mono';color:#334155">pile_8</span><span style="font:10px 'IBM Plex Mono';color:#94a3b8">0 · 3 вещи · тайник</span><div style="flex:1"></div></div>
+              <div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:6px;border:1px solid #fde68a;background:#fffbeb"><i data-lucide="coins" style="width:14px;height:14px;color:#d97706"></i><span style="font:11px 'IBM Plex Mono';color:#92400e">pile_new_1</span><span style="font:10px 'IBM Plex Mono';color:#b45309">75 · 1 вещь · draft</span><div style="flex:1"></div></div>
+              <div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:6px;border:1px solid #f1f5f9"><i data-lucide="coins" style="width:14px;height:14px;color:#d97706"></i><span style="font:11px 'IBM Plex Mono';color:#334155">pile_11</span><span style="font:10px 'IBM Plex Mono';color:#94a3b8">15 · пусто</span><div style="flex:1"></div></div>
+              <div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:6px;border:1px solid #f1f5f9"><i data-lucide="archive" style="width:14px;height:14px;color:#78716c"></i><span style="font:11px 'IBM Plex Mono';color:#334155">сундук · slot 89</span><span style="font:10px 'IBM Plex Mono';color:#94a3b8">куча сундука</span><div style="flex:1"></div></div>
+            </div>
+            <div style="padding:8px 12px;border-top:1px solid #e2e8f0;display:flex;align-items:center;gap:8px">
+              <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="default" size="sm" icon="plus" hint-size="150px,28px">Новая куча · N</x-import>
+            </div>
+          </div>
+          <div style="flex:1;position:relative;background:#020617;overflow:hidden;min-width:0">
+            <div style="position:absolute;inset:0;background:url('assets/ground.png') -30px -30px no-repeat"></div>
+            <div style="position:absolute;inset:0;background-image:repeating-linear-gradient(26.57deg,rgba(148,163,184,.1) 0 1px,transparent 1px 26.8px),repeating-linear-gradient(-26.57deg,rgba(148,163,184,.1) 0 1px,transparent 1px 26.8px);display: {{ gridDisplay }}"></div>
+            <img src="assets/obj/100.png" style="position:absolute;left:40px;top:130px;width:330px;image-rendering:pixelated" alt="">
+            <img src="assets/obj/055.png" style="position:absolute;left:470px;top:60px;width:250px;image-rendering:pixelated" alt="">
+            <img src="assets/obj/130.png" style="position:absolute;left:420px;top:330px;width:120px;image-rendering:pixelated" alt="">
+            <img src="assets/obj/140.png" style="position:absolute;left:610px;top:480px;width:130px;image-rendering:pixelated" alt="">
+            <div style="position:absolute;left:250px;top:350px;width:60px;height:30px;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);background:rgba(245,158,11,.3);box-shadow:inset 0 0 0 1.5px rgba(245,158,11,.9)"></div>
+            <img src="assets/icons/84.png" style="position:absolute;left:266px;top:346px;width:28px;image-rendering:pixelated" alt="">
+            <div style="position:absolute;left:318px;top:344px;padding:2px 7px;border-radius:4px;background:rgba(2,6,23,.85);color:#fcd34d;font:10px 'IBM Plex Mono'">pile_3</div>
+            <div style="position:absolute;left:770px;top:250px;width:60px;height:30px;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);background:rgba(245,158,11,.3);box-shadow:inset 0 0 0 1.5px rgba(245,158,11,.9)"></div>
+            <img src="assets/icons/72.png" style="position:absolute;left:786px;top:242px;width:26px;image-rendering:pixelated" alt="">
+            <div style="position:absolute;left:838px;top:244px;padding:2px 7px;border-radius:4px;background:rgba(2,6,23,.85);color:#fcd34d;font:10px 'IBM Plex Mono'">pile_5</div>
+            <div style="position:absolute;left:545px;top:428px;width:64px;height:32px;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);background:rgba(59,130,246,.35);box-shadow:inset 0 0 0 2px #3b82f6"></div>
+            <img src="assets/icons/52.png" style="position:absolute;left:561px;top:415px;width:32px;image-rendering:pixelated" alt="">
+            <div style="position:absolute;left:520px;top:388px;display:flex;gap:4px;white-space:nowrap">
+              <span style="padding:3px 8px;border-radius:4px;background:#2563eb;color:#fff;font:600 10.5px 'IBM Plex Mono'">pile_7 · тайник</span>
+              <span style="padding:3px 8px;border-radius:4px;background:rgba(2,6,23,.85);color:#e2e8f0;font:10.5px 'IBM Plex Mono'">250 монет · 4 вещи</span>
+            </div>
+            <div style="position:absolute;left:820px;top:492px;width:60px;height:30px;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);background:rgba(245,158,11,.35);box-shadow:inset 0 0 0 1.5px #f59e0b;opacity:.95"></div>
+            <img src="assets/icons/97.png" style="position:absolute;left:836px;top:484px;width:26px;image-rendering:pixelated" alt="">
+            <div style="position:absolute;left:748px;top:452px;padding:2px 7px;border-radius:4px;background:rgba(245,158,11,.92);color:#451a03;font:600 10px 'IBM Plex Mono'">pile_new_1 · draft</div>
+            <div style="position:absolute;left:12px;top:10px;display:flex;gap:6px;font:10.5px 'IBM Plex Mono'">
+              <span style="display:flex;align-items:center;gap:5px;padding:4px 9px;border-radius:4px;background:rgba(2,6,23,.8);border:1px solid rgba(148,163,184,.25);color:#fcd34d"><i data-lucide="coins" style="width:11px;height:11px"></i>кучи 8</span>
+              <span style="display:flex;align-items:center;gap:5px;padding:4px 9px;border-radius:4px;background:rgba(2,6,23,.8);border:1px solid rgba(148,163,184,.25);color:#94a3b8"><i data-lucide="eye-off" style="width:11px;height:11px"></i>тайники 5 — видны редактору</span>
+            </div>
+            <div style="position:absolute;right:12px;top:10px;display:flex;gap:4px;font:11px 'IBM Plex Mono'">
+              <span style="padding:4px 8px;border-radius:4px;background:rgba(2,6,23,.8);color:#94a3b8;border:1px solid rgba(148,163,184,.25)">50</span>
+              <span style="padding:4px 8px;border-radius:4px;background:#2563eb;color:#fff">100</span>
+              <span style="padding:4px 8px;border-radius:4px;background:rgba(2,6,23,.8);color:#94a3b8;border:1px solid rgba(148,163,184,.25)">200</span>
+            </div>
+            <div style="position:absolute;left:12px;bottom:12px;width:180px;background:rgba(2,6,23,.88);border:1px solid rgba(148,163,184,.3);border-radius:6px;overflow:hidden;flex-direction:column;display: {{ miniDisplay }}">
+              <div style="height:104px;position:relative;background:url('assets/ground.png') center/cover">
+                <div style="position:absolute;left:24%;top:18%;width:52%;height:58%;border:1.5px solid #fff;box-shadow:0 0 0 999px rgba(2,6,23,.45)"></div>
+              </div>
+              <div style="padding:4px 8px;font:9.5px 'IBM Plex Mono';color:#94a3b8">клады 12+1 · монет 1 240</div>
+            </div>
+          </div>
+          <div style="width:320px;background:#f8fafc;border-left:1px solid #e2e8f0;padding:12px;display:flex;flex-direction:column;gap:10px;overflow:hidden;flex:none">
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:inset 3px 0 0 #2563eb">
+              <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #e2e8f0">
+                <span style="font:600 12px 'IBM Plex Sans'">Куча · pile_7</span>
+                <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.StatusBadge" family="warn" label="draft-патч" size="sm" hint-size="70px,18px"></x-import>
+                <div style="flex:1"></div><span style="font:10px 'IBM Plex Mono';color:#94a3b8">editor_loot</span>
+              </div>
+              <div style="padding:4px 0 6px">
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 12px"><span style="font:11px 'IBM Plex Sans';color:#64748b">Деньги</span><span style="padding:3px 8px;border:1px solid #cbd5e1;border-radius:4px;font:11.5px 'IBM Plex Mono'">250</span></div>
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 12px"><span style="font:11px 'IBM Plex Sans';color:#64748b">Тайник</span><span style="display:flex;align-items:center;gap:6px"><span style="width:13px;height:13px;border-radius:3px;background:#2563eb;display:flex;align-items:center;justify-content:center"><i data-lucide="check" style="width:10px;height:10px;color:#fff"></i></span><span style="font:10.5px 'IBM Plex Mono';color:#64748b">виден по навыку</span></span></div>
+                <div style="display:flex;justify-content:space-between;padding:5px 12px"><span style="font:11px 'IBM Plex Sans';color:#64748b">Клетка</span><span style="font:11.5px 'IBM Plex Mono'">141:96</span></div>
+              </div>
+              <div style="border-top:1px solid #f1f5f9;padding:8px 12px 4px"><span style="font:600 11px 'IBM Plex Sans';color:#334155">Состав · items + details</span></div>
+              <div style="padding:2px 8px 6px;display:flex;flex-direction:column;gap:3px">
+                <div style="display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:5px;background:#f8fafc"><img src="assets/icons/52.png" style="width:22px;height:22px;object-fit:contain" alt=""><span style="font:11px 'IBM Plex Sans'">Панцирь</span><span style="font:9.5px 'IBM Plex Mono';color:#94a3b8">class:12 · прочн 80</span><div style="flex:1"></div><i data-lucide="x" style="width:13px;height:13px;color:#94a3b8"></i></div>
+                <div style="display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:5px;background:#f8fafc"><img src="assets/icons/60.png" style="width:22px;height:22px;object-fit:contain" alt=""><span style="font:11px 'IBM Plex Sans'">Шелом</span><span style="font:9.5px 'IBM Plex Mono';color:#94a3b8">class:18 · прочн 60</span><div style="flex:1"></div><i data-lucide="x" style="width:13px;height:13px;color:#94a3b8"></i></div>
+                <div style="display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:5px;background:#f8fafc"><img src="assets/icons/72.png" style="width:22px;height:22px;object-fit:contain" alt=""><span style="font:11px 'IBM Plex Sans'">Зелье живой воды</span><span style="font:9.5px 'IBM Plex Mono';color:#94a3b8">class:41</span><div style="flex:1"></div><i data-lucide="x" style="width:13px;height:13px;color:#94a3b8"></i></div>
+                <div style="display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:5px;background:#f8fafc"><img src="assets/icons/97.png" style="width:22px;height:22px;object-fit:contain" alt=""><span style="font:11px 'IBM Plex Sans'">Рунный камень</span><span style="font:9.5px 'IBM Plex Mono';color:#94a3b8">class:55</span><div style="flex:1"></div><i data-lucide="x" style="width:13px;height:13px;color:#94a3b8"></i></div>
+                <div style="display:flex;align-items:center;gap:6px;margin-top:3px">
+                  <div style="flex:1;height:28px;border:1px dashed #cbd5e1;border-radius:4px;display:flex;align-items:center;gap:6px;padding:0 9px;color:#94a3b8"><i data-lucide="plus" style="width:12px;height:12px"></i><span style="font:11px 'IBM Plex Sans'">класс вещи… (по каталогу)</span></div>
+                </div>
+              </div>
+              <div style="display:flex;gap:8px;padding:10px 12px;border-top:1px solid #e2e8f0">
+                <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="default" size="sm" icon="copy" hint-size="100px,28px">Дубль · Ins</x-import>
+                <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="danger" size="sm" icon="trash-2" hint-size="110px,28px">Убрать · Del</x-import>
+              </div>
+            </div>
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px">
+              <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #e2e8f0"><span style="font:600 12px 'IBM Plex Sans'">Правила слоёв</span></div>
+              <div style="padding:8px 12px;font:10.5px/1.7 'IBM Plex Mono';color:#475569">пак: pile_N — патчится (editor_loot)<br>новые: pile_new_* — запись целиком<br>items и details летят парой</div>
+            </div>
+          </div>
+        </div>
+        <div style="height:30px;background:#0f172a;display:flex;align-items:center;gap:14px;padding:0 14px;font:10.5px 'IBM Plex Mono';color:#94a3b8;flex:none">
+          <span style="color:#e2e8f0">клик — выбрать кучу</span><span>N — новая в клетке курсора</span><span>Ctrl+клик — перенести</span><span>Del — убрать</span>
+          <div style="flex:1"></div>
+          <span>кучи 8 · тайники 5</span><span style="color:#fcd34d">+1 draft</span><span style="color:#4ade80">60 fps</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="dv-opt" id="1h" data-screen-label="1h Build и Play — сборка пака">
+    <div class="dv-olabel"><a class="dv-oid" href="#1h">1h</a>Build → Play — фоновая сборка с прогрессом, Play после code 0 <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px">POST /build · GET /build/status · GET /play/23</span></div>
+    <div class="dv-card" style="width:1600px">
+      <div style="width:1600px;height:940px;display:flex;flex-direction:column;background:#f8fafc;color:#0f172a;position:relative">
+        <div style="display:flex;align-items:center;gap:12px;height:52px;padding:0 16px;background:#0f172a;border-bottom:1px solid rgba(255,255,255,.08);flex:none">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:28px;height:28px;border-radius:6px;background:#2563eb;display:flex;align-items:center;justify-content:center"><i data-lucide="map" style="width:16px;height:16px;color:#fff"></i></div>
+            <div style="display:flex;flex-direction:column;line-height:1.1"><span style="font:700 11px 'IBM Plex Sans';color:#fff;letter-spacing:.14em">КНЯЗЬ 2</span><span style="font:500 9px 'IBM Plex Sans';color:#94a3b8;letter-spacing:.22em">РЕДАКТОР КАРТ</span></div>
+          </div>
+          <div style="width:1px;height:24px;background:rgba(255,255,255,.1)"></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:5px 10px;border:1px solid rgba(255,255,255,.14);border-radius:4px">
+            <span style="font:600 12px 'IBM Plex Mono';color:#fff">23</span><span style="font:500 12px 'IBM Plex Sans';color:#e2e8f0">Морской лагерь</span><i data-lucide="chevrons-up-down" style="width:13px;height:13px;color:#64748b"></i>
+          </div>
+          <div style="display:flex;gap:4px">
+            <span title="Ctrl+Z · POST /undo" style="width:28px;height:28px;border:1px solid rgba(255,255,255,.16);border-radius:4px;display:flex;align-items:center;justify-content:center;color:#e2e8f0;cursor:pointer"><i data-lucide="undo-2" style="width:14px;height:14px"></i></span>
+            <span title="Ctrl+Y · POST /redo" style="width:28px;height:28px;border:1px solid rgba(255,255,255,.07);border-radius:4px;display:flex;align-items:center;justify-content:center;color:#475569"><i data-lucide="redo-2" style="width:14px;height:14px"></i></span>
+          </div>
+          <span style="font:10.5px 'IBM Plex Mono';color:#64748b">3 правки поедут в пак</span>
+          <div style="flex:1"></div>
+          <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.StatusBadge" family="busy" label="building" size="sm" pulse="true" hint-size="70px,20px"></x-import>
+          <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="primary" size="sm" busy="true" hint-size="100px,28px">Build</x-import>
+          <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="default" size="sm" icon="play" disabled="true" hint-size="80px,28px">Play</x-import>
+        </div>
+        <div style="flex:1;display:flex;min-height:0">
+          <div style="width:56px;background:#0f172a;border-right:1px solid rgba(255,255,255,.08);display:flex;flex-direction:column;flex:none">
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="mountain" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Ландш</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="waves" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Вода</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="footprints" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Проход</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#fff;background:#1e293b;box-shadow:inset 3px 0 0 #2563eb"><i data-lucide="warehouse" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Объект</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="shrub" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Декор</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="users" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Сущ-ва</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="flag" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Отряды</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="gem" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Клады</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#64748b"><i data-lucide="git-branch" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">События</span></div>
+            <div style="flex:1"></div>
+            <div style="height:44px;display:flex;align-items:center;justify-content:center;color:#64748b;border-top:1px solid rgba(255,255,255,.08)"><span style="font:9.5px 'IBM Plex Mono'">TAB ⟳</span></div>
+          </div>
+          <div style="flex:1;position:relative;background:#020617;overflow:hidden;min-width:0">
+            <div style="position:absolute;inset:0;background:url('assets/ground.png') -30px -30px no-repeat"></div>
+            <img src="assets/obj/100.png" style="position:absolute;left:140px;top:150px;width:330px;image-rendering:pixelated" alt="">
+            <img src="assets/obj/055.png" style="position:absolute;left:570px;top:80px;width:250px;image-rendering:pixelated" alt="">
+            <img src="assets/obj/085.png" style="position:absolute;left:800px;top:275px;width:300px;image-rendering:pixelated" alt="">
+            <img src="assets/obj/130.png" style="position:absolute;left:520px;top:350px;width:120px;image-rendering:pixelated" alt="">
+            <img src="assets/obj/065.png" style="position:absolute;left:980px;top:560px;width:250px;image-rendering:pixelated" alt="">
+            <div style="position:absolute;inset:0;background:rgba(2,6,23,.55);backdrop-filter:blur(1px)"></div>
+            <div style="position:absolute;top:0;right:0;bottom:0;width:440px;background:#fff;border-left:1px solid #e2e8f0;border-radius:12px 0 0 12px;box-shadow:-24px 0 48px rgba(2,6,23,.35);display:flex;flex-direction:column">
+              <div style="display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid #e2e8f0">
+                <div style="width:26px;height:26px;border-radius:6px;background:#eff6ff;display:flex;align-items:center;justify-content:center"><i data-lucide="hammer" style="width:14px;height:14px;color:#2563eb"></i></div>
+                <div style="display:flex;flex-direction:column"><span style="font:600 13px 'IBM Plex Sans'">Сборка карты 23</span><span style="font:10px 'IBM Plex Mono';color:#94a3b8">job b-142 · python -m knyaz2.content build --map 23</span></div>
+                <div style="flex:1"></div>
+                <i data-lucide="x" style="width:16px;height:16px;color:#94a3b8"></i>
+              </div>
+              <div style="padding:14px 16px 6px">
+                <div style="display:flex;justify-content:space-between;font:10.5px 'IBM Plex Mono';color:#64748b"><span>идёт 14.2s</span><span>шаг 2/3</span></div>
+                <div style="margin-top:6px;height:6px;border-radius:3px;background:#f1f5f9;overflow:hidden"><div style="width:64%;height:100%;background:#2563eb"></div></div>
+              </div>
+              <div style="padding:8px 16px;display:flex;flex-direction:column;gap:2px">
+                <div style="display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:6px;background:#f0fdf4">
+                  <i data-lucide="check" style="width:14px;height:14px;color:#16a34a"></i><span style="font:11.5px 'IBM Plex Sans';color:#166534">Правила и таблицы</span><div style="flex:1"></div><span style="font:10px 'IBM Plex Mono';color:#16a34a">2.1s</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:6px;background:#eff6ff;border:1px solid #bfdbfe">
+                  <span style="width:13px;height:13px;border:2px solid #2563eb;border-top-color:transparent;border-radius:999px;animation:k2spin .8s linear infinite"></span>
+                  <span style="font:11.5px 'IBM Plex Sans';color:#1e40af">Карта 23 → пак</span><div style="flex:1"></div><span style="font:10px 'IBM Plex Mono';color:#2563eb">тайлы · объекты · scenario</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:6px">
+                  <i data-lucide="circle" style="width:13px;height:13px;color:#cbd5e1"></i><span style="font:11.5px 'IBM Plex Sans';color:#94a3b8">Проверка пака · verify</span><div style="flex:1"></div><span style="font:10px 'IBM Plex Mono';color:#cbd5e1">ждёт</span>
+                </div>
+              </div>
+              <div style="margin:6px 16px;padding:10px 12px;border-radius:6px;background:#0f172a;flex:1;overflow:hidden;font:10px/1.75 'IBM Plex Mono';color:#94a3b8">
+                <span style="color:#4ade80">✓</span> правила боя: 96 пород, 118 классов вещей<br>
+                <span style="color:#4ade80">✓</span> grid.txt: 256×160 · глушь 3 208<br>
+                <span style="color:#4ade80">✓</span> layer1.png → 12 800 пар тайлов<br>
+                <span style="color:#4ade80">✓</span> T_OBJECTS: 213 + editor_props_add 1 = 214<br>
+                <span style="color:#4ade80">✓</span> вода: 498 клеток · Lake · тайл 71<br>
+                <span style="color:#7dd3fc">→</span> юниты: 46 жителей + editor_units_add 2<br>
+                <span style="color:#7dd3fc">→</span> отряды: 3 + editor_warbands_add 1 (side 2)<br>
+                <span style="color:#64748b">· клады: 12 + pile_new_1 · листы тварей 6</span><br>
+                <span style="color:#64748b">· кэш кадров: 88% попаданий</span>
+              </div>
+              <div style="padding:12px 16px;border-top:1px solid #e2e8f0;display:flex;align-items:center;gap:8px">
+                <span style="font:10px/1.5 'IBM Plex Mono';color:#94a3b8">одна сборка за раз (409)<br>шаги — парсинг tail из /build/status</span>
+                <div style="flex:1"></div>
+                <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="ghost" size="sm" hint-size="90px,28px">Отменить</x-import>
+                <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="primary" size="sm" icon="play" disabled="true" hint-size="130px,28px">Play — после 0</x-import>
+              </div>
+            </div>
+            <div style="position:absolute;left:24px;bottom:24px;width:400px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 16px 40px rgba(2,6,23,.35);overflow:hidden">
+              <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #e2e8f0;background:#f0fdf4">
+                <i data-lucide="check-circle-2" style="width:15px;height:15px;color:#16a34a"></i><span style="font:600 12px 'IBM Plex Sans';color:#166534">Так выглядит финал</span><div style="flex:1"></div><span style="font:10px 'IBM Plex Mono';color:#16a34a">code 0 · 31.8s</span>
+              </div>
+              <div style="padding:10px 12px;display:flex;align-items:center;gap:10px">
+                <div style="display:flex;flex-direction:column;gap:2px"><span style="font:11.5px 'IBM Plex Sans';color:#334155">Пак согласован: юниты 48 · отряды 4 · клады 13</span><span style="font:10px 'IBM Plex Mono';color:#94a3b8">draft-счётчики обнулились — всё в паке</span></div>
+                <div style="flex:1"></div>
+                <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="primary" size="sm" icon="play" hint-size="80px,28px">Play</x-import>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div style="height:30px;background:#0f172a;display:flex;align-items:center;gap:14px;padding:0 14px;font:10.5px 'IBM Plex Mono';color:#94a3b8;flex:none">
+          <span style="color:#7dd3fc">build: running · job b-142</span><span>GET /build/status — каждые 500ms</span>
+          <div style="flex:1"></div>
+          <span>после code 0: GET /play/23 → {redirect: "/?map=23"} · не собран — честный отказ</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="dv-opt" id="1i" data-screen-label="1i Валидатор карты">
+    <div class="dv-olabel"><a class="dv-oid" href="#1i">1i</a>Валидатор — битые ссылки, лимиты, выходы; ошибки показываются на холсте <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px">GET /maps/23/validate (E1.5)</span></div>
+    <div class="dv-card" style="width:1600px">
+      <div style="width:1600px;height:940px;display:flex;flex-direction:column;background:#f8fafc;color:#0f172a">
+        <div style="display:flex;align-items:center;gap:12px;height:52px;padding:0 16px;background:#0f172a;border-bottom:1px solid rgba(255,255,255,.08);flex:none">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:28px;height:28px;border-radius:6px;background:#2563eb;display:flex;align-items:center;justify-content:center"><i data-lucide="map" style="width:16px;height:16px;color:#fff"></i></div>
+            <div style="display:flex;flex-direction:column;line-height:1.1"><span style="font:700 11px 'IBM Plex Sans';color:#fff;letter-spacing:.14em">КНЯЗЬ 2</span><span style="font:500 9px 'IBM Plex Sans';color:#94a3b8;letter-spacing:.22em">РЕДАКТОР КАРТ</span></div>
+          </div>
+          <div style="width:1px;height:24px;background:rgba(255,255,255,.1)"></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:5px 10px;border:1px solid rgba(255,255,255,.14);border-radius:4px">
+            <span style="font:600 12px 'IBM Plex Mono';color:#fff">23</span><span style="font:500 12px 'IBM Plex Sans';color:#e2e8f0">Морской лагерь</span><i data-lucide="chevrons-up-down" style="width:13px;height:13px;color:#64748b"></i>
+          </div>
+          <div style="display:flex;gap:4px">
+            <span title="Ctrl+Z · POST /undo" style="width:28px;height:28px;border:1px solid rgba(255,255,255,.16);border-radius:4px;display:flex;align-items:center;justify-content:center;color:#e2e8f0;cursor:pointer"><i data-lucide="undo-2" style="width:14px;height:14px"></i></span>
+            <span title="Ctrl+Y · POST /redo" style="width:28px;height:28px;border:1px solid rgba(255,255,255,.07);border-radius:4px;display:flex;align-items:center;justify-content:center;color:#475569"><i data-lucide="redo-2" style="width:14px;height:14px"></i></span>
+          </div>
+          <div style="flex:1"></div>
+          <div style="display:flex;align-items:center;gap:6px;padding:4px 9px;border-radius:999px;background:rgba(239,68,68,.16);border:1px solid rgba(239,68,68,.4)"><i data-lucide="octagon-alert" style="width:12px;height:12px;color:#f87171"></i><span style="font:500 11px 'IBM Plex Sans';color:#fca5a5">2 ошибки · 3 предупреждения</span></div>
+          <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="primary" size="sm" icon="hammer" hint-size="90px,28px">Build</x-import>
+          <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="default" size="sm" icon="play" hint-size="80px,28px">Play</x-import>
+        </div>
+        <div style="flex:none">
+          <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.AlertBar" severity="critical" count="2" message="Build пройдёт, но карта сломана для игрока: юнит в глуши и заблокированный выход" action-label="К первой ошибке" hint-size="100%,40px"></x-import>
+        </div>
+        <div style="flex:1;display:flex;min-height:0">
+          <div style="width:56px;background:#0f172a;border-right:1px solid rgba(255,255,255,.08);display:flex;flex-direction:column;flex:none">
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="mountain" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Ландш</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="waves" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Вода</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="footprints" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Проход</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="warehouse" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Объект</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="shrub" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Декор</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="users" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Сущ-ва</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="flag" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Отряды</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#94a3b8"><i data-lucide="gem" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Клады</span></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#64748b"><i data-lucide="git-branch" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">События</span></div>
+            <div style="flex:1"></div>
+            <div style="height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#fff;background:#1e293b;box-shadow:inset 3px 0 0 #dc2626;border-top:1px solid rgba(255,255,255,.08)"><i data-lucide="stethoscope" style="width:17px;height:17px"></i><span style="font:9px 'IBM Plex Sans'">Провер</span></div>
+          </div>
+          <div style="width:270px;background:#fff;border-right:1px solid #e2e8f0;display:flex;flex-direction:column;flex:none">
+            <div style="padding:10px 12px 8px;border-bottom:1px solid #e2e8f0">
+              <div style="display:flex;align-items:baseline;gap:6px"><span style="font:600 12.5px 'IBM Plex Sans'">Валидатор</span><span style="font:10px 'IBM Plex Mono';color:#94a3b8">перед сборкой · H3-style</span></div>
+              <div style="margin-top:8px;display:flex;gap:6px">
+                <span style="display:flex;align-items:center;gap:5px;padding:4px 9px;border-radius:5px;background:#fef2f2;border:1px solid #fecaca;font:600 11px 'IBM Plex Sans';color:#991b1b"><i data-lucide="octagon-alert" style="width:12px;height:12px"></i>2 ошибки</span>
+                <span style="display:flex;align-items:center;gap:5px;padding:4px 9px;border-radius:5px;background:#fffbeb;border:1px solid #fde68a;font:600 11px 'IBM Plex Sans';color:#92400e"><i data-lucide="triangle-alert" style="width:12px;height:12px"></i>3 предупр.</span>
+              </div>
+            </div>
+            <div style="flex:1;overflow:hidden;padding:8px;display:flex;flex-direction:column;gap:4px">
+              <div style="padding:8px 10px;border-radius:6px;background:#eff6ff;box-shadow:0 0 0 1.5px #2563eb;display:flex;flex-direction:column;gap:3px">
+                <div style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:2px;background:#dc2626"></span><span style="font:600 11.5px 'IBM Plex Sans';color:#1e3a8a">Юнит в глуши</span><div style="flex:1"></div><span style="font:9px 'IBM Plex Mono';color:#64748b">E-01</span></div>
+                <span style="font:10px 'IBM Plex Mono';color:#475569">unit_new_2 · скелет · клетка 34:132</span>
+                <span style="font:10px 'IBM Plex Sans';color:#64748b">спавн внутри LO 0xFFF — юнит не сможет ходить</span>
+              </div>
+              <div style="padding:8px 10px;border-radius:6px;border:1px solid #f1f5f9;display:flex;flex-direction:column;gap:3px">
+                <div style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:2px;background:#dc2626"></span><span style="font:600 11.5px 'IBM Plex Sans';color:#334155">Выход заблокирован</span><div style="flex:1"></div><span style="font:9px 'IBM Plex Mono';color:#94a3b8">E-02</span></div>
+                <span style="font:10px 'IBM Plex Mono';color:#94a3b8">запад · клетки 0:86–0:92 · → карта 22</span>
+              </div>
+              <div style="padding:8px 10px;border-radius:6px;border:1px solid #f1f5f9;display:flex;flex-direction:column;gap:3px">
+                <div style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:2px;background:#f59e0b"></span><span style="font:600 11.5px 'IBM Plex Sans';color:#334155">Вода у лимита</span><div style="flex:1"></div><span style="font:9px 'IBM Plex Mono';color:#94a3b8">W-01</span></div>
+                <span style="font:10px 'IBM Plex Mono';color:#94a3b8">498/512 клеток · формат .KN2</span>
+              </div>
+              <div style="padding:8px 10px;border-radius:6px;border:1px solid #f1f5f9;display:flex;flex-direction:column;gap:3px">
+                <div style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:2px;background:#f59e0b"></span><span style="font:600 11.5px 'IBM Plex Sans';color:#334155">Диалог без дерева</span><div style="flex:1"></div><span style="font:9px 'IBM Plex Mono';color:#94a3b8">W-02</span></div>
+                <span style="font:10px 'IBM Plex Mono';color:#94a3b8">unit_12 · dialog 148 — нет в QUESTS</span>
+              </div>
+              <div style="padding:8px 10px;border-radius:6px;border:1px solid #f1f5f9;display:flex;flex-direction:column;gap:3px">
+                <div style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:2px;background:#f59e0b"></span><span style="font:600 11.5px 'IBM Plex Sans';color:#334155">Фазы строений не серией</span><div style="flex:1"></div><span style="font:9px 'IBM Plex Mono';color:#94a3b8">W-03</span></div>
+                <span style="font:10px 'IBM Plex Mono';color:#94a3b8">slots 96–101 · рантайм чинит сам</span>
+              </div>
+            </div>
+            <div style="padding:8px 12px;border-top:1px solid #e2e8f0;display:flex;align-items:center;gap:8px">
+              <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="default" size="sm" icon="rotate-cw" hint-size="140px,28px">Перепроверить</x-import>
+              <span style="font:9.5px 'IBM Plex Mono';color:#94a3b8">0.4s</span>
+            </div>
+          </div>
+          <div style="flex:1;position:relative;background:#020617;overflow:hidden;min-width:0">
+            <div style="position:absolute;inset:0;background:url('assets/ground.png') -30px -30px no-repeat;filter:brightness(.8)"></div>
+            <div style="position:absolute;inset:0;background-image:repeating-linear-gradient(26.57deg,rgba(148,163,184,.1) 0 1px,transparent 1px 26.8px),repeating-linear-gradient(-26.57deg,rgba(148,163,184,.1) 0 1px,transparent 1px 26.8px);display: {{ gridDisplay }}"></div>
+            <img src="assets/obj/100.png" style="position:absolute;left:140px;top:150px;width:330px;image-rendering:pixelated" alt="">
+            <img src="assets/obj/055.png" style="position:absolute;left:570px;top:80px;width:250px;image-rendering:pixelated" alt="">
+            <div style="position:absolute;left:180px;top:270px;width:290px;height:100px;background-image:repeating-linear-gradient(26.57deg,rgba(239,68,68,.45) 0 1px,rgba(239,68,68,.22) 1px 13.4px),repeating-linear-gradient(-26.57deg,rgba(239,68,68,.45) 0 1px,rgba(239,68,68,.22) 1px 13.4px);clip-path:polygon(18% 0,100% 38%,82% 100%,0 62%)"></div>
+            <img src="assets/creatures/s56.png" style="position:absolute;left:300px;top:255px;width:26px;image-rendering:pixelated" alt="">
+            <div style="position:absolute;left:281px;top:300px;width:64px;height:32px;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);background:rgba(239,68,68,.4);box-shadow:inset 0 0 0 2.5px #ef4444;animation:k2pulse 1.2s ease-in-out infinite"></div>
+            <div style="position:absolute;left:352px;top:262px;display:flex;flex-direction:column;gap:3px;white-space:nowrap">
+              <span style="padding:3px 8px;border-radius:4px;background:#dc2626;color:#fff;font:600 10.5px 'IBM Plex Mono'">E-01 · юнит в глуши · 34:132</span>
+              <span style="padding:3px 8px;border-radius:4px;background:rgba(2,6,23,.85);border:1px solid rgba(239,68,68,.4);color:#fca5a5;font:10px 'IBM Plex Mono'">спавн внутри стены — сдвинуть или снять глушь</span>
+            </div>
+            <div style="position:absolute;left:0;top:330px;width:56px;height:140px;background:rgba(239,68,68,.35);box-shadow:inset -2px 0 0 #ef4444;animation:k2pulse 1.6s ease-in-out infinite"></div>
+            <div style="position:absolute;left:64px;top:388px;padding:3px 8px;border-radius:4px;background:rgba(2,6,23,.85);border:1px solid rgba(239,68,68,.5);color:#fca5a5;font:10.5px 'IBM Plex Mono';white-space:nowrap">E-02 · выход запад 0:86–92 перекрыт глушью</div>
+            <div style="position:absolute;right:12px;top:10px;display:flex;gap:4px;font:11px 'IBM Plex Mono'">
+              <span style="padding:4px 8px;border-radius:4px;background:rgba(2,6,23,.8);color:#94a3b8;border:1px solid rgba(148,163,184,.25)">50</span>
+              <span style="padding:4px 8px;border-radius:4px;background:#2563eb;color:#fff">100</span>
+              <span style="padding:4px 8px;border-radius:4px;background:rgba(2,6,23,.8);color:#94a3b8;border:1px solid rgba(148,163,184,.25)">200</span>
+            </div>
+            <div style="position:absolute;left:12px;top:10px;display:flex;gap:6px;font:10.5px 'IBM Plex Mono'">
+              <span style="padding:4px 9px;border-radius:4px;background:rgba(2,6,23,.8);border:1px solid rgba(239,68,68,.4);color:#fca5a5">маркеры: 2 ошибки</span>
+              <span style="padding:4px 9px;border-radius:4px;background:rgba(2,6,23,.8);border:1px solid rgba(245,158,11,.4);color:#fcd34d">3 предупреждения</span>
+            </div>
+            <div style="position:absolute;left:12px;bottom:12px;width:180px;background:rgba(2,6,23,.88);border:1px solid rgba(148,163,184,.3);border-radius:6px;overflow:hidden;flex-direction:column;display: {{ miniDisplay }}">
+              <div style="height:104px;position:relative;background:url('assets/ground.png') center/cover">
+                <div style="position:absolute;left:24%;top:18%;width:52%;height:58%;border:1.5px solid #fff;box-shadow:0 0 0 999px rgba(2,6,23,.45)"></div>
+                <span style="position:absolute;left:30%;top:40%;width:7px;height:7px;border-radius:999px;background:#ef4444"></span>
+                <span style="position:absolute;left:2%;top:52%;width:7px;height:7px;border-radius:999px;background:#ef4444"></span>
+                <span style="position:absolute;left:78%;top:70%;width:7px;height:7px;border-radius:999px;background:#f59e0b"></span>
+              </div>
+              <div style="padding:4px 8px;font:9.5px 'IBM Plex Mono';color:#94a3b8">ошибки на мини-карте</div>
+            </div>
+          </div>
+          <div style="width:320px;background:#f8fafc;border-left:1px solid #e2e8f0;padding:12px;display:flex;flex-direction:column;gap:10px;overflow:hidden;flex:none">
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:inset 3px 0 0 #dc2626">
+              <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #e2e8f0">
+                <span style="font:600 12px 'IBM Plex Sans'">E-01 · Юнит в глуши</span>
+                <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.StatusBadge" family="bad" label="ошибка" size="sm" hint-size="60px,18px"></x-import>
+              </div>
+              <div style="padding:4px 0 6px">
+                <div style="display:flex;justify-content:space-between;padding:4px 12px"><span style="font:11px 'IBM Plex Sans';color:#64748b">Сущность</span><span style="font:11.5px 'IBM Plex Mono'">unit_new_2 · скелет</span></div>
+                <div style="display:flex;justify-content:space-between;padding:4px 12px"><span style="font:11px 'IBM Plex Sans';color:#64748b">Клетка</span><span style="font:11.5px 'IBM Plex Mono'">34:132 · LO 0xFFF</span></div>
+                <div style="display:flex;justify-content:space-between;padding:4px 12px"><span style="font:11px 'IBM Plex Sans';color:#64748b">Источник</span><span style="font:11.5px 'IBM Plex Mono';color:#d97706">editor_units_add</span></div>
+                <div style="margin:6px 12px;padding:7px 9px;border-radius:5px;background:#fef2f2;border:1px solid #fecaca;font:10.5px/1.5 'IBM Plex Sans';color:#991b1b">В игре юнит застрянет в стене. Сборка это не чинит.</div>
+              </div>
+              <div style="display:flex;gap:8px;padding:10px 12px;border-top:1px solid #e2e8f0">
+                <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="default" size="sm" icon="crosshair" hint-size="110px,28px">На холсте</x-import>
+                <x-import component-from-global-scope="GatewayConsoleDesignSystem_64aa70.ActionButton" variant="primary" size="sm" icon="users" hint-size="170px,28px">Открыть в Существах</x-import>
+              </div>
+            </div>
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px">
+              <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #e2e8f0"><span style="font:600 12px 'IBM Plex Sans'">Что проверяется</span><div style="flex:1"></div><span style="font:10px 'IBM Plex Mono';color:#94a3b8">уровни: ошибка · предупр.</span></div>
+              <div style="padding:4px 0 8px;font:11px 'IBM Plex Sans';color:#475569">
+                <div style="display:flex;align-items:center;gap:8px;padding:4px 12px"><i data-lucide="link-2" style="width:13px;height:13px;color:#64748b"></i>битые ссылки: спрайт · диалог · класс вещи · имя</div>
+                <div style="display:flex;align-items:center;gap:8px;padding:4px 12px"><i data-lucide="door-open" style="width:13px;height:13px;color:#64748b"></i>выходы карты достижимы</div>
+                <div style="display:flex;align-items:center;gap:8px;padding:4px 12px"><i data-lucide="footprints" style="width:13px;height:13px;color:#64748b"></i>юниты и клады не в глуши</div>
+                <div style="display:flex;align-items:center;gap:8px;padding:4px 12px"><i data-lucide="ruler" style="width:13px;height:13px;color:#64748b"></i>лимиты: вода 512 · частокол 100 · T_* 1000</div>
+                <div style="display:flex;align-items:center;gap:8px;padding:4px 12px"><i data-lucide="building-2" style="width:13px;height:13px;color:#64748b"></i>фазы строений серией · отряд с зоной</div>
+              </div>
+            </div>
+            <div style="margin-top:auto;padding:8px 10px;border-radius:6px;background:#f1f5f9;font:10.5px/1.5 'IBM Plex Sans';color:#475569">Build не блокируется ошибками — валидатор советует, движок и рантайм-автопочинка решают.</div>
+          </div>
+        </div>
+        <div style="height:30px;background:#0f172a;display:flex;align-items:center;gap:14px;padding:0 14px;font:10.5px 'IBM Plex Mono';color:#94a3b8;flex:none">
+          <span style="color:#fca5a5">валидатор: 2 ошибки</span><span style="color:#fcd34d">3 предупреждения</span><span>клик по строке — камера к месту</span>
+          <div style="flex:1"></div>
+          <span>проверка 0.4s · перед каждым Build</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  </div>
+  <p class="dv-next">Дальше: «сделай кликабельный прототип из <a class="dv-oid" href="#1b">1b</a>» · «покажи confirm удаления класса D» · «добавь экран Декора»</p>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;showGrid&quot;: {&quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: true, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Холст&quot;}, &quot;showMinimap&quot;: {&quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: true, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Холст&quot;}}">
+class Component extends DCLogic {
+  componentDidMount() {
+    const tick = () => { if (window.lucide) { try { window.lucide.createIcons(); } catch (e) {} } };
+    let n = 0;
+    this._lucideTimer = setInterval(() => { tick(); if (++n > 45) clearInterval(this._lucideTimer); }, 700);
+    tick();
+    this._lucideMo = new MutationObserver(() => {
+      clearTimeout(this._lucideDeb);
+      this._lucideDeb = setTimeout(tick, 120);
+    });
+    this._lucideMo.observe(document.body, { childList: true, subtree: true });
+    setTimeout(() => this._lucideMo.disconnect(), 45000);
+  }
+  componentWillUnmount() {
+    clearInterval(this._lucideTimer);
+    clearTimeout(this._lucideDeb);
+    if (this._lucideMo) this._lucideMo.disconnect();
+  }
+  renderVals() {
+    return {
+      gridDisplay: (this.props.showGrid ?? true) ? 'block' : 'none',
+      miniDisplay: (this.props.showMinimap ?? true) ? 'flex' : 'none'
+    };
+  }
+}
+</script>
+</body>
+</html>
+	text/html ����ۻ�

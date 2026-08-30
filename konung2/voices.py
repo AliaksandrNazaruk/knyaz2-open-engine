@@ -30,6 +30,7 @@ WAV по умолчанию сохраняется в 22050; частота-ар
 """
 from __future__ import annotations
 
+import os
 import struct
 import wave
 
@@ -61,10 +62,27 @@ class VoicesRes:
             # пустые места забиты нулями; односемпловых записей не бывает
             self.entries.append((offset, size) if size > 1 else None)
 
+    #: Разобранные voices.res по игре: файл на полгигабайта, и читать его
+    #: заново на каждый вопрос слишком дорого.
+    _LOADED: dict[str, 'VoicesRes'] = {}
+
     @classmethod
-    def from_game(cls) -> 'VoicesRes':
-        with open(game_file(r'KONUNG2\voices.res'), 'rb') as stream:
-            return cls(stream.read())
+    def from_game(cls, profile=None) -> 'VoicesRes':
+        """Голоса своей игры.
+
+        У «Продолжения легенды» файл СВОЙ (703 МБ против наших 469) и
+        нумерация тоже своя — под общий номер у него лежит другая реплика.
+        Развести их обязательно, иначе персонаж заговорит чужими словами.
+        """
+        from .profile import CANON
+        profile = profile or CANON
+        if profile.name not in cls._LOADED:
+            path = os.path.join(profile.directory, 'KONUNG2', 'voices.res')
+            if not os.path.isfile(path):
+                path = game_file(r'KONUNG2\voices.res')
+            with open(path, 'rb') as stream:
+                cls._LOADED[profile.name] = cls(stream.read())
+        return cls._LOADED[profile.name]
 
     def used(self) -> list[int]:
         """Номера занятых записей (в оригинале их 1245)."""

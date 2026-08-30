@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import struct
 from dataclasses import dataclass, field
-from typing import Iterator
+from typing import Iterator, NamedTuple
 
 from ..graph import LIGHT_FROM_TICK, fixed_light_map, ground_cells
 from ..grid import BUILT, GRID_COLS, GRID_ROWS, PASSABLE_MASK, SOLID
@@ -88,9 +88,10 @@ class MapModel:
 
     @classmethod
     def from_kn2(cls, kn2: KN2Map, number: int,
-                 objects: ObjectsRes | None = None) -> "MapModel":
+                 objects: ObjectsRes | None = None,
+                 cells: "CellLayout | None" = None) -> "MapModel":
         objects = objects or ObjectsRes.from_game()
-        blocked, solid, bright, owned = _read_grid(kn2)
+        blocked, solid, bright, owned = _read_grid(kn2, cells or CANON_CELLS)
         model = cls(
             number=number,
             terrain=Terrain(tiles=_read_ground(kn2), blocked=blocked,
@@ -147,9 +148,30 @@ class MapModel:
 
 # ── чтение сырых таблиц ───────────────────────────────────────────────────
 
-def _read_grid(kn2: KN2Map) -> tuple[tuple[Cell, ...], tuple[Cell, ...],
-                                     tuple[Cell, ...],
-                                     dict[int, dict[str, list[Cell]]]]:
+class CellLayout(NamedTuple):
+    """Раскладка старшего слова клетки: номер постройки и два флага.
+
+    У канона номер в пяти битах, у донора в шести — оттого его флаги и стоят
+    на бит выше. Это одно свойство, а не два: поле шире, флаги следом.
+    Переводить одно в другое нельзя, шестибитный номер в пять бит не влезает,
+    поэтому донорская карта читается СВОЕЙ раскладкой.
+    """
+
+    building: int
+    routed: int
+    bright: int
+
+
+CANON_CELLS = CellLayout(building=0x1F, routed=ROUTED_UNIT >> 16,
+                         bright=BRIGHT_UNIT >> 16)
+LEGEND_CELLS = CellLayout(building=0x3F, routed=(ROUTED_UNIT >> 16) << 1,
+                          bright=(BRIGHT_UNIT >> 16) << 1)
+
+
+def _read_grid(kn2: KN2Map, cells: CellLayout = CANON_CELLS
+               ) -> tuple[tuple[Cell, ...], tuple[Cell, ...],
+                          tuple[Cell, ...],
+                          dict[int, dict[str, list[Cell]]]]:
     """Сетка: непроходимые и глухие клетки, «дневные» и владение постройками."""
     blocked: list[Cell] = []
     solid: list[Cell] = []
@@ -163,16 +185,16 @@ def _read_grid(kn2: KN2Map) -> tuple[tuple[Cell, ...], tuple[Cell, ...],
                 blocked.append(cell)
             if low & SOLID:
                 solid.append(cell)
-            if high & (BRIGHT_UNIT >> 16):
+            if high & cells.bright:
                 bright.append(cell)
-            slot = (high & 0x1F) - 1
+            slot = (high & cells.building) - 1
             if slot < 0:
                 continue
             entry = owned.setdefault(slot, {"footprint": [], "floor": [], "routed": []})
             entry["footprint"].append(cell)
             if low & BUILT:
                 entry["floor"].append(cell)
-            if high & (ROUTED_UNIT >> 16):
+            if high & cells.routed:
                 entry["routed"].append(cell)
     return tuple(blocked), tuple(solid), tuple(bright), owned
 

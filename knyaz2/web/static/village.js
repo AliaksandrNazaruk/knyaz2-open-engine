@@ -27,14 +27,13 @@
 // стрелы кладутся в пустой боеприпас стрелка, снаряжение — в слот вида,
 // если тот пуст или защита класса хуже (старая вещь пропадает); требования
 // проверяет 0x418648. Один предмет за такт, как и в движке.
-import { world } from "./world.js";
+import { shared, world } from "./world.js";
 import { hero } from "./hero.js";
 import { units } from "./units.js";
-import { actorItem, actorNewItemRef } from "./actor.js";
-import { daylight } from "./daylight.js";
-import { clockPhaseHits } from "./clock.js";
-import { SLOTS, requirementMet } from "./inventory.js";
+import { clock } from "./clock.js";
 import { levelThreshold, raiseCharacteristic, raiseSkill } from "./progress.js";
+import { placeStep } from "./buildings.js";
+import { mapStateResidents } from "./mapstate.js";
 import { roundHalfEven } from "./round.js";
 
 export const village = {
@@ -45,6 +44,11 @@ export const village = {
   stock: {},         // запасы по видам (+0x44E): вид -> имя готовой вещи
   trainTimer: 0,     // тактов деревни до занятия у воеводы (+0x0C)
   lastTime: null,    // прошлое игровое время — для счёта тиков
+  //: Сколько рук считалось на этой карте в последний раз. Движку такое поле
+  //: не нужно — у него все юниты всех карт живут весь сеанс, и работников он
+  //: пересчитывает по отряду поселения где угодно. У нас юниты чужих карт из
+  //: памяти уходят, поэтому число запоминаем, пока мы там стоим.
+  workers: 0,
 };
 
 function treasuryRules() {
@@ -76,6 +80,20 @@ export function villageSetup(map) {
   const number = mapNumber(map);
   current = number;
   const kept = number === null ? null : settlements.get(number);
+  // ЗАГЛУШКА ДОЖДАЛАСЬ СВОЕЙ ЗАПИСИ. Она поднялась из сейва без пака и
+  // всё это время считала дань и стройку; теперь пришла настоящая запись
+  // карты — со жителями, местами работы и прилавками, — а нажитое
+  // заглушкой переливаем в неё. Порядок именно такой: пак даёт статику,
+  // заглушка — то, что игра успела изменить.
+  if (kept?.stub) {
+    const packed = map?.village ?? null;
+    kept.data = packed ? villageCarry(packed, kept.data) : kept.data;
+    kept.stub = false;
+    if (map) map.village = kept.data;
+    Object.assign(village, kept);
+    delete village.stub;
+    return;
+  }
   if (kept) {
     //: Вернулись на свою карту — берём СВОЮ запись, а копию из пака
     //: отставляем. Подменяем и `map.village`: на неё смотрят разговоры,
@@ -85,11 +103,11 @@ export function villageSetup(map) {
     return;
   }
   village.data = map?.village ?? null;
-  village.incomeStamp = daylight.time ?? 0;
-  village.order = -1;
-  village.timer = 0;
+  village.incomeStamp = clock.ticks;
+  //: Полей `order`/`timer`/`stock` больше нет: кузница живёт в shops.js и
+  //: держит заказ на самой записи поселения (forgeOrder/forgeLeft) — как
+  //: движок в полях +0x49F/+0x08 той же записи.
   village.trainTimer = 0;
-  village.stock = {};
   village.lastTime = null;
   if (number === null || !village.data) return;
   const entry = { ...village };
@@ -108,6 +126,88 @@ export function villageCapture() {
   if (current === null || !settlements.has(current)) return false;
   settlements.set(current, { ...village });
   return true;
+}
+
+// СТРОЙКА ИДЁТ И БЕЗ ИГРОКА — во всех поселениях сразу.
+//
+// В движке фаза деревень (0x41C944:356, раз в 16 тактов) проходит по ВСЕМ
+// двенадцати записям массива 0x83D408 независимо от того, на какой карте
+// стоит игрок: записи глобальны, а карта — только картинка над ними.
+//
+// У нас же такт ходил по объектам ТЕКУЩЕЙ карты, и стоило уйти из деревни,
+// как её стройка замирала до возвращения. Тестер это и увидел: «стройка
+// кузницы в Беглом встала». Теперь места чужих поселений тикают из склада —
+// той же лестницей (`placeStep`), что и видимые.
+//
+// Текущее поселение здесь пропускаем: его места уже двигает buildingsTick
+// через объекты карты, и второй проход считал бы такты дважды.
+//: Возвращает НАБОР карт, где стройка сдвинулась: по этому же признаку
+//: движок решает, будет ли в этой фазе учёба (0x41C944: `local_38`).
+//: Изменилось ли что-нибудь вообще — спрашивать не надо: заочная фаза
+//: всё равно идёт следом, и кадр она не рисует.
+export function villageTickAway(hits = 1) {
+  const set = world.map?.hero?.rules?.buildings;
+  const built = new Set();
+  if (hits < 1) return built;
+  const kinds = set?.kinds ?? {};
+  const now = clock.ticks;
+  for (const [map, kept] of settlements) {
+    if (map === current) continue;
+    // КАЗНА ИДЁТ И ЗАОЧНО. В движке доход считается в том же цикле по всем
+    // двенадцати записям и карты не спрашивает вовсе (VA 0x41C944 -> 0x41D559).
+    // У нас он висел на «текущей деревне», и стоило уйти с её карты, как
+    // дань переставала копиться — ровно то, на что жаловался тестер.
+    //
+    //: Жителей дальней деревни считать не по чему: её юнитов в памяти нет.
+    //: Берём число, запомненное прошлым визитом (`workers` — им же считает
+    //: стройка), а без визита — счётчик отряда поселения из записи.
+    const people = kept.workers ?? kept.data?.squad_people ?? 0;
+    treasuryFor(kept, now, people);
+    if (!set?.states) continue;
+    const places = kept.data?.buildings ?? [];
+    if (!places.length) continue;
+    for (const place of places) {
+      const kind = kinds[String(place.kind)] ?? null;
+      for (let hit = hits; hit > 0; hit -= 1) {
+        if (!placeStep(place, kind, kept.workers ?? 0, set)) break;
+        place.built = Boolean(place.state || place.timer);
+        built.add(map);
+      }
+    }
+  }
+  return built;
+}
+
+// ДАЛЬНИЕ ПОСЕЛЕНИЯ: все, кроме той карты, где стоит игрок. Их хозяйство
+// движок считает наравне со здешним (VA 0x41C944 идёт по всем двенадцати
+// записям), поэтому список нужен наружу — им пользуется фаза в effects.js.
+export function villagesAway() {
+  return [...settlements.entries()].filter(([map]) => map !== current);
+}
+
+// КОМАНДА ПОСЕЛЕНИЯ — те, над кем работает его хозяйство: должностной варит
+// и кует, воевода учит, кузница раздаёт откованное.
+//
+// В движке это всегда одно и то же — бойцы отряда поселения в общем массиве
+// юнитов, где бы игрок ни стоял. У нас юниты живут только на текущей карте,
+// а жители остальных лежат СНИМКАМИ в памяти карт (mapstate.js). Снимок —
+// не подделка, а та же запись: именно из него житель и поднимается при
+// следующем входе, и units.js применяет из снимка и навыки, и снаряжение, и
+// прилавок. Поэтому заочная работа правит снимки, и нажитое видно на месте.
+export function villageCrew(map) {
+  if (map === current) return units;
+  return [...mapStateResidents(map).values()];
+}
+
+// Должностной поселения по МЕСТУ в пятёрке +0x3D0 (VA 0x415190 отдаёт
+// «место + 1», отсюда у знахаря роль 2, у кузнеца 4, у воеводы 5).
+// Мёртвый и ушедший должности не несут.
+export function villageOfficial(data, crew, post) {
+  const slot = (data?.officials ?? [])[post] ?? 0;
+  if (!slot) return null;
+  const who = crew.find((unit) => unit?.slot === slot);
+  if (!who || who.alive === false || who.removed) return null;
+  return who;
 }
 
 // Всё, что игра изменила в поселениях, — для сейва. Движок пишет блок целиком
@@ -129,22 +229,54 @@ export function villagePack() {
     counters: kept.data?.counters
       ? JSON.parse(JSON.stringify(kept.data.counters)) : null,
     // Ступень и счётчик каждого МЕСТА — это и есть стройка.
+    //: ВИД ВОЗИМ ТОЖЕ. Заочная стройка идёт по лестнице вида (`placeStep`
+    //: берёт из него сроки ступеней), а поселение, поднятое из сейва без
+    //: визита, паковой записи ещё не видело — взять вид было неоткуда, и
+    //: стройка там стояла.
     places: (kept.data?.buildings ?? []).map((place) => ({
-      slot: place.slot, state: place.state ?? 0,
+      slot: place.slot, kind: place.kind, state: place.state ?? 0,
       timer: place.timer ?? 0, built: Boolean(place.built),
     })),
     incomeStamp: kept.incomeStamp ?? 0,
-    order: kept.order ?? -1,
-    timer: kept.timer ?? 0,
     trainTimer: kept.trainTimer ?? 0,
-    stock: { ...(kept.stock ?? {}) },
     lastTime: kept.lastTime ?? null,
+    // Кузница и варка живут на самой записи поселения, как поля движка
+    // +0x49F/+0x08 (заказ и срок) и +0x04 (часы варки) — едут с ней же.
+    forgeOrder: kept.data?.forgeOrder ?? -1,
+    forgeLeft: kept.data?.forgeLeft ?? 0,
+    brewTimer: kept.data?.brewTimer ?? null,
+    brewTokens: kept.data?.brewTokens ? [...kept.data.brewTokens] : null,
   }));
 }
 
 // Обратно в склад. Записи поселений сами приедут из пака при первом входе на
 // карту, поэтому здесь держим отложенные правки и накладываем их тогда же.
 const pending = new Map();
+
+// СОСТОЯНИЕ ПОСЕЛЕНИЯ, ГДЕ ИГРОК ЕЩЁ НЕ БЫЛ.
+//
+// В движке блок записей загружен весь и с начала партии, поэтому разговор
+// вправе спросить про дальнюю деревню — «Продолжение легенды» так и делает
+// (его обработчик 35 ищет поселение по номеру карты среди двадцати,
+// FUN_0043f670, и смотрит флаги). У нас же запись приезжала только вместе
+// со своей картой, и про непосещённую ответить было нечем.
+//
+// Порядок такой: живая запись, если игрок туда заходил; иначе отложенная
+// правка из сейва; иначе скалярное состояние из `shared.settlements`.
+// Скалярное — потому что постройки и жители весят девять килобайт на запись
+// и спрашивают их только на своей карте.
+export function villageState(number) {
+  const map = Number(number);
+  if (!Number.isFinite(map)) return null;
+  const live = settlements.get(map);
+  if (live?.data) return live.data;
+  const worldId = String(world.map?.hero?.template?.world ?? 0);
+  const list = shared.settlements?.[worldId] ?? shared.settlements?.["0"] ?? [];
+  const start = list.find((entry) => Number(entry?.map) === map) ?? null;
+  if (!start) return null;
+  const saved = pending.get(map);
+  return saved ? { ...start, ...saved } : start;
+}
 
 // НОВАЯ ИГРА чистит склад целиком: в движке блок поселений перечитывается из
 // GAME.x (0x43D898), то есть от прошлой партии не остаётся ничего.
@@ -169,10 +301,99 @@ export function villageUnpack(list) {
   }
   //: Уже загруженные записи правим сразу — на текущей карте пак уже прочитан.
   for (const [number, kept] of settlements) villageApply(number, kept);
+  // ПОСЕЛЕНИЯ ЖИВУТ С ЗАГРУЗКИ, А НЕ С ПЕРВОГО ВИЗИТА.
+  //
+  // Движок читает блок 0x83D408 целиком (0x4236E0) и с этого мига считает
+  // все двенадцать записей каждую фазу. У нас запись приезжала только со
+  // своей картой, и после загрузки в складе оставалась одна текущая: дань
+  // в остальных не капала, стройка стояла — пока туда не зайдёшь.
+  //
+  // Поднимаем их прямо из сохранённого. Такая запись — заглушка: в ней
+  // только то, что игра меняет, без жителей, мест работы и товара. Своей
+  // паковой записи она дождётся при визите (villageSetup), а нажитое
+  // заочно перейдёт в неё.
+  for (const [number, saved] of pending) {
+    if (settlements.has(number)) continue;
+    settlements.set(number, villageStub(number, saved));
+  }
   if (current !== null) {
     const kept = settlements.get(current);
     if (kept) Object.assign(village, kept);
   }
+}
+
+//: Скалярное состояние поселения из пака — по нему заглушка узнаёт
+//: богатство и сторону, которых сейв не возит: игра их не меняет.
+function villageStatic(number) {
+  const worldId = String(world.map?.hero?.template?.world ?? 0);
+  const list = shared.settlements?.[worldId] ?? shared.settlements?.["0"] ?? [];
+  return list.find((entry) => Number(entry?.map) === Number(number)) ?? null;
+}
+
+//: Заглушка поселения из сохранённого: те же имена полей, что у паковой
+//: записи, — чтобы её потом можно было перелить в настоящую одной функцией.
+function villageStub(number, saved) {
+  const base = villageStatic(number) ?? {};
+  return {
+    stub: true,
+    data: {
+      map: Number(number),
+      wealth: base.wealth ?? 0, side: base.side, culture: base.culture ?? 0,
+      flags: saved.flags ?? base.flags ?? 0,
+      status: saved.status ?? base.status ?? 0,
+      owner: saved.owner ?? base.owner ?? 0,
+      owned: saved.owned ?? base.owned ?? 0,
+      treasury: saved.treasury ?? base.treasury ?? 0,
+      officials: [...(saved.officials ?? base.officials ?? [])],
+      squad_people: saved.squadPeople ?? base.squad_people ?? 0,
+      counters: saved.counters ? JSON.parse(JSON.stringify(saved.counters)) : null,
+      buildings: (saved.places ?? []).map((place) => ({ ...place })),
+      forgeOrder: saved.forgeOrder ?? -1,
+      forgeLeft: saved.forgeLeft ?? 0,
+      brewTimer: saved.brewTimer ?? null,
+      brewTokens: saved.brewTokens ? [...saved.brewTokens] : null,
+    },
+    incomeStamp: saved.incomeStamp ?? 0,
+    trainTimer: saved.trainTimer ?? 0,
+    lastTime: saved.lastTime ?? null,
+    // РУКИ — СЧЁТЧИК ОТРЯДА ПОСЕЛЕНИЯ (+0x1C). Движок считает их по самому
+    // отряду в общем массиве юнитов, и для дальней деревни это ровно тот же
+    // счёт (VA 0x41C944:358-386). У нас юнитов чужой карты в памяти нет, и
+    // до первого визита ближе всего — сохранённое число бойцов отряда.
+    // Ноль здесь означал бы «работать некому»: стройка стоит без рук, и
+    // поселение, поднятое из сейва, так и не начинало строить.
+    workers: saved.squadPeople ?? base.squad_people ?? 0,
+  };
+}
+
+//: Перелить нажитое заглушкой в настоящую паковую запись. Список полей тот
+//: же, что накладывает `villageApply` из сейва, — только источник свежее:
+//: заглушка с загрузки успела и построить, и накопить дань.
+function villageCarry(data, stub) {
+  if (!data || !stub) return data;
+  for (const field of ["flags", "status", "owner", "owned", "treasury",
+                       "squad_people", "forgeOrder", "forgeLeft", "brewTimer"]) {
+    if (stub[field] !== undefined && stub[field] !== null) data[field] = stub[field];
+  }
+  if (Array.isArray(stub.officials)) data.officials = [...stub.officials];
+  if (Array.isArray(stub.brewTokens)) data.brewTokens = [...stub.brewTokens];
+  for (const [role, box] of Object.entries(stub.counters ?? {})) {
+    data.counters = data.counters ?? {};
+    const live = data.counters[role] ??
+      (data.counters[role] = { slots: [], details: {} });
+    live.slots = live.slots ?? [];
+    live.slots.length = 0;
+    live.slots.push(...(box?.slots ?? []));
+    live.details = { ...(box?.details ?? {}) };
+  }
+  for (const place of stub.buildings ?? []) {
+    const found = (data.buildings ?? []).find((row) => row.slot === place.slot);
+    if (!found) continue;
+    found.state = place.state ?? 0;
+    found.timer = place.timer ?? 0;
+    found.built = Boolean(place.built);
+  }
+  return data;
 }
 
 function villageApply(number, kept) {
@@ -205,22 +426,35 @@ function villageApply(number, kept) {
     found.timer = place.timer ?? 0;
     found.built = Boolean(place.built);
   }
+  //: Метка выплаты теперь в мировых тактах, а сейвы до этой правки несут
+  //: её в часах суток. Пересчитать неоткуда, и разбирать нечего: чужое
+  //: число даст самое большее одну лишнюю выплату сразу после обновления,
+  //: дальше метку ставит сам `treasuryTick` уже в тактах.
   kept.incomeStamp = saved.incomeStamp ?? kept.incomeStamp ?? 0;
-  kept.order = saved.order ?? -1;
-  kept.timer = saved.timer ?? 0;
   kept.trainTimer = saved.trainTimer ?? 0;
-  kept.stock = { ...(saved.stock ?? {}) };
   kept.lastTime = saved.lastTime ?? null;
+  if (Number.isFinite(saved.forgeOrder)) data.forgeOrder = saved.forgeOrder;
+  if (Number.isFinite(saved.forgeLeft)) data.forgeLeft = saved.forgeLeft;
+  if (Number.isFinite(saved.brewTimer)) data.brewTimer = saved.brewTimer;
+  if (Array.isArray(saved.brewTokens)) data.brewTokens = [...saved.brewTokens];
   return true;
 }
 
-//: Игровое время суточное (0…21599), поэтому и разница, и сравнение с
-//: периодом идут по модулю — движок берёт |время − метка| (0x442B7E).
-function timeGap(now, then) {
-  const day = 21600;
-  const raw = Math.abs(now - then);
-  return Math.min(raw, day - raw);
-}
+// ЧАСЫ КАЗНЫ — МИРОВОЙ ТАКТ, А НЕ ВРЕМЯ СУТОК.
+//
+// В движке метка выплаты (+0x14 записи поселения) хранит `_DAT_0084962C` —
+// монотонный счётчик тактов, — и срок проверяется так (VA 0x41D559):
+//
+//     iVar3 = abs(_DAT_0084962c - поселение[+0x14]);
+//     if (0x275f < iVar3) { ... доход ...; поселение[+0x14] = _DAT_0084962c; }
+//
+// Здесь метка лежала в СУТОЧНЫХ часах (0…21599), а разница бралась по
+// кругу — `min(|now−then|, 21600−|now−then|)`, то есть не больше 10800 при
+// периоде 10080. Условие выполнялось лишь в окне 1441 такт из 21600 (6,7 %
+// суток): прозевал — жди следующих суток, а «прозевать» значило всего лишь
+// выйти из деревни, потому что тикает она, только пока её карта текущая.
+// Отсюда «сходил на глобальную и обратно — дани нет, а пересидел сутки в
+// деревне — есть». Монотонный счётчик такой щели не оставляет.
 
 // Житель деревни — юнит той же стороны, что и её люди.
 function villageSide() {
@@ -236,59 +470,47 @@ function villagePeople(side) {
 
 // Есть ли на карте живой отряд события: при нём раздача товара стоит
 // (VA 0x417BD8 зовёт 0x435214 — ту же проверку, что обработчик 23).
-function eventAlive() {
+// Экспорт — для кузницы (shops.js), у неё тот же гейт раздачи.
+//
+// БОЙЦЫ ЛЕЖАТ В `units`, А НЕ В `members`. Здесь читалось несуществующее
+// поле, и `[].some(...)` давал ложь ВСЕГДА: раздача у кузнеца не тормозилась
+// ни разу. Не совпадали и поля внутри — ждали `type`, а поза юнита это
+// `pose` (+0x17). Правило движка (0x435214): жив тот, у кого снят бит 0x80
+// в +0x1A и поза не 3, не 0xB и не 0xC.
+export function eventAlive() {
   return (world.map?.events ?? []).some((event) => {
     if (!event.active) return false;
-    return (event.members ?? []).some((member) =>
-      !(member.flags & 0x80) && ![3, 0x0B, 0x0C].includes(member.type ?? 0));
+    return (event.units ?? []).some(eventFighterAlive);
   });
 }
 
+//: Одна мерка на оба места — сюда и в условие разговора 23.
+export function eventFighterAlive(unit) {
+  return !((unit?.flags ?? 0) & 0x80) &&
+    ![3, 0x0B, 0x0C].includes(unit?.pose ?? 0);
+}
+
 const roll = (limit) => Math.floor(Math.random() * limit);
+//: Кузница переехала в shops.js ЦЕЛИКОМ (villageForge): здесь жил её дубль
+//: с верной механикой, но складом `village.stock`, которого не читал ни
+//: один торговый экран. Подробности — комментарий у villageForge.
 
-//: Класс продукции вида: 0…4 — боеприпас, дальше снаряжение культуры.
-function goodClass(index, shop) {
-  const ammo = shop.ammo_classes ?? [202, 203, 204, 206, 207];
-  if (index < ammo.length) return ammo[index];
-  return (shop.culture_base ?? 100) +
-    (village.data?.culture ?? 0) * (shop.culture_step ?? 34) +
-    index - (shop.gear_shift ?? 5);
-}
-
-function nameOfClass(number) {
-  const items = world.map?.items ?? {};
-  for (const [name, item] of Object.entries(items)) {
-    if (item.index === number) return name;
-  }
-  return null;
-}
-
-// Навык мастера. Мастер — обычный житель: его навык растёт прямо в юните.
-function master() {
-  const number = village.data?.master;
-  if (!number) return null;
-  return units.find((unit) => unit.slot === number && unit.alive) ?? null;
-}
-
-function smithSkill(unit) {
-  const names = world.map?.hero?.rules?.progression?.skills?.names ?? [];
-  const index = names.indexOf("Кузнечное дело");
-  return index >= 0 ? unit.skills?.[index] ?? 0 : 0;
-}
-
-function setSmithSkill(unit, value) {
-  const names = world.map?.hero?.rules?.progression?.skills?.names ?? [];
-  const index = names.indexOf("Кузнечное дело");
-  if (index >= 0 && unit.skills) unit.skills[index] = value;
-}
-
-// Недельный доход казны владения.
-function treasuryTick(now) {
+// Недельный доход казны владения — ОДНОЙ записи поселения.
+//
+// Запись, а не глобальная «текущая деревня»: в движке фаза деревень
+// (VA 0x41C944, ветка `(такт + 7) & 0xF`) идёт по ВСЕМ двенадцати записям
+// блока 0x83D408, и по текущей карте отфильтрованы ровно две отрисовочные
+// ветки — расстановка (0x415B20) и перерисовка постройки (0x4171CC). Ни
+// казна, ни стройка, ни варка, ни кузница карты не спрашивают вовсе.
+//
+// `people` приходит доводом по той же причине: у своей деревни жителей
+// видно на карте, у дальней их считает не карта, а память прошлого визита.
+function treasuryFor(kept, now, people) {
   const set = treasuryRules();
-  const data = village.data;
+  const data = kept?.data;
   if (!set || !data) return false;
   if ((data.flags ?? 0) & (set.block_bit ?? 0x10)) return false;
-  if (timeGap(now, village.incomeStamp) <= (set.period ?? 0x2760) - 1) {
+  if (Math.abs(now - (kept.incomeStamp ?? 0)) <= (set.period ?? 0x2760) - 1) {
     return false;
   }
   const names = world.map?.hero?.rules?.progression?.skills?.names ?? [];
@@ -296,149 +518,47 @@ function treasuryTick(now) {
   const skill = index >= 0 ? hero.skills?.[index] ?? 0 : 0;
   let income = roundHalfEven(
     (data.wealth ?? 0) * (set.wealth_scale ?? 50) * Math.sqrt(skill) +
-    villagePeople(villageSide()) * (set.per_person ?? 10) + 1);
+    people * (set.per_person ?? 10) + 1);
   const row = (set.dividers ?? [])[Math.min(data.status ?? 0, 2)] ?? [1, 1, 1];
   income = Math.trunc(income / (row[Math.min(data.owner ?? 0, 2)] ?? 1));
   data.owned = (data.owned ?? 0) + income;
-  village.incomeStamp = now;
+  kept.incomeStamp = now;
   return true;
 }
 
-//: Срок ПЕРВОГО заказа (0x417CF9): round(нужда·60 / sqrt(навык/10 + 1)) —
-//: единица стоит ПОД корнем, ноль в корне невозможен.
-function orderTicks(need, skillTenth, shop) {
-  const root = Math.sqrt(skillTenth);
-  if (!root) return 0;
-  return roundHalfEven(need * (shop.minute ?? 60) / root);
-}
-
-//: Срок ПЕРЕЗАКАЗА после выдачи (0x417F22 и 0x41800A): формула ДРУГАЯ —
-//: round(нужда·60 / (sqrt(навык/10) + 1)): единица прибавляется ПОСЛЕ
-//: корня, нужда — та же прочность класса (0x45DAF8 = база классов + 8).
-function reorderTicks(need, skill, shop) {
-  const root = Math.sqrt(Math.trunc(skill / (shop.skill_divisor ?? 10))) + 1;
-  return roundHalfEven(need * (shop.minute ?? 60) / root);
-}
-
-// Выбрать мастеру новый заказ. Возвращает, вышло ли.
-function takeOrder(smith, shop) {
-  const skill = smithSkill(smith);
-  for (let index = 0; index < (shop.goods ?? 39); index += 1) {
-    if (village.stock[index]) continue;
-    const name = nameOfClass(goodClass(index, shop));
-    const need = actorItem(name)?.durability ?? Infinity;
-    if (need > skill) continue;
-    village.order = index;
-    village.timer = orderTicks(
-      need, Math.trunc(skill / (shop.skill_divisor ?? 10)) + 1, shop);
-    return true;
-  }
-  return false;
-}
-
-// Раздать один готовый предмет жителю. Возвращает, вышло ли.
-function giveGoods(shop) {
-  const data = village.data;
-  const thresholds = (data.status ?? 0) === 1
-    ? (shop.give_thresholds?.["1"] ?? [7, 6, 4])
-    : (shop.give_thresholds?.other ?? [6, 4, 0]);
-  const bar = thresholds[Math.min(data.owner ?? 0, 2)] ?? 0;
-  if (roll(shop.give_die ?? 8) < bar) return false;
-  const side = villageSide();
-  const ammoKinds = (shop.ammo_classes ?? []).length;
-  for (const [key, name] of Object.entries(village.stock)) {
-    if (!name) continue;
-    const index = Number(key);
-    const item = actorItem(name);
-    if (!item) continue;
-    for (const unit of units) {
-      if (!unit.alive || unit.side !== side) continue;
-      // зверям мастерская не раздаёт (0x417BD8: бит 0x40 породы)
-      if (unit.beast) continue;
-      if (index < ammoKinds && !unit.equipment?.ranged) continue;
-      if (!requirementMet(name, unit)) continue;
-      if (index < ammoKinds) {
-        if (unit.equipment.ammo) continue;
-        unit.equipment.ammo = name;
-      } else {
-        const slot = SLOTS[item.kind ?? 0];
-        if (!slot || !(slot in (unit.equipment ?? {}))) continue;
-        const worn = actorItem(unit.equipment[slot]);
-        if (worn && (worn.power ?? 0) >= (item.power ?? 0)) continue;
-        // старая вещь пропадает: движок помечает её запись пустой
-        unit.equipment[slot] = name;
-      }
-      village.stock[index] = null;
-      // Выдав, движок ТУТ ЖЕ куёт то же самое снова (0x417EFF/0x418...):
-      // сток обнулён, заказ — этот же товар, срок — формулой перезаказа.
-      village.order = index;
-      village.timer = reorderTicks(item.durability ?? 0,
-                                   smithSkill(master() ?? {}), shop);
-      return true;
-    }
-  }
-  return false;
-}
-
-// Мастерская: один канонный такт. `фазы` — сколько раз за этот кадр сошлась
-// ФАЗА ПОСТРОЕК; таймер заказа убывает ровно на единицу за фазу.
-function workshopTick(phases) {
-  const shop = workshopRules();
-  const data = village.data;
-  if (!shop || !data) return false;
-  const smith = master();
-  if (!smith) return false;
-  if (village.order < 0) {
-    if (takeOrder(smith, shop)) return false;
-    // всё доступное отковано — раздача, но не при живом отряде события
-    if (!eventAlive()) return giveGoods(shop);
-    return false;
-  }
-  // Канон: `*(int *)(param_1 + 8) = *(int *)(param_1 + 8) + -1` (VA
-  // 0x417BD8:138) — минус ЕДИНИЦА за вызов, а единственный вызывающий это
-  // фаза построек мирового такта (VA 0x41C944:510, ветка `+7 & 0xF`).
-  // Раньше вычиталась разница игрового времени, и заказ поспевал в 16 раз
-  // быстрее канона.
-  if (!phases) return false;
-  village.timer -= phases;
-  if (village.timer > 0) return false;
-  const classRef = nameOfClass(goodClass(village.order, shop));
-  const name = classRef ? actorNewItemRef(classRef, "workshop") : null;
-  if (name) {
-    village.stock[village.order] = name;
-    const need = actorItem(name)?.durability ?? 0;
-    const skill = smithSkill(smith);
-    // рост мастера: sqrt-формула хвоста 0x417BD8, кап 100
-    setSmithSkill(smith, Math.min(100,
-      roundHalfEven(Math.sqrt(need * 2 + skill * skill + 10))));
-  }
-  village.order = -1;
-  village.timer = 0;
-  return Boolean(name);
+//: Казна СВОЕЙ деревни: жителей видно на карте, их и считаем.
+function treasuryTick(now) {
+  if (!treasuryFor(village, now, villagePeople(villageSide()))) return false;
+  //: `village` и запись склада — два объекта с общими полями. Метку кладём
+  //: в обе, иначе уход с карты вернул бы из склада прежнюю.
+  const kept = current === null ? null : settlements.get(current);
+  if (kept) kept.incomeStamp = village.incomeStamp;
+  return true;
 }
 
 // Такт хозяйства: зовётся из мирового цикла. Возвращает, поменялось ли
-// что-нибудь заметное.
+// что-нибудь заметное. Мастерская отсюда переехала в shops.js
+// (villageForge) — она работает с настоящим прилавком кузнеца, а здешний
+// дубль ковал в невидимый `village.stock`.
 export function villageTick() {
   if (!village.data) return false;
-  const now = daylight.time ?? 0;
-  if (village.lastTime === null) village.lastTime = now;
-  // Фаза построек движка: `(_DAT_0084962c + 7 & 0xf) == 0` (VA 0x41C944:356).
-  // Мастерская висит на ней, казна — на метке времени, поэтому считаем их
-  // отдельно и НЕ выходим раньше времени по «время не сдвинулось».
-  const phases = clockPhaseHits(0xF, 7);
-  const ticks = Math.round(timeGap(now, village.lastTime));
-  if (ticks < 1 && !phases) return false;
-  if (ticks >= 1) village.lastTime = now;
-  let changed = false;
-  if (treasuryTick(now)) changed = true;
-  if (workshopTick(phases)) changed = true;
-  return changed;
+  //: Счёт по тому же мировому такту: раз за такт, не чаще. Прежний гейт
+  //: смотрел на часы суток и при выключенных сутках («вечное утро»,
+  //: настройка daynight) не пропускал казну ВОВСЕ.
+  const now = clock.ticks;
+  if (village.lastTime === now) return false;
+  village.lastTime = now;
+  return treasuryTick(now);
 }
 
-// ОБУЧЕНИЕ У ВОЕВОДЫ (VA 0x4181E8) — то, чего тестер не нашёл в казарме.
+// ОБУЧЕНИЕ У ВОЕВОДЫ (VA 0x4181E8) — ОДНА ИЗ ДВУХ механик казармы.
 //
-// Спарринга здесь нет вовсе. Движок раз в 1200 тактов деревни проходит по
+// Вторая — тренировка на рабочих местах (units.js, sparringTick): она видна
+// глазом, но жителей не растит. Растит их эта, и она невидима. Обе разобраны
+// в docs/VILLAGE_TRAINING_SPEC.md; путать их нельзя, потому что жалобы
+// «никто не машет» и «опыт не идёт» — про разные.
+//
+// Движок раз в 1200 тактов деревни проходит по
 // бойцам её отряда и даёт каждому, чей уровень не выше уровня воеводы, СТО
 // опыта; дошедшему до порога — уровень, 25 свободных очков и ДВЕ попытки
 // роста: Выносливость, Сила, Ловкость и одиннадцать навыков. Такт деревни
@@ -463,29 +583,34 @@ const TRAIN_ROUNDS = 2;
 const TRAIN_SKILLS = 11;
 const TRAIN_POST = 4;
 
-export function villageTraining(phases = 1) {
-  const data = village.data;
+//: `kept` — чья казарма (по умолчанию своя деревня), `crew` — над кем
+//: работает (живые юниты дома, снимки жителей у дальней). Счётчик занятий
+//: живёт на самой записи склада, как поле +0x0C у движка.
+export function villageTraining(phases = 1, kept = village, crew = units) {
+  const data = kept?.data;
   if (!data || phases < 1) return false;
   const warlord = (data.officials ?? [])[TRAIN_POST] ?? 0;
   if (!warlord) return false;
   let changed = false;
   for (let phase = 0; phase < phases; phase += 1) {
-    village.trainTimer = (village.trainTimer ?? TRAIN_PERIOD) - 1;
-    if (village.trainTimer > 0) continue;
-    village.trainTimer = TRAIN_PERIOD;
-    if (trainOnce(warlord, data)) changed = true;
+    kept.trainTimer = (kept.trainTimer ?? TRAIN_PERIOD) - 1;
+    if (kept.trainTimer > 0) continue;
+    kept.trainTimer = TRAIN_PERIOD;
+    if (trainOnce(warlord, data, crew)) changed = true;
   }
   return changed;
 }
 
-function trainOnce(warlord, data) {
-  const teacher = units.find((unit) => unit.slot === warlord);
+function trainOnce(warlord, data, crew) {
+  const teacher = crew.find((unit) => unit.slot === warlord);
   if (!teacher || teacher.alive === false) return false;
   const ceiling = teacher.level ?? 1;
   let changed = false;
-  for (const unit of units) {
+  for (const unit of crew) {
     if (unit === teacher || unit.side !== data.side) continue;
-    if (unit.alive === false || unit.beast) continue;
+    //: У снимка жителя поля `beast` нет — там работает канонная мерка
+    //: самого движка: человек это облик меньше шести (VA 0x41C944:359).
+    if (unit.alive === false || (unit.beast ?? (unit.body ?? 0) >= 6)) continue;
     if ((unit.level ?? 1) > ceiling) continue;
     // Опыт кладётся НАПРЯМУЮ, минуя 0x413110: множителя сложности здесь нет,
     // это учёба жителей, а не награда игроку.

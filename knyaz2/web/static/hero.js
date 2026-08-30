@@ -2,10 +2,10 @@
 import { world } from "./world.js";
 import { tickSeconds } from "./clock.js";
 import { isSelected } from "./orders.js";
-import { clampCamera, spriteReady, context, layeredFrame, view,
+import { clampCamera, context, layeredFrame, view,
          withMainContext } from "./viewport.js";
-import { actorAttackPose, actorBody, actorItem, actorLayers, actorWeapon,
-         drawLayerFrame, heroSheets } from "./actor.js";
+import { actorAttackPose, actorBody, actorFrames, actorItem, actorPoseKnown, actorWeapon,
+         drawActor, isBeast } from "./actor.js";
 
 // Игровой персонаж: восемь направлений, стойка/ходьба из HEROES.RES.
 // Управление — WASD/стрелки и клик по земле; движется в экранных осях, но
@@ -34,8 +34,8 @@ export const hero = {
   cells: null,               // сетка занятости 0x5662BC: 0 / 0xFFF / метка юнита
   buildingCells: new Map(),  // "row:col" -> {slot, built, routed}
   brightCells: new Set(),    // бит 22: юнит рисуется статичной палитрой
-  roofSlot: null,            // здание, чью крышу прячем (клетка героя)
-  insideSlot: null,          // бит 21 без бита 15: рисуем в проходе здания
+  roofBuilding: null,        // здание, чью крышу прячем (клетка героя)
+  insideBuilding: null,      // биты 21/15: рисует проход ЭТОЙ постройки
   overlay: false,            // бит 15: игрок рисуется поверх всей сцены
   bright: false,             // клетка героя несёт бит 22
   grid: null,
@@ -50,11 +50,10 @@ export const hero = {
 //: и именно она давала ход втрое-вдевятеро медленнее оригинала.
 
 // Кадры позы для текущего направления.
+//: Набор кадров героя — тот же выбор, что у любого юнита; здесь стояла
+//: дословная копия `actorFrames`, и расходиться ей было незачем.
 export function heroFrames(pose = hero.pose, direction = hero.direction) {
-  const sets = hero.data?.animations;
-  // Действия общие для обеих стоек: пары у них в таблицах движка нет.
-  return sets?.[hero.stance]?.[pose]?.[direction] ??
-    sets?.actions?.[pose]?.[direction] ?? null;
+  return actorFrames(hero.data, hero, pose, direction);
 }
 
 // Разовое действие: играет до конца и возвращается в стойку. Оружие в кадре
@@ -63,7 +62,11 @@ export function heroFrames(pose = hero.pose, direction = hero.direction) {
 // решает группа предмета в руке (rules.attack_by_item, VA 0x416B50 ближний
 // бой и 0x416AC8 стрельба).
 export function heroPlayAction(name) {
-  if (!hero.data?.animations?.actions?.[name]) return false;
+  //: У СВОЕГО ГЕРОЯ ДЕЙСТВИЯ ЛЕЖАТ В НАБОРЕ. Канонная таблица `actions`
+  //: описывает кадры HEROES.RES, а набор твари живёт мимо неё, поэтому
+  //: `cast` там не найдётся никогда — он приходит из набора твари.
+  if (!hero.data?.animations?.actions?.[name] &&
+      !actorPoseKnown(hero, name)) return false;
   hero.moving = false;
   hero.step = null;
   hero.path = [];
@@ -79,14 +82,6 @@ export function heroDie() {
   return heroPlayAction(`death_${1 + Math.floor(Math.random() * variants)}`);
 }
 
-// Номер варианта смерти сохраняется в позе трупа: движок ставит блок 13 для
-// первой смерти и «блок + 3» для остальных, то есть 11->14 и 12->15
-// (VA 0x41471E и 0x414727).
-function heroCorpseOf(pose) {
-  const corpse = `corpse_${pose.slice("death_".length)}`;
-  return hero.data?.animations?.actions?.[corpse] ? corpse : "corpse_1";
-}
-
 export const keys = new Set();
 
 export function heroCellKey(row, col) { return `${row}:${col}`; }
@@ -95,6 +90,12 @@ export function heroCellKey(row, col) { return `${row}:${col}`; }
 //: клетки это 0 «свободно», 0xFFF «стена или вода», иначе номер стоящего
 //: юнита (VA 0x44146C). Метки юнитов кладутся только на время поиска пути.
 const CELL_WALL = 0xFFF;
+//: МЯГКАЯ ГЛУШЬ ДОНОРА — его бит 0x1000 (низ клетки у него пуст). Шаг на
+//: такую клетку запрещён у обоих движков, а вот канонный отказ волны
+//: «цель — стена» ловит только низ 0xFFF — поэтому оригинал доводит юнита
+//: до ЦЕЛИ на такой клетке (финиш волны не проверяется). Так стоит третья
+//: бочка Кирингхольма. Значение — движковый же бит.
+const CELL_SOFT = 0x1000;
 const CELL_UNIT = 1;              // здесь кто-то стоит
 const CELL_TARGET = 2;            // здесь стоит тот, к кому мы идём
 
@@ -112,11 +113,27 @@ export function heroSetup(config, map) {
       hero.cells[row * hero.grid.columns + col] = CELL_WALL;
     }
   }
+  // Мягкая глушь донора — ПОВЕРХ blocked (она его подмножество): шаг
+  // запрещён так же, но целью волны такая клетка быть может.
+  hero.softCells = new Set();
+  for (const [row, col] of terrain.blocked_soft ?? []) {
+    if (row >= 0 && col >= 0 && row < hero.grid.rows && col < hero.grid.columns) {
+      hero.cells[row * hero.grid.columns + col] = CELL_SOFT;
+      hero.softCells.add(row * hero.grid.columns + col);
+    }
+  }
   // Глухие клетки (бит 0x4000) — не то же самое, что непроходимые: вода и
   // деревья ходить не дают, но стрелу пропускают, а стена и постройка нет.
   hero.solid = new Set(
     (terrain.solid ?? []).map(([row, col]) => heroCellKey(row, col)));
   world.solidAt = (row, col) => hero.solid.has(heroCellKey(row, col));
+  // Редактору (editor.js) нужен живой тумблер клетки: правка grid.txt
+  // доедет пересборкой, а ходить по новому ландшафту хочется сразу.
+  world.editorCellWall = (row, col, on) => {
+    if (row < 0 || col < 0 || row >= hero.grid.rows
+        || col >= hero.grid.columns) return;
+    hero.cells[row * hero.grid.columns + col] = on ? CELL_WALL : 0;
+  };
   // Клетки берутся у самих построек: каждая владеет своим полом, «крыльцом»
   // и маршрутными клетками, поэтому искать их по параллельным спискам больше
   // не нужно.
@@ -253,7 +270,9 @@ export function heroFree(row, col, mover = null) {
   if (row < 0 || col < 0 || row >= hero.grid.rows || col >= hero.grid.columns) {
     return false;
   }
-  if (hero.cells[row * hero.grid.columns + col] === CELL_WALL) return false;
+  const kind = hero.cells[row * hero.grid.columns + col];
+  // мягкая глушь донора для шага и приказа «идти» — та же стена
+  if (kind === CELL_WALL || kind === CELL_SOFT) return false;
   if (mover?.cell && mover.cell.row === row && mover.cell.col === col) return true;
   // Живой юнит занимает свою клетку, как в движке; перед смертью он из неё
   // уходит (VA 0x416A52), поэтому труп дорогу не держит. Проверка приходит
@@ -277,6 +296,26 @@ export function heroFree(row, col, mover = null) {
 // возвращения. Мы зовём ещё и в миг смены ступени: держать игрока за дверью
 // собственной казармы до перезахода — не то поведение, за которое стоит
 // держаться, и на канон это не влияет, потому что состояние то же самое.
+//: ПЕРЕКЛЮЧИТЬ КЛЕТКУ ПРОХОД/СТЕНА — скрипт квеста «MAP=» (0x439864).
+//: Движок XOR-ит сырое слово клетки (пустота 0x4FFF ^ 0x4FFF = 0 — проход
+//: открылся); у клиента сырых слов нет, есть стены, и XOR пустоты на нашем
+//: уровне — это ровно переключение стены.
+export function heroCellToggle(row, col) {
+  if (!hero.cells || !hero.grid) return false;
+  if (row < 0 || col < 0 || row >= hero.grid.rows || col >= hero.grid.columns) {
+    return false;
+  }
+  const at = row * hero.grid.columns + col;
+  if (hero.cells[at] !== 0) {
+    hero.cells[at] = 0;
+  } else {
+    // обратный ход XOR возвращает клетке ЕЁ вид глуши: донорскому броду —
+    // мягкий бит 0x1000, канонной клетке — стену 0xFFF
+    hero.cells[at] = hero.softCells?.has(at) ? CELL_SOFT : CELL_WALL;
+  }
+  return true;
+}
+
 export function heroStampBuilding(object, ready = 3) {
   const cells = object?.cells?.footprint;
   if (!cells?.length || !hero.cells || !hero.grid) return 0;
@@ -332,9 +371,76 @@ export function unitUpdateBuilding(unit) {
   if (!unit?.cell) return unit;
   const key = heroCellKey(unit.cell.row, unit.cell.col);
   const info = hero.buildingCells?.get(key);
-  unit.roofSlot = info ? info.slot : null;
+  // КЛЕТКА ЗА СПИНОЙ — ПРАВИЛО ДВИЖКА, КОТОРОЕ МЫ ПОКА НЕ ПЕРЕНОСИМ.
+  //
+  // Мастер кадра иногда смотрит не клетку под ногами, а соседнюю в
+  // противоположном направлении (VA 0x428240): если у НЕЁ есть бит 21, юнит
+  // уходит в список той постройки. Но перед этим стоит гейт по таблице
+  // `0x45FE8D`, индексируемой байтом юнита +0x17, и что в ней — неизвестно:
+  //
+  //     if ((таблица[юнит+0x17] >> 24) < 1 || направление == -1) своя клетка;
+  //     else                                                    клетка сзади;
+  //
+  // Применили безусловно 16.08.2026 — и житель, стоящий на улице В КЛЕТКЕ
+  // ПЕРЕД избой, уходил в проход дома, где его накрывали стены и крыша.
+  // В оригинале он на том же месте виден целиком (снимок игрока). Пока гейт
+  // не разобран, правило не переносим: своя клетка и только она.
+  const drawnBy = info;
+  unit.roofBuilding = info ? info.building : null;
   unit.overlay = Boolean(info?.built);
-  unit.insideSlot = info?.routed ? info.slot : null;
+  // ЮНИТА В ПОСТРОЙКЕ РИСУЕТ САМА ПОСТРОЙКА — сразу после пола, до стен
+  // (VA 0x425AA8), и из общего прохода по глубине он исключается. Правило
+  // общее для всех, включая игрока (классификатор VA 0x42846E смотрит
+  // только клетку). Раньше сюда попадали только маршрутные клетки прохода,
+  // а стоящий НА ПОЛУ шёл общим проходом — и дом, нарисованный после него,
+  // закрывал его стеной целиком: так пропала вся вечерняя деревня Дубков,
+  // разошедшаяся по домам.
+  //
+  // «Захожу в казарму — и я под полом» лечилось не здесь: маршрутные
+  // клетки донорских карт терялись при переводе (его биты сдвинуты, см.
+  // to_canon_cells), на пороге метка не ставилась, и герой рисовался
+  // общим проходом раньше постройки — её пол ложился поверх.
+  //
+  // ССЫЛКА, А НЕ НОМЕР. Постройки и реквизит нумеруются каждый со своего
+  // нуля, и номера пересекаются: на карте 19 живут дом №3 и казарма-
+  // реквизит №3. Сверка голым номером отдавала юнита чужому объекту.
+  // ПРИЗНАК — МАРШРУТНАЯ КЛЕТКА СВОЕЙ ПОСТРОЙКИ (бит 21), плюс пол (бит 15).
+  //
+  // Пробовали расширить до всего следа постройки — картинка становилась
+  // лучше (в Ловье никто не оставался поверх крыши), но это не перенос, а
+  // наша выдумка: проход нутра постройки в движке (VA 0x424514) отбирает
+  // клетки по номеру постройки и биту, а не по всему следу. Замер это
+  // подтверждает косвенно: пол почти целиком лежит внутри маршрутных клеток
+  // (204 из 210 на Борье, 243 из 256 в Чёрном Бору), то есть несущий признак
+  // один, а сверх него есть 176…281 маршрутная клетка — пороги и проходы.
+  //
+  // ЧТО ОСТАЁТСЯ НЕЗАКРЫТЫМ. Житель на клетке следа без маршрута и пола
+  // уходит в общий проход, а там высокая постройка занижает свой ключ на
+  // четверть высоты (VA 0x004267b8, флаг 8), чтобы не накрывать стоящих
+  // ПЕРЕД ней. Значит, стоящий ПОЗАДИ ближе четверти высоты рисуется после
+  // дома — то есть поверх крыши.
+  //
+  // Это КАНОН, а не наша беда: обе формулы ключа сняты с живой памяти
+  // оригинала (docs/RENDER_DEPTH.md, замер 16.08.2026 — восемь домов из
+  // восьми). Отдельно в оригинале такого жителя мы не наблюдали: вывод
+  // арифметический. А жалоба «жители ходят по крышам» была НЕ ОБ ЭТОМ —
+  // виноват был вырез окна к светлому юниту (units.renderBrightCuts).
+  // РЕШАЕТ ТОЛЬКО БИТ 21. Мастер кадра раскладывает юнитов по спискам одним
+  // сравнением (VA 0x428240):
+  //
+  //     if ((клетка & 0x200000) == 0) общий_список[...] = юнит;
+  //     else                          список_дома[номер][...] = юнит;
+  //
+  // Пол (бит 15) в этом не участвует вовсе — он отвечает за другое, за
+  // полупрозрачную копию поверх сцены (`unit.overlay`, VA 0x425DC8).
+  //
+  // ЗДЕСЬ СТОЯЛО «маршрут ИЛИ пол», и это была подпорка. Её дописали, когда
+  // жители пропадали по домам вечером, — но пропадали они не поэтому: ключ
+  // глубины построек тогда был занижен на смещение кадра, дом рисовался
+  // после жителя и закрывал его. С верным ключом житель на клетке пола без
+  // маршрута выходит общим проходом ПЕРЕД домом, как и в оригинале (снимок
+  // игрока 16.08.2026: крыша не перекрывает жителя у стены).
+  unit.insideBuilding = drawnBy?.routed ? drawnBy.building : null;
   unit.bright = Boolean(hero.brightCells?.has(key));
   return unit;
 }
@@ -371,26 +477,31 @@ export function heroDirection(dx, dy) {
   return best;
 }
 
+// ТОЛЬКО КЛАВИШИ. Здесь стояла ещё и ветка «нет клавиш — идём к hero.target»,
+// и она ломала весь ближний бой героя.
+//
+// Поле `target` носит ДВА смысла, и второй пришёл позже: у ходьбы это была
+// точка назначения, а бой кладёт туда ВРАГА (units.js: `unit.target = sees
+// ? target : null`, combat.js при раздаче приказа). Точку назначения в него
+// давно не пишет никто — все прочие пять мест только обнуляют, — так что
+// ветке доставался ровно противник.
+//
+// Дальше срабатывала ходьба: вектор показывает на врага, шаг прямо в него
+// невозможен (клетку занял он сам), и `unitMove` честно пробовал соседние
+// направления ±45° — они свободны. Герой шагал вбок, на следующем такте
+// оттуда же обратно, и так вечно. Это и есть «персонаж кружит вокруг врага
+// и не бьёт»: замах не доигрывает, потому что каждый такт начинается шаг.
+//
+// Проверяется просто: два НПС, стравленные вплотную, дерутся правильно
+// (замер 17.08.2026: один потерял 180, второй убит) — у них этой ветки нет,
+// клавиатуру получает только герой.
 export function heroInputVector() {
   let dx = 0, dy = 0;
   if (keys.has("KeyW") || keys.has("ArrowUp")) dy -= 1;
   if (keys.has("KeyS") || keys.has("ArrowDown")) dy += 1;
   if (keys.has("KeyA") || keys.has("ArrowLeft")) dx -= 1;
   if (keys.has("KeyD") || keys.has("ArrowRight")) dx += 1;
-  if (dx || dy) return { dx, dy };
-  if (hero.target) {
-    const tx = hero.target.x - hero.x;
-    const ty = hero.target.y - hero.y;
-    // цель достигнута, когда попали в её клетку или почти вплотную
-    const targetCell = heroCellAt(hero.target.x, hero.target.y);
-    if ((targetCell.row === hero.cell.row && targetCell.col === hero.cell.col) ||
-        Math.hypot(tx, ty) < 12) {
-      hero.target = null;
-      return null;
-    }
-    return { dx: tx, dy: ty };
-  }
-  return null;
+  return (dx || dy) ? { dx, dy } : null;
 }
 
 //: Длина куска маршрута. Движок пишет путь в юнита буфером на 16 байт с
@@ -398,16 +509,9 @@ export function heroInputVector() {
 //: (VA 0x441DD6), и перестраивает кусок, когда тот кончился.
 export const PATH_CHUNK = 15;
 
-//: МЕРА РАССТОЯНИЯ ДВИЖКА (VA 0x43B670): берётся большая из двух разниц,
-//: и если меньшая больше единицы, прибавляется единица. По ней движок
-//: считает и дальность удара, и зрение, и догон вожака — значит и «сколько
-//: осталось идти» надо мерить ею же, а не суммой разниц.
-export function cellDistanceCanon(a, b) {
-  const rows = Math.abs(a.row - b.row);
-  const cols = Math.abs(a.col - b.col);
-  if (rows < cols) return rows > 1 ? cols + 1 : cols;
-  return cols > 1 ? rows + 1 : rows;
-}
+//: Мерка расстояния движка (VA 0x43B670) живёт в units.js (`cellRange`);
+//: стоявшая здесь копия `cellDistanceCanon` осталась без единого читателя
+//: и убрана — две копии одной мерки уже расходились однажды.
 
 // ── поиск пути (VA 0x441441) ──────────────────────────────────────────────
 //
@@ -499,6 +603,18 @@ function waveClear() {
 
 //: `target` — тот единственный, кому позволено стоять на клетке цели: поле
 //: +0x10 юнита у движка. Без него погоня упирается в собственную цель.
+//: СЧЁТЧИКИ ПОИСКА ПУТИ — чтобы про подвисания говорить числами, а не на
+//: слух. Ход игры они не меняют: только считают. Смотреть в игре как
+//: `knyaz2.wavePeek`, обнулять — `knyaz2.wavePeek.сброс()`.
+export const wavePeek = {
+  вызовов: 0, провалов: 0, клеток: 0, миллисекунд: 0,
+  худший: 0,
+  сброс() {
+    this.вызовов = this.провалов = this.клеток = 0;
+    this.миллисекунд = this.худший = 0;
+  },
+};
+
 export function heroPlanPath(from, to, mover = null, target = null) {
   const columns = wave.columns, rows = wave.rows;
   if (!columns) return [];
@@ -506,9 +622,16 @@ export function heroPlanPath(from, to, mover = null, target = null) {
   if (to.row < 0 || to.col < 0 || to.row >= rows || to.col >= columns) return [];
   if (from.row < 0 || from.col < 0 || from.row >= rows || from.col >= columns) return [];
   waveStamp(mover, target);
+  const начало = performance.now();
   try {
-    return wavePlan(from.row, from.col, to.row, to.col);
+    const путь = wavePlan(from.row, from.col, to.row, to.col);
+    if (!путь.length) wavePeek.провалов += 1;
+    return путь;
   } finally {
+    const прошло = performance.now() - начало;
+    wavePeek.вызовов += 1;
+    wavePeek.миллисекунд += прошло;
+    if (прошло > wavePeek.худший) wavePeek.худший = прошло;
     waveClear();
   }
 }
@@ -521,9 +644,13 @@ function wavePlan(fromRow, fromCol, toRow, toCol) {
   const start = fromRow * columns + fromCol;
   const goal = toRow * columns + toCol;
 
-  // 1) цель — стена, либо на ней стоит не тот, к кому идём
+  // 1) цель — стена, либо на ней стоит не тот, к кому идём. МЯГКУЮ глушь
+  // донора отказ пропускает: канонная проверка ловит только низ 0xFFF, и
+  // оригинал доводит до цели на клетке с битом 0x1000 (бочка Кирингхольма).
   const occupant = cells[goal];
-  if (occupant !== 0 && occupant !== CELL_TARGET) return [];
+  if (occupant !== 0 && occupant !== CELL_TARGET && occupant !== CELL_SOFT) {
+    return [];
+  }
   // 2) у цели должен быть хоть один свободный сосед (своя клетка считается)
   const goalCol = (toRow & 1) ? NB_COL_ODD : NB_COL_EVEN;
   let reachable = false;
@@ -547,6 +674,7 @@ function wavePlan(fromRow, fromCol, toRow, toCol) {
     const cell = queueCell[head], base = queueCost[head];
     head = (head + 1) & (WAVE_QUEUE - 1);
     if (base > cost[cell]) continue;              // запись устарела
+    wavePeek.клеток += 1;                         // счётчик, ход не меняет
     const row = (cell / columns) | 0, col = cell - row * columns;
     const odd = row & 1;
     const order = odd ? WAVE_ORDER_ODD : WAVE_ORDER_EVEN;
@@ -682,7 +810,23 @@ export function unitTryStep(unit, direction, input) {
   const [sx, sy] = hero.data.direction_steps[direction];
   if (sx * input.dx + sy * input.dy <= 0) return false;
   const next = heroNeighbor(unit.cell.row, unit.cell.col, direction);
-  if (!heroFree(next.row, next.col, unit)) return false;
+  // МЯГКИЙ ФИНИШ: волна приняла цель на мягкой глуши донора (бит 0x1000 —
+  // канонный отказ «цель — стена» ловит только низ 0xFFF), и шаг обязан
+  // довершить посчитанный маршрут — в движке стены в маршруте невозможны
+  // по построению, поэтому его шаговый разбор статику не отвергает. Только
+  // клетка ЦЕЛИ: свободный шаг игрока в воду брода остаётся запрещён.
+  const softGoal = unit.goal &&
+    next.row === unit.goal.row && next.col === unit.goal.col &&
+    hero.cells[next.row * hero.grid.columns + next.col] === CELL_SOFT &&
+    !hero.occupiedBy?.(next.row, next.col, unit);
+  if (!softGoal && !heroFree(next.row, next.col, unit)) return false;
+  //: НОШУ ПРОВЕРЯЕМ НА КАЖДОМ ШАГЕ, а не только при выдаче приказа. Движок
+  //: пересчитывает бит бега в оконной процедуре по WM_SETCURSOR
+  //: (0x42F22C, `param_2 == 0x20`), то есть на каждое движение мыши: поднял
+  //: добычу — и бежать перестал сразу. У нас это решалось единожды в
+  //: `heroOrderTo`, и перегрузившийся посреди дороги бежал как ни в чём не
+  //: бывало до самого конца маршрута.
+  if (unit.running && !(world.unitCanRun?.(unit) ?? true)) unit.running = false;
   const to = heroAnchor(next.row, next.col);
   unit.step = {
     fromX: unit.x, fromY: unit.y, toX: to.x, toY: to.y,
@@ -726,6 +870,20 @@ const BLOCK_KEYS = { 0x01: "combat_walk", 0x07: "combat_run",
                      0x11: "walk", 0x13: "run" };
 
 export function unitCellTicks(unit) {
+  //: ТВАРЬ ХОДИТ СВОЕЙ ТАБЛИЦЕЙ — 0x462734 по ТЕЛУ (+0xFC), а не блоками
+  //: хода: FUN_00429B2C (VA 0x429B93) кладёт в походку `таблица[тело] −
+  //: скорость`. У большинства тел 12 тактов на клетку — МЕДЛЕННЕЕ
+  //: человеческой ходьбы, у тела 17 — 7. Пока твари шли человеческими
+  //: блоками, они были в полтора раза быстрее канона.
+  //: СВОЙ ГЕРОЙ — НЕ ЗВЕРЬ. Бит 0x40 поднят ему только ради кадров
+  //: (набором твари), а ходить он обязан блоками человека. В таблице
+  //: 0x462734 его тела нет вовсе, и он проваливался в откат «12 тактов на
+  //: клетку» — втрое медленнее бегущего героя, у которого блок бега стоит 4.
+  if (isBeast(unit) && unit !== hero) {
+    const table = hero.data?.rules?.beast_move_ticks ?? [];
+    const ticks = table[unit.body ?? 0] ?? 12;
+    return Math.max(1, ticks - (world.unitSpeed?.(unit) ?? 0));
+  }
   const base = hero.data?.rules?.move_block_ticks ?? {};
   const running = Boolean(unit.running);
   const key = BLOCK_KEYS[unitMoveBlock(unit)];
@@ -741,10 +899,6 @@ export function unitCellTicks(unit) {
 //: юнит прыгает на `клетка / походка`; на бегу со скоростью 2 это два прыжка
 //: по полклетки. Браузер рисует чаще такта, и мы ведём ту же прямую плавно —
 //: длительность и мгновенная средняя скорость совпадают с движком до такта.
-
-export function heroTryStep(direction, input) {
-  return unitTryStep(hero, direction, input);
-}
 
 // Движение движка: юнит идёт клетка -> клетка по восьми направлениям,
 // позиция интерполируется подшагами (VA 0x41615A), направление меняется
@@ -836,56 +990,11 @@ export function unitMove(unit, dt, { keyboard = false } = {}) {
   return changed;
 }
 
-export function heroMove(dt) { return unitMove(hero, dt, { keyboard: true }); }
-
-// Поза и кадр по правилам движка. Ходьба и бег — по биту бега; стоя движок
-// каждый раз, когда доигрывает стойка, бросает жребий 1 из 10 и уходит в
-// простой (VA 0x416D92), а тот по таблице 0x45A0C0 возвращается в стойку.
-export function heroTick(now, dt) {
-  if (!hero.data) return false;
-  const active = heroMove(dt);
-  if (hero.moving) heroSetPose(heroMovePose());
-  else if (hero.pose === "walk" || hero.pose === "run") heroSetPose("stand");
-
-  const frames = heroFrames();
-  if (!frames?.length) return active || hero.moving;
-  const step = tickSeconds();
-  hero.frameTime += dt;
-  const advance = Math.floor(hero.frameTime / step);
-  if (advance > 0) {
-    hero.frameTime -= advance * step;
-    // ЗАМАХ ЖДЁТ НА НУЛЕВОМ КАДРЕ, и это единственное замедление во всём
-    // движке: случаи 5/8/9 разбора такта либо убавляют отсчёт +0xFD, либо
-    // двигают кадр (0x413894:365,471). Правило живёт в units.js/attackWait,
-    // здесь только проедаем счётчик. Вне блока действия он не нужен — иначе
-    // недоеденное ожидание застопорило бы ходьбу.
-    if (!world.isMeleePose?.(hero.pose)) hero.attackWait = 0;
-    let ticks = advance;
-    if (hero.attackWait > 0) {
-      const spent = Math.min(ticks, hero.attackWait);
-      hero.attackWait -= spent;
-      ticks -= spent;
-    }
-    if (ticks <= 0) return active || hero.moving || hero.pose === "idle";
-    const next = hero.frame + ticks;
-    if (next < frames.length) {
-      hero.frame = next;
-    } else if (hero.moving) {
-      hero.frame = next % frames.length;          // ходьба и бег зациклены
-    } else if (hero.pose.startsWith("corpse_")) {
-      hero.frame = 0;                             // труп лежит и не встаёт
-    } else if (hero.pose === "idle" || hero.data.animations.actions?.[hero.pose]) {
-      // простой и разовые действия доигрывают и возвращаются в стойку
-      heroSetPose(hero.pose.startsWith("death_") ? heroCorpseOf(hero.pose) : "stand");
-    } else {
-      hero.frame = 0;
-      // жребий движка: пока стоим, шанс уйти в простой
-      const chance = hero.data.rules?.idle_chance ?? 10;
-      if (chance > 0 && Math.floor(Math.random() * chance) === 0) heroSetPose("idle");
-    }
-  }
-  return active || hero.moving || hero.pose === "idle";
-}
+//: `heroMove` и `heroTick` удалены: герой — первый юнит общего цикла
+//: `unitsTick` (units.js идёт по roster), как первая запись отряда №0 в
+//: главном такте движка 0x413894. Клавиатура уехала туда же аргументом
+//: `keyboard` общего `unitMove`; жребий простоя и переход в труп — в общем
+//: кадровом цикле юнитов.
 
 export function heroCurrentFrame() {
   if (!hero.data) return null;
@@ -914,12 +1023,10 @@ export function heroBodyFrame() {
 }
 
 // Поза по состоянию — тот же выбор, что в движке (VA 0x4166A5): идём ли мы,
-// и стоит ли бит бега. Стойка и простой добавляются в heroTick.
+// и стоит ли бит бега. Стойку и простой добавляет кадровый цикл unitsTick.
 export function unitMovePose(unit) {
   return unit.running ? "run" : "walk";
 }
-
-function heroMovePose() { return unitMovePose(hero); }
 
 //: `force` — как 0x416740: поставить блок ЗАНОВО поверх себя, со сбросом
 //: кадра и подшага. Нужно сбиву (поза 2): повторное попадание начинает
@@ -1009,10 +1116,6 @@ export function heroAttackPose() {
   return actorAttackPose(hero.data, hero);
 }
 
-function equipmentFor(frame) {
-  return actorLayers(hero.data, hero, frame?.record);
-}
-
 // Круг под выбранным: цвет по здоровью (VA 0x425DB4). Общий для героя и
 // спутников — рисуется одинаково, поэтому живёт здесь, а units.js зовёт
 // его же.
@@ -1030,24 +1133,10 @@ export function drawSelectionCircle(actor, baseX, baseY) {
   // холсте на нужном месте, как и тело юнита.
   context.drawImage(image, baseX + (circle.offset_x ?? -127),
                     baseY + (circle.offset_y ?? -144));
-  // ДЫМКА СВЕЧЕНИЯ (В11): пока горит Факел или Чистая слеза (флаг
-  // 0x849610), проходы кругов (0x424514, 0x424FD8) рисуют вокруг круга
-  // маску-осветление 64×43 из LIGHTS.RES с центром круга минус (32, 21).
-  // Точный спановый светорезолвер не воспроизводится — режим lighter.
-  if (world.glow) {
-    const glow = world.map?.interface?.glow;
-    const halo = glow && world.images.get(glow.path);
-    if (halo) {
-      const centreX = baseX + (circle.offset_x ?? -127) + image.width / 2;
-      const centreY = baseY + (circle.offset_y ?? -144) + image.height / 2;
-      context.save();
-      context.globalCompositeOperation = "lighter";
-      context.drawImage(halo,
-                        Math.round(centreX + (glow.offset?.[0] ?? -32)),
-                        Math.round(centreY + (glow.offset?.[1] ?? -21)));
-      context.restore();
-    }
-  }
+  // Дымки свечения здесь БОЛЬШЕ НЕТ: адреса 0x424514 и 0x424FD8 — это
+  // проходы отрисовки КУЧ, а не кругов, и Факел подсвечивает именно лут
+  // (см. loot.js drawPile). Прежняя дымка вокруг круга выделения была
+  // неверным чтением этих адресов.
   return true;
 }
 
@@ -1055,12 +1144,19 @@ export function renderHero(alpha = 1, fallbackShadow = alpha >= 1) {
   // Кадр тела — со своей формой и палитрой, как у любого юнита (0x425DB4).
   // Слои снаряжения берутся по НОМЕРУ ЗАПИСИ, а он у формы тот же, поэтому
   // оружие и доспех остаются на месте.
+  // ТЕЛО И СЛОИ — ОБЩИМ РИСОВАЛЬЩИКОМ, тем же, что у любого юнита.
+  //
+  // Отдельной отрисовки игрока в движке нет вовсе: VA 0x425DB4 рисует всех
+  // одинаково. Здесь же долго лежала вторая копия того же кода — свой выбор
+  // кадра, своя проверка листа, свой перебор слоёв, — и копии разошлись:
+  // сперва герой потерял форму с палитрой (за всех шестерых стоял один
+  // болванчик), потом у спутников оказался вырез силуэта с вето, которого у
+  // героя нет. Каждый раз чинили одну половину.
+  //
+  // Своего у игрока осталось ровно два пустяка, и оба не про тело: круг
+  // выбора и запасная тень. Всё прочее — `drawActor`.
   const frame = heroBodyFrame();
   if (!frame) return;
-  // Кадр лежит на ЛИСТЕ, и своего пути у него нет: проверять надо через
-  // общий spriteReady, иначе функция выходит здесь и герой не рисуется
-  // вовсе — ровно это и случилось, когда кадры переехали на листы.
-  if (!spriteReady(world.images, heroSheets(), frame)) return;
   // Целочисленные координаты: drawImage на дробных смещениях мылит и дрожит.
   const baseX = Math.round(hero.x);
   const baseY = Math.round(hero.y);
@@ -1077,12 +1173,7 @@ export function renderHero(alpha = 1, fallbackShadow = alpha >= 1) {
     context.ellipse(baseX, baseY - 3, frame.width * 0.32, 6, 0, 0, Math.PI * 2);
     context.fill();
   }
-  context.globalAlpha = alpha;
-  const { behind, front } = equipmentFor(frame);
-  for (const layer of behind) drawLayerFrame(layer, baseX, baseY);
-  drawLayerFrame(frame, baseX, baseY);
-  for (const layer of front) drawLayerFrame(layer, baseX, baseY);
-  context.globalAlpha = 1;
+  drawActor(hero.data, hero, { alpha });
 }
 
 // Герой в свою очередь по глубине. На клетке с битом 22 движок блитит юнита
@@ -1103,21 +1194,14 @@ export function drawHeroAtDepth() {
 // кадре. Объекты переднего плана рисуются позже и закрашивают вырез, поэтому
 // глубина не ломается.
 export function punchHeroSilhouette() {
-  // Силуэт вырезается по ТОМУ ЖЕ кадру, что рисуется, иначе форма героя и
-  // его вырез разъезжаются.
-  const frame = heroBodyFrame();
-  if (!frame) return;
-  if (!spriteReady(world.images, heroSheets(), frame)) return;
-  const baseX = Math.round(hero.x);
-  const baseY = Math.round(hero.y);
+  // Силуэт вырезается ТЕМ ЖЕ рисовальщиком, что и рисует, — иначе форма
+  // героя и его вырез разъезжаются. Оружие и щит уходят в вырез вместе с
+  // телом (режим `silhouette`): иначе на клетке с битом 22 они остались бы
+  // в слое сцены и потемнели бы отдельно от хозяина.
   context.save();
   context.globalCompositeOperation = "destination-out";
   context.globalAlpha = 1;
-  drawLayerFrame(frame, baseX, baseY);
-  // Оружие и щит вырезаем тоже — иначе на клетке с битом 22 они остались бы
-  // в слое сцены и потемнели бы отдельно от хозяина.
-  const { behind, front } = equipmentFor(frame);
-  for (const layer of [...behind, ...front]) drawLayerFrame(layer, baseX, baseY);
+  drawActor(hero.data, hero, { silhouette: true });
   context.restore();
 }
 

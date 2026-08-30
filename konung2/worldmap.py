@@ -47,6 +47,14 @@ FLAG_UNKNOWN = 0x10
 #: Значок локации: шесть байт на локацию — спрайт и сдвиг от угла клетки.
 MARKERS_VA = 0x4615CC
 MARKER_STRIDE = 6
+#: СКОЛЬКО ЗАПИСЕЙ. Считается по расстоянию до следующей таблицы: имена
+#: локаций лежат на 0x4616D4, то есть через 0x108 = 264 байта, а это ровно
+#: 44 записи по шесть. Не 55: гнёзд локаций больше, чем значков.
+#:
+#: В каноне граница не мешала — самая большая локация на сетке имеет номер
+#: 43, — но локации расширенной карты пойдут за 44, и без проверки значок
+#: читался бы уже из таблицы имён.
+MARKER_COUNT = 44
 #: Столько ячеек «локация открыта» движок держит и пишет в сейв (VA 0x438A00).
 LOCATION_SLOTS = 0x37
 
@@ -77,6 +85,16 @@ FORMATION_DIRECTIONS = 8
 #: прибытия, например у Морского лагеря со стороны моря.
 ARRIVALS_VA = 0x460028
 ARRIVAL_STRIDE = 6
+#: СКОЛЬКО ЗАПИСЕЙ В ТАБЛИЦЕ. Считается по расстоянию до следующей: сетка
+#: мира начинается на 0x460174, то есть через 0x14C = 332 байта, а это ровно
+#: 55 записей по шесть и ещё два байта хвоста. Столько же, сколько гнёзд
+#: локаций (LOCATION_SLOTS).
+#:
+#: Читали 64 и залезали в сетку: оттуда приезжали прибытия для карт 56, 58,
+#: 60 и 63 — например «строка 0, столбец 2». Карт с такими номерами нет, но
+#: у перенесённых из «Продолжения легенды» номера как раз за каноном, и такое
+#: прибытие поставило бы отряд в угол карты вместо положенного места.
+ARRIVAL_COUNT = LOCATION_SLOTS
 
 #: Шаблоны встречных отрядов стоят на несуществующих «картах» 100…146:
 #: движок ищет отряд, у которого номер карты равен номеру группы
@@ -205,10 +223,12 @@ def markers(data: bytes | None = None) -> dict[int, dict[str, int]]:
     """
     blob = data if data is not None else _exe()
     at = va_to_foff(MARKERS_VA)
-    живые = {fields["location"] for row in grid(blob) for fields in
-             map(cell_fields, row) if fields["location"]}
+    standing = {fields["location"] for row in grid(blob) for fields in
+                map(cell_fields, row) if fields["location"]}
     out: dict[int, dict[str, int]] = {}
-    for location in sorted(живые):
+    for location in sorted(standing):
+        if not 0 <= location < MARKER_COUNT:
+            continue
         sprite, dx, dy = struct.unpack_from("<Hhh", blob, at + location * MARKER_STRIDE)
         if sprite:
             out[location] = {"sprite": sprite, "dx": dx, "dy": dy}
@@ -337,7 +357,8 @@ def formation(data: bytes | None = None) -> list[list[list[list[int]]]]:
     return out
 
 
-def arrivals(data: bytes | None = None, count: int = 64) -> dict[int, dict]:
+def arrivals(data: bytes | None = None,
+             count: int = ARRIVAL_COUNT) -> dict[int, dict]:
     """Куда отряд встаёт, войдя на карту (таблица 0x460028, VA 0x436430).
 
     На карту приходится шесть байт: клетка и лицо, а следом — второе

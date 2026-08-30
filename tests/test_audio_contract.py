@@ -12,7 +12,10 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
+import shutil
 import struct
+import subprocess
 import unittest
 
 from konung2 import sounds
@@ -336,6 +339,49 @@ class AudioDataTest(unittest.TestCase):
             self.assertIn(key, packed)
         self.assertEqual(packed['mixer']['max_buffers'], 45)
         self.assertEqual(packed['voices']['rates']['19'], 21050)
+
+
+NODE = shutil.which("node")
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+HARNESS = ROOT / "tools" / "sound_cache.js"
+PACK = ROOT / "content_build"
+
+
+@unittest.skipUnless(NODE, "нет node")
+@unittest.skipUnless((PACK / "assets" / "audio.json").is_file(),
+                     f"нет собранного пака {PACK.name}")
+class SoundCacheLifetimeTest(unittest.TestCase):
+    """Звук на границе двух игр — на настоящих sound.js и soundscape.js.
+
+    Номера слотов у двух игр общие, а звуки под ними разные. Отсюда три
+    тихие поломки, слышные только в игре: вечный набор движка (68 слотов
+    интерфейса и откликов, VA 0x43C228) уходил вместе с чисткой кэша и не
+    возвращался; кэш ключевался номером слота, и звук чужого банка играл
+    вместо своего; музыка карты мира бралась из набора последней карты,
+    хотя карта мира одна на две игры — после выхода с донорской вместо
+    темы на 39 секунд крутился обрывок на 0.37.
+
+    Стенд проверен на самих поломках: с возвращёнными он краснеет.
+    """
+
+    def test_sound_survives_the_border_between_two_games(self) -> None:
+        run = subprocess.run(
+            [NODE, str(HARNESS), str(PACK)],
+            cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=600)
+        self.assertEqual(run.returncode, 0,
+                         f"звук на границе двух игр сломан:\n"
+                         f"{run.stdout}\n{run.stderr}")
+        self.assertIn("неудач: 0", run.stdout)
+        # Подмена банка должна была проверяться НА ДЕЛЕ: на слоте, пустом у
+        # одной из игр, подменять нечего, и проверка прошла бы вхолостую.
+        self.assertIn("подмена банка на слоте", run.stdout)
+        self.assertNotIn("показать не на чем", run.stdout)
+        # И музыка — тоже: она идёт через звуковой пейзаж, а не напрямую.
+        self.assertIn("на карте мира играет канонная тема", run.stdout)
+        # Гонка входа должна проверяться НА ДЕЛЕ: без пары «канон/донор»
+        # под одним номером показывать нечего.
+        self.assertIn("гонка на входе", run.stdout)
+        self.assertNotIn("гонку не показать", run.stdout)
 
 
 if __name__ == "__main__":

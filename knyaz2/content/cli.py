@@ -12,7 +12,9 @@ def parser() -> argparse.ArgumentParser:
     commands = result.add_subparsers(dest="command", required=True)
 
     build = commands.add_parser("build", help="собрать content pack")
-    build.add_argument("--map", dest="maps", type=int, action="append", required=True,
+    #: Без единого --map поверх готового пака пересобираются только общие
+    #: правила (shared.json) — секунды вместо часов.
+    build.add_argument("--map", dest="maps", type=int, action="append", default=[],
                        help="номер карты; параметр можно повторять")
     build.add_argument("--output", type=Path, default=Path("content_build"))
     build.add_argument("--project", type=Path, default=Path("project"))

@@ -1018,6 +1018,37 @@ class EnchantContractTest(unittest.TestCase):
         self.assertEqual(FIELD_UNIT_AT[FIELD_ACCURACY], 0x46)
         self.assertEqual(sorted(MODE_BIT.values()), [1, 2, 4])
 
+    def test_the_blessing_row_gives_charisma_and_wits(self) -> None:
+        """Благословение волхва — это СТРОКА ТАБЛИЦЫ, а не действие разговора.
+
+        Четыре отчёта тестеров подряд говорили «благословение не работает», и
+        трижды мы отвечали «в разговоре прибавки нет» — что правда и что не
+        имеет значения: разговор поднимает флаг 1 (обработчик 34), а прибавку
+        даёт вторая таблица прибавок, которую разборщик 0x41844C берёт ПО
+        БИТУ. Тест держит именно эту связь, чтобы ответ не пришлось давать
+        в четвёртый раз.
+        """
+        from konung2.enchant import bonus_table
+        rows = bonus_table()
+        self.assertEqual([(t["field"], t["value"]) for t in rows[1]],
+                         [(1, 15), (3, 10)], "благословение: Харизма и Интеллект")
+        #: Соседние биты — то же семейство, и по ним видно, что строки берутся
+        #: по биту, а не по номеру: строки 3 и 5…7 в счёт не идут вовсе.
+        self.assertEqual([(t["field"], t["value"]) for t in rows[2]],
+                         [(2, -50), (7, -100), (8, -200)], "проклятие")
+        self.assertEqual([(t["field"], t["value"]) for t in rows[4]], [(10, 80)])
+        self.assertEqual([(t["field"], t["value"]) for t in rows[8]], [(5, 300)])
+
+    def test_the_bonus_table_reaches_the_pack(self) -> None:
+        """Клиенту таблица нужна в правилах: без неё флаг снова ничего не даст."""
+        from konung2.enchant import rules
+        свод = rules()
+        self.assertEqual(свод["flags_at"], 0xF9)
+        строки = свод["bonus_table"]
+        self.assertEqual(len(строки), 16)
+        self.assertEqual([(t["field"], t["value"]) for t in строки[1]],
+                         [(1, 15), (3, 10)])
+
     def test_armour_pieces_never_get_the_strike_bonus(self) -> None:
         """Проверка того, что поля не перепутаны.
 
@@ -2002,12 +2033,26 @@ class EngineReferenceTest(unittest.TestCase):
         index_path = root / "engine" / "decompiled" / "index.json"
         if not index_path.is_file():
             self.skipTest("декомпилят недоступен: нет engine/decompiled/index.json")
-        index = json.loads(index_path.read_text(encoding="utf-8"))
-        spans = sorted((int(f["entry"], 16), f["size"]) for f in index)
-        starts = [start for start, _ in spans]
+        def load(path):
+            if not path.is_file():
+                return None
+            index = json.loads(path.read_text(encoding="utf-8"))
+            spans = sorted((int(f["entry"], 16), f["size"]) for f in index)
+            return spans, [start for start, _ in spans]
 
-        def inside(va: int) -> bool:
+        canon_spans = load(index_path)
+        # ДВЕ СБОРКИ — ДВА ДЕКОМПИЛЯТА. Адреса «Продолжения легенды» лежат в
+        # том же числовом диапазоне, что наши, но принадлежат ЕГО коду.
+        # Проверять их по нашему указателю бессмысленно, а махнуть рукой
+        # нельзя — сторож для того и заведён. Различаем по самой записи:
+        # донорский адрес в комментарии пишется «его VA 0x…».
+        legend_spans = load(root / "engine" / "decompiled_legend" / "index.json")
+
+        def inside(va: int, table) -> bool:
             import bisect
+            if table is None:
+                return True                   # декомпилята нет — не судим
+            spans, starts = table
             at = bisect.bisect_right(starts, va) - 1
             if at < 0:
                 return False
@@ -2026,7 +2071,13 @@ class EngineReferenceTest(unittest.TestCase):
                 if not self.CODE_LO <= va < self.CODE_HI:
                     continue                      # это данные, а не код
                 checked += 1
-                if not inside(va) and va not in self.KNOWN_MISSING:
+                # Чья это сборка — говорит строка, в которой адрес записан.
+                start = text.rfind("\n", 0, match.start()) + 1
+                end = text.find("\n", match.end())
+                line = text[start:end if end > 0 else len(text)]
+                theirs = "его VA" in line or "decompiled_legend" in line
+                table = legend_spans if theirs else canon_spans
+                if not inside(va, table) and va not in self.KNOWN_MISSING:
                     dangling.setdefault(va, str(path.relative_to(root)))
         self.assertGreater(checked, 500, "ссылок на движок подозрительно мало")
         self.assertEqual(dangling, {},
@@ -2297,6 +2348,27 @@ class CharacterScreenContractTest(unittest.TestCase):
                              b"%4.1f\0")
         scale = struct.unpack_from("<d", blob, va_to_foff(0x4524D2))[0]
         self.assertEqual(scale, CHARACTER_WEIGHT_SCALE)
+
+    def test_the_first_five_labels_stand_on_their_left_edge(self) -> None:
+        """Пять первых подписей — ЛЕВЫМ краем, остальные правым.
+
+        Правило рендера, не данных: цикл 0x42AD0E рисует пять записей
+        таблицы 0x46140C без вычета ширины строки, и лишь со следующей
+        записи (0x42AD43) x уменьшается на ширину (0x441EB7). Пятёрка —
+        «Уровень», «Опыт», «Свободный опыт», «Следующий уровень» и шапка
+        «базовая сейчас поднять». Ровнять их правым краем значит уложить
+        «Опыт» на цифру уровня, а шапку — под рамку фона (жалоба игрока
+        «окно навыков кривое», скрин 2026-08-15).
+        """
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parents[1]
+        ui = (root / "knyaz2" / "web" / "static" / "ui.js").read_text(encoding="utf-8")
+        self.assertIn('align: index < 5 ? "left" : "right"', ui)
+        # цикл в exe: cmp [ebp-0x24], 5 на 0x42AD0E — пятёрка не выдумана
+        with open(game_file("konung2.exe"), "rb") as stream:
+            blob = stream.read()
+        window = blob[va_to_foff(0x42AD0E):va_to_foff(0x42AD14)]
+        self.assertEqual(window, bytes([0x83, 0x7D, 0xDC, 0x05, 0x7D, 0x2F]))
 
 
 class DeadlyStrikeContractTest(unittest.TestCase):
@@ -3030,6 +3102,28 @@ class SaveCoverageContractTest(unittest.TestCase):
                          if f"saved.{field}" not in apply_body)
         self.assertEqual(missing, [], "упаковано, но не восстанавливается")
 
+    def test_fallen_companion_stays_fallen(self) -> None:
+        """Павший спутник обязан пережить сейв, снятый НЕ СХОДЯ с карты.
+
+        Движок сохраняет весь массив юнитов (VA 0x423CB8), и бит смерти
+        +0x1A|0x80 едет в нём сам собой вместе с позой трупа. Из отряда
+        павшего вычёркивает СВЁРТКА КАРТЫ, а не смерть: 0x43A628:157-168
+        проходит по бойцам со второго, у кого поднят бит, — раздаёт добро,
+        убавляет счёт отряда +0x1C и сдвигает хвост записей.
+
+        У порта спутники поднимаются из записи отряда, а расстановка ставит
+        `alive: true` безусловно. Без этих полей сейв, снятый до ухода с
+        карты, возвращал убитого живым с нулём здоровья.
+        """
+        text = self._save_source()
+        packed = self._pack_actor_fields(text)
+        for field in ("alive", "pose", "hidden"):
+            self.assertIn(field, packed, f"packActor не пакует {field}")
+        apply_body = text.split("function applyActor(actor, saved)", 1)[1]
+        apply_body = apply_body.split("\nexport function ", 1)[0]
+        self.assertIn("actor.alive = saved.alive !== false", apply_body,
+                      "applyActor не возвращает бит смерти")
+
     def test_world_blocks_are_saved_and_restored(self) -> None:
         text = self._save_source()
         state = text.split("export function saveState", 1)[1].split(
@@ -3040,6 +3134,100 @@ class SaveCoverageContractTest(unittest.TestCase):
                              f"saveState не пишет {field}")
             self.assertIn(f"saved.{field}", apply_body,
                           f"applySave не читает {field}")
+
+    def test_save_snapshots_the_current_map_before_packing(self) -> None:
+        """Сейв, снятый стоя на карте, обязан нести СВЕЖИЙ снимок её жителей.
+
+        Движок пишет массив юнитов целиком (VA 0x423CB8), поэтому у него
+        такой сейв не теряет ничего. Наша память карты снимается при уходе;
+        без снимка в самом saveState загрузка воскрешала ушедшего
+        квестодателя (действие 46) и откатывала мешок торговца-нежителя.
+        """
+        text = self._save_source()
+        state = text.split("export function saveState", 1)[1].split(
+            "\nexport function ", 1)[0]
+        capture = state.find("mapStateCapture(")
+        pack = state.find("mapStatePack()")
+        self.assertGreater(capture, -1, "saveState не снимает текущую карту")
+        self.assertGreater(pack, capture,
+                           "память карт пакуется ДО снимка текущей карты")
+
+    def test_world_tick_counter_is_saved_and_restored(self) -> None:
+        """Мировой такт (наш 0x84962C) обязан пережить загрузку.
+
+        Движок пишет его в сейв первым блоком (VA 0x423CB8:22) и читает
+        обратно (0x4236E0:36); в его единицах живут метки отрастания грядок
+        (pile.regrowAt). Без него счёт начинался с нуля на каждой загрузке
+        страницы, и сорванная трава не отрастала никогда.
+        """
+        text = self._save_source()
+        state = text.split("export function saveState", 1)[1].split(
+            "\nexport function ", 1)[0]
+        self.assertRegex(state, r"\n\s*ticks:", "saveState не пишет ticks")
+        apply_body = text.split("export function applySave", 1)[1]
+        self.assertIn("saved.ticks", apply_body, "applySave не читает ticks")
+        self.assertIn("clock.ticks = saved.ticks", apply_body,
+                      "такт не кладётся в clock.ticks")
+        # и бут обязан вернуть такт ДО сборки карты: lootSetup сверяет
+        # метки грядок с clock.ticks раньше, чем дойдёт до applySave
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parent.parent
+        boot = (root / "knyaz2" / "web" / "static" / "app.js").read_text(
+            encoding="utf-8")
+        early = boot.find("clock.ticks = saved.ticks")
+        # lootSetup двух видов: первый — в enterMapInner (переход, сейв там
+        # не участвует), бутовский — последний в файле; сверяемся с ним
+        setup = boot.rfind("lootSetup(map)")
+        self.assertGreater(early, -1, "бут не восстанавливает такт")
+        self.assertGreater(setup, early,
+                           "такт восстанавливается после сборки карты")
+
+
+class PileEmptiedContractTest(unittest.TestCase):
+    """Судьба опустевшей кучи — одна развязка на все дороги (0x41F638 → 0x4136A8).
+
+    Гнездовая (сундук, бочка) не удаляется: тело удаления движка стоит под
+    `+0x09 == 0xFF`. Грядка (ровно одна вещь класса 'Q'/'R' — 0x4136A8:19-23,
+    второе слово предметов обязано быть пустым) получает метку сбора вместо
+    удаления — это же даёт посадку растений игроком. Обыск закопанной снимает
+    знак вместе со словом денег (0x4115AC:65).
+    """
+
+    def _static(self, name: str) -> str:
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parent.parent
+        return (root / "knyaz2" / "web" / "static" / name).read_text(
+            encoding="utf-8")
+
+    def test_trade_window_uses_the_shared_emptying(self) -> None:
+        source = self._static("trade.js")
+        self.assertIn("lootEmptied(partner", source,
+                      "tradeFinish не зовёт общую развязку lootEmptied")
+        self.assertNotIn("partner.taken = true", source,
+                         "окно обмена хоронит кучу мимо развязки")
+
+    def test_emptying_spares_nests_and_marks_beds(self) -> None:
+        source = self._static("loot.js")
+        body = source.split("export function lootEmptied", 1)[1]
+        body = body.split("\nexport function ", 1)[0]
+        self.assertIn("pile.zone != null || pile.nest != null", body,
+                      "гнездовая куча должна переживать опустошение")
+        self.assertIn("regrowAt = clock.ticks", body,
+                      "грядка должна получать метку сбора")
+
+    def test_search_clears_the_buried_sign(self) -> None:
+        source = self._static("combat.js")
+        body = source.split("export function openPile", 1)[1]
+        body = body.split("\nexport function ", 1)[0]
+        self.assertIn("pile.dug = true", body,
+                      "обыск обязан снимать знак закопанной (0x4115AC:65)")
+
+    def test_map_entry_preloads_pile_sprites(self) -> None:
+        source = self._static("app.js")
+        at = source.index("async function enterMapInner")
+        end = source.index("function arrivalCell", at)
+        self.assertIn("lootAssets()", source[at:end],
+                      "вход переходом не грузит спрайты куч (топор в Беглом)")
 
 
 class CreationScreenContractTest(unittest.TestCase):
@@ -3226,29 +3414,35 @@ class CreationLayoutContractTest(unittest.TestCase):
     """Разметка экрана создания: таблица 0x461D44 и точки кнопок."""
 
     def test_ninety_one_rectangles_and_the_two_buttons(self) -> None:
-        from knyaz2.content.builder import (CREATION_CODES, _export_creation)
+        # Родная таблица держит 91 прямоугольник; шесть портретных зон
+        # заменяются девятью (сетка 3x3 девяти героев), итого 94, и все
+        # коды за портретами сдвинуты на три — их пак несёт сам.
+        from knyaz2.content.builder import _export_creation
         import tempfile
         import pathlib
         layout = _export_creation(pathlib.Path(tempfile.mkdtemp()))
-        self.assertEqual(len(layout["rects"]), 91)
-        play = layout["rects"][CREATION_CODES["play"]]
-        cancel = layout["rects"][CREATION_CODES["cancel"]]
+        self.assertEqual(len(layout["rects"]), 94)
+        codes = layout["codes"]
+        play = layout["rects"][codes["play"]]
+        cancel = layout["rects"][codes["cancel"]]
         # прямоугольник кнопки начинается ровно в точке, куда движок ставит её спрайт
         self.assertEqual(play[:2], layout["play_at"])
         self.assertEqual(cancel[:2], layout["cancel_at"])
         self.assertEqual(play, [100, 699, 243, 717])
         self.assertEqual(cancel, [380, 699, 520, 717])
-        # Шесть портретов стоят двумя рядами по три: три колонки x и два
-        # ряда y. Ширина 79 или 80 — в самих данных так, ровнять нельзя.
-        faces = [layout["rects"][i] for i in range(6)]
+        # Девять портретов стоят тремя рядами по три: колонки родные,
+        # ряды пересчитаны под драконью арку сверху и рамку описания снизу.
+        faces = [layout["rects"][i] for i in range(9)]
         self.assertEqual(sorted({rect[0] for rect in faces}), [104, 266, 429])
-        self.assertEqual(sorted({rect[1] for rect in faces}), [109, 244])
-        self.assertEqual({rect[2] - rect[0] for rect in faces}, {79, 80})
+        self.assertEqual(sorted({rect[1] for rect in faces}), [95, 195, 295])
+        self.assertEqual({rect[2] - rect[0] for rect in faces}, {79})
         self.assertEqual({rect[3] - rect[1] for rect in faces}, {91})
-        # картинка 76x87 меньше своего места 80x91 — ставится в левый верх
-        self.assertEqual(len(layout["portraits"]), 6)
+        # картинка 76x87 меньше своего места 79x91 — ставится в левый верх;
+        # девять портретов: шесть наших и трое «Продолжения легенды», у
+        # обеих игр блоки NEWHERO одного размера
+        self.assertEqual(len(layout["portraits"]), 9)
         self.assertEqual({(shot["width"], shot["height"])
-                          for shot in layout["portraits"]}, {(76, 87)})
+                          for shot in layout["portraits"] if shot}, {(76, 87)})
 
 
 class QuestStateContractTest(unittest.TestCase):
@@ -3323,19 +3517,67 @@ class QuestStateContractTest(unittest.TestCase):
         # mov byte ptr [eax + 0x16], 0x22 — игроку целый байт приказа
         self.assertEqual(at(0x410742, 4), bytes.fromhex("c6 40 16 22"))
 
-    def test_builder_exports_the_block_with_journal_texts(self) -> None:
+    def test_approach_orders_once_not_every_sixteen_ticks(self) -> None:
+        """Приказ «подойди и заговори» выдаётся раз на собеседника.
+
+        Ветка подхода срабатывает каждые шестнадцать тактов, пока герой
+        идёт. Пока она переписывала приказ заново, это было и слышно, и
+        видно: `onOrder` на каждый повтор кричал оклик «Эй, есть разговор!»
+        (слоты 700…723) — пятнадцать «Э!» за один подход, — а `orderUnit`
+        при выдаче сбрасывает маршрут, то есть герой пересчитывал дорогу
+        по два раза в секунду.
+
+        Движок в этой ветке приказ не ВЫДАЁТ, а штампует байт:
+        `mov byte ptr [eax + 0x16], 0x22` (VA 0x410742, проверено выше), и
+        оклик у него живёт в обработчике приказа игрока (0x410A08, case 2).
+        """
+        import pathlib
+        source = (pathlib.Path(__file__).resolve().parents[1] / "knyaz2" /
+                  "web" / "static" / "dialog.js").read_text(encoding="utf-8")
+        head, _, tail = source.partition("orderUnit(hero, unit.cell.row")
+        self.assertTrue(tail, "ветка подхода больше не выдаёт приказ — "
+                              "проверку надо переписать под новый код")
+        self.assertIn("hero.orderTarget === unit", head,
+                      "перед выдачей приказа нет проверки «уже идём к нему»")
         from knyaz2.content.builder import _quest_state
+        from konung2 import donor
         state = _quest_state()
-        self.assertEqual(len(state["flags"]), 300)
-        self.assertEqual(len(state["journal"]), 300)
-        self.assertEqual({i for i, f in enumerate(state["flags"]) if f & 1},
-                         self.APPROACH)
+        # Таблица выросла: канон индексируется номерами разговоров до
+        # 151, донор встаёт за ними (konung2/donor.py: QUEST_SLOTS).
+        self.assertEqual(len(state["flags"]), donor.QUEST_SLOTS)
+        self.assertEqual(len(state["journal"]), donor.QUEST_SLOTS)
+        base = donor.PROJECT_QUEST_BASE
+        lit = {i for i, f in enumerate(state["flags"]) if f & 1}
+        # Канонные «подойди и заговори» — как были; донорские в своём
+        # участке (128+), и на канонные места они не залезают.
+        self.assertEqual({i for i in lit if i < base}, self.APPROACH)
+        if donor.available():
+            self.assertTrue({i for i in lit if i >= base})
         self.assertEqual([i for i, f in enumerate(state["flags"]) if f & 0x80], [])
-        # Тексты журнала берутся из той же таблицы фраз, что и реплики;
-        # строки «MAP=» отсеиваются, поэтому записей на одну меньше.
-        self.assertEqual(len(state["text"]), 272)
+        # Тексты журнала берутся из той же таблицы фраз, что и реплики.
+        # Раньше здесь стояло 272: пустые места таблицы (слово 0) читались
+        # как «квест с фразой 0», и в журнал попадал текст фразы 0 на
+        # каждое из них. Настоящих канонных записей 75.
+        #
+        # СЧИТАЕМ ПО ОТГРУЖЕННОМУ СЮЖЕТУ. Свой квест, собранный редактором
+        # в project/story/QUESTS.RES, кладёт свои токены в ту же таблицу и
+        # в тот же канонный участок (у канона занято 0…102, дальше до 151
+        # пусто) — и всякая новая заявка ломала бы это число. Канон здесь
+        # проверяется без нашего сюжета, а собранный — тем, что он канон
+        # не теряет и своё пишет ЗА канонными местами.
+        shipped = _quest_state(overlay=False)
+        canon_texts = {k: v for k, v in shipped["text"].items()
+                       if int(k) < base}
+        self.assertEqual(len(canon_texts), 75)
+        ours = {k: v for k, v in state["text"].items() if int(k) < base}
+        self.assertLessEqual(set(canon_texts), set(ours))
+        highest = max(int(k) for k in canon_texts)
+        self.assertTrue(all(int(k) > highest
+                            for k in set(ours) - set(canon_texts)),
+                        "заявка проекта легла на канонное место квеста")
         self.assertTrue(state["text"]["0"].startswith("МИССИЯ ТИТАНОВ"))
-        self.assertTrue(all(not text.startswith("MAP=")
+        self.assertTrue(all(not text.startswith(("MAP=", "OBJECT=",
+                                                 "LANDSCAPE="))
                             for text in state["text"].values()))
 
 
@@ -3558,7 +3800,16 @@ class HeroLifecycleContractTest(unittest.TestCase):
     #: Что движок возвращает из копии: (смещение в записи, сколько байт).
     RESTORED = ((0xC0, 6), (0xCC, 6), (0xD2, 0x14))
     #: Стартовая карта каждого мира — из записи его отряда, не из манифеста.
-    START_MAPS = {0: 33, 1: 19, 2: 23, 3: 37, 4: 45, 5: 1}
+    #: Девять слотов: 0 и 2…5 наши, слот 1 — Велиславна «Продолжения
+    #: легенды», слоты 6…8 — Иззарк (его 5 -> 155 Тиграт), Драгомир
+    #: (его 14 -> 164) и Гильдис (его 4 -> 154).
+    #:
+    #: ВЕЛИСЛАВНА НАЧИНАЕТ НА 169, А НЕ НА 19. Раньше её Чёрный Бор считался
+    #: близнецом канонного и подменялся картой 19 из «Крови Титанов» — она и
+    #: грузилась. Пара 19 из TWIN_MAPS убрана, донорский Чёрный Бор ввезён
+    #: своей картой 169, и правило «150 + номер донора» даёт её здесь.
+    START_MAPS = {0: 33, 1: 169, 2: 23, 3: 37, 4: 45, 5: 1,
+                  6: 155, 7: 164, 8: 154}
 
     def test_the_world_loader_rereads_the_whole_unit_array(self) -> None:
         import pathlib
@@ -3843,7 +4094,30 @@ class VillageByWorldContractTest(unittest.TestCase):
         root = pathlib.Path(__file__).resolve().parents[1]
         сборщик = (root / "knyaz2" / "content" / "builder.py").read_text(encoding="utf-8")
         self.assertIn("village_by_world", сборщик)
-        self.assertIn("village(number, game_world)", сборщик)
+        # Запись заполняется В ЦИКЛЕ ПО МИРАМ; сама форма вызова village()
+        # меняется (донорские карты добавили профиль игры), важен перебор.
+        self.assertIn("settlements_by_world[str(game_world)] = record", сборщик)
+
+    def test_the_project_can_write_for_one_hero_only(self) -> None:
+        """Три слоя расстановки: общий, свой слоту и вычёркивающий.
+
+        «Продолжение легенды» — предыстория, и сюжеты предстоит писать
+        каждому из девяти. Если бы у проекта был один общий слой, расстановка
+        Эйнара в донорских землях встала бы перед всеми девятью, а чужое
+        сюжетное лицо оригинала нечем было бы убрать.
+        """
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parents[1]
+        сборщик = (root / "knyaz2" / "content"
+                   / "builder.py").read_text(encoding="utf-8")
+        for поле in ('document.get("units_by_world")',
+                     'document.get("loot_by_world")',
+                     'document.get("hide_by_world")'):
+            with self.subTest(поле=поле):
+                self.assertIn(поле, сборщик)
+        # общий слой по-прежнему достаётся всем, а свой — только своему
+        self.assertIn("entries.extend(shared_units)", сборщик)
+        self.assertIn('entries.extend(own_units.get(str(slot)) or [])', сборщик)
 
     def test_the_client_picks_the_record_of_its_own_world(self) -> None:
         import pathlib
@@ -3861,10 +4135,34 @@ class VillageByWorldContractTest(unittest.TestCase):
         if not карта.is_file():
             self.skipTest("нет собранного пака")
         документ = json.loads(карта.read_text(encoding="utf-8"))
+        from knyaz2.content.builder import STORY_FREE_WORLD, _hero_worlds
         по_мирам = документ.get("village_by_world")
-        if not по_мирам:
+        if по_мирам is None:
             self.skipTest("пак собран до этой правки — нужна пересборка карты 33")
-        self.assertEqual(sorted(по_мирам), [str(i) for i in range(6)])
+        if STORY_FREE_WORLD:
+            # ДОМА — СВОЙ МИР, В ГОСТЯХ — ОБЩИЙ (builder._world_of). На
+            # канонной карте по мирам лежат только ДОМАШНИЕ канонные слоты,
+            # чья запись отличается от базовой (мир 0 и есть базовая);
+            # донорские гости (1, 6…8) читают общую запись и ключей не
+            # несут. Прежний инвариант «по мирам пусто» был случайным
+            # следствием сломанной пересборки, потерявшей миры целиком —
+            # вместе с сюжетными юнитами (Асбад за Эйнара, жалоба 23.08).
+            self.assertTrue(документ.get("village"),
+                            "общая запись поселения на месте")
+            канонные_дома = {"2", "3", "4", "5"}
+            self.assertTrue(set(по_мирам) <= канонные_дома | {"0"},
+                            f"гостевых ключей быть не должно: {sorted(по_мирам)}")
+            # у каждого домашнего мира — свой ряд должностей
+            self.assertEqual(по_мирам["4"]["officials"][:4],
+                             [229, 230, 231, 232])
+            self.assertEqual(по_мирам["2"]["officials"][:4],
+                             [228, 229, 230, 231])
+            return
+        сколько = _hero_worlds()
+        if len(по_мирам) < сколько:
+            self.skipTest(f"пак несёт {len(по_мирам)} миров из {сколько} — "
+                          "нужна пересборка под девять героев")
+        self.assertEqual(sorted(по_мирам), [str(i) for i in range(сколько)])
         self.assertEqual(по_мирам["4"]["officials"][:4], [229, 230, 231, 232])
 
 
@@ -4159,9 +4457,19 @@ class VillagePostsContractTest(unittest.TestCase):
         if not карта.is_file():
             self.skipTest("нет собранного пака")
         документ = json.loads(карта.read_text(encoding="utf-8"))
-        по_мирам = документ.get("village_by_world") or {}
-        if not по_мирам:
+        по_мирам = документ.get("village_by_world")
+        if по_мирам is None:
             self.skipTest("пак собран до village_by_world")
+        if not по_мирам:
+            # МИР ОДИН НА ВСЕХ — отличий в паке нет, и брать разницу оттуда
+            # больше неоткуда. Но довод-то про ДАННЫЕ ИГРЫ: пятёрка
+            # должностных в каждом GAME.N своя. Берём её прямо оттуда.
+            from konung2.gamefile import village
+            по_мирам = {str(мир): village(33, мир) for мир in range(6)}
+        else:
+            # мир 0 — это базовая запись `village`: по мирам едут только
+            # ДОМАШНИЕ слоты, чья запись отличается (см. VillageByWorld)
+            по_мирам = {"0": документ["village"], **по_мирам}
         роли = {ю["id"]: ю.get("role", 0) for ю in документ["units"]}
         номер = lambda id_: int(str(id_).replace("unit_", ""))
 
@@ -4179,7 +4487,14 @@ class VillagePostsContractTest(unittest.TestCase):
                         "если поле годится и другим мирам, вывод не нужен")
 
     def test_the_barracks_is_never_prebuilt(self) -> None:
-        """Казарма (вид 13) нигде не построена изначально — её строит игрок."""
+        """Казарма (вид 13) У КАНОНА нигде не построена — её строит игрок.
+
+        Правило канонное, и мерить его надо по канонным картам (номер до
+        54): у «Продолжения легенды» свои деревни живут ПОЗЖЕ по времени, и
+        казармы там стоят с самого начала — Холмогорье, Родники, Ловье и
+        Соколиная гора приезжают с построенными, и это их правда, снятая с
+        его GAME.0, а не наша недоработка.
+        """
         import json
         import os
         import pathlib
@@ -4188,17 +4503,25 @@ class VillagePostsContractTest(unittest.TestCase):
         if not каталог.is_dir():
             self.skipTest("нет собранного пака")
         с_казармой, построенных = 0, 0
+        донорских_построенных = 0
         for имя in os.listdir(каталог):
             файл = каталог / имя / "map.json"
             if not файл.is_file():
                 continue
             документ = json.loads(файл.read_text(encoding="utf-8"))
+            чужая = имя.isdigit() and int(имя) > 54
             for запись in ((документ.get("village") or {}).get("buildings") or []):
                 if запись.get("kind") != 13:
+                    continue
+                if чужая:
+                    донорских_построенных += bool(запись.get("built"))
                     continue
                 с_казармой += 1
                 if запись.get("built"):
                     построенных += 1
+        if донорских_построенных:
+            self.assertGreaterEqual(донорских_построенных, 4,
+                                    "у донора казармы стоят с начала")
         self.assertEqual(с_казармой, 3, "казарма есть ровно на трёх картах")
         self.assertEqual(построенных, 0)
 
@@ -4354,7 +4677,12 @@ class CtrlTalkContractTest(unittest.TestCase):
 
     def test_the_click_carries_the_ctrl_flag(self) -> None:
         inp = self.client("input.js")
-        self.assertIn("event.shiftKey, event.ctrlKey", inp)
+        # Оба флага главного цикла доезжают до разбора щелчка: Shift как есть,
+        # а Ctrl — вместе с кнопкой панели. Держать клавишу на сенсорном
+        # экране нечем, и кнопка (ui.js, ACTIONS.talk_mode) взводит тот же
+        # флаг; для движка это одно и то же 0x8495AC.
+        self.assertIn("event.shiftKey,", inp)
+        self.assertIn("event.ctrlKey || world.talkMode === true", inp)
         combat = self.client("combat.js")
         self.assertIn("running = false, add = false, talk = false", combat)
 
@@ -4389,13 +4717,18 @@ class CtrlTalkContractTest(unittest.TestCase):
         начало = ui.index("onClick: mate ?")
         конец = ui.index("onDoubleClick: mate ?", начало)
         ветка = ui[начало:конец]
-        self.assertIn("keyHeld.ctrl && orderTalkTo(mate)", ветка)
+        self.assertIn("ctrlHeld() && orderTalkTo(mate)", ветка)
         # Ctrl проверяется ДО выбора: в движке ветка выбора стоит следом.
         self.assertLess(ветка.index("orderTalkTo(mate)"),
                         ветка.index("selectUnit(mate"))
         # Модификатор берётся и с клавиатуры, и с самого щелчка.
         self.assertIn("keyHeld = { shift: false, ctrl: false }", ui)
         self.assertIn("keyHeldFrom(event)", ui)
+        # …и кнопка панели держит ТОТ ЖЕ флаг, а не заводит свою ветку
+        # разговора: у движка флаг один на все двери (0x8495AC).
+        self.assertIn(
+            "function ctrlHeld() { return keyHeld.ctrl || world.talkMode === true; }",
+            ui)
 
     def test_the_appointee_leaves_the_party(self) -> None:
         """VA 0x435D4C зовёт 0x4338B0 и без его успеха НЕ занимает должность."""
@@ -4417,6 +4750,27 @@ class CtrlTalkContractTest(unittest.TestCase):
         self.assertIn("partyRelease(unit)", уход)
         self.assertIn("unit.ally = false", уход)
 
+    def test_talk_orders_resolve_by_rectangle_every_tick(self) -> None:
+        """Разговор по приказу мерится КАЖДЫЙ ТАКТ прямоугольником 7×4.
+
+        Точного прибытия у talk-приказа не бывает: клетку собеседника держит
+        он сам (unitBlocks), и walkToOrder строил путь в неё, а шаг его
+        отвергал — каждый такт, вечно. Разговор по приказу не открывался ни
+        на одной карте; живьём это выглядело как «подошёл и молчит» (замер в
+        Дубках: путь 1→0 каждые ~83 мс, приказ жив, диалога нет). Движок
+        разбирает 0x22 без равенства клеток — меркой 7×4 (VA 0x4115AC).
+        """
+        units = self.client("units.js")
+        # talk-ветка стоит ПЕРЕД ходьбой по приказу — иначе её не достичь.
+        # Якорь ходьбы — сам вызов в цепочке, а не определение walkToOrder.
+        walk_call = units.index("unit.orderKind !== kindTarget &&\n                   walkToOrder(unit)")
+        talk_at = units.index("world.onUnitArrived?.(unit)", walk_call - 4000)
+        self.assertLess(talk_at, walk_call)
+        self.assertIn("orderKinds().talk", units[talk_at - 200:walk_call])
+        # и разбор прибытия по-прежнему мерит прямоугольник, а не клетку
+        orders = self.client("orders.js")
+        self.assertIn("if (!withinTalk(unit, target)) return null", orders)
+
     def test_the_companion_can_be_left_as_a_villager(self) -> None:
         """VA 0x4338B0 — «Останься здесь, пока я не хочу рисковать тобой».
 
@@ -4430,8 +4784,11 @@ class CtrlTalkContractTest(unittest.TestCase):
         начало = dialog.index("  43: (argument) =>")
         конец = dialog.index("  44:", начало)
         тело = dialog[начало:конец]
-        # Гейт по деревне и по её вместимости.
-        self.assertIn("world.map?.village", тело)
+        # Гейт по деревне и по её вместимости. Поселение спрашивается через
+        # `dialogVillage()`: разговор «Продолжения легенды» умеет выбрать
+        # деревню ДРУГОЙ карты (его обработчик 72), и все вопросы про неё
+        # обязаны смотреть на выбранную, а не на свою.
+        self.assertIn("dialogVillage()", тело)
         self.assertIn("squad_places", тело)
         self.assertIn("people >= places", тело)
         # Приказ снимается ЦЕЛИКОМ: бит «за вожаком» переживает любой другой.
@@ -4798,9 +5155,11 @@ class ConcentrationContractTest(unittest.TestCase):
             self.assertIn(строка["left"], (None, 83), строка)
 
     def test_the_tooltip_shows_concentration_instead_of_price(self) -> None:
+        """Формат с 23.08 дословно канонный (0x4315A0): «, концентрация »
+        со строкой exe и шириной «%5.2f»; цены у зелий нет по-прежнему."""
         ui = self.client("ui.js")
         self.assertIn("if (item.price < 0)", ui)
-        self.assertIn("концентрация ${value.toFixed(2)}", ui)
+        self.assertIn(", концентрация ${value.toFixed(2).padStart(5)}", ui)
         self.assertIn("недостаточная концентрация", ui)
         #: Пороги слабости — из движка, а не на глаз.
         self.assertIn("{ 87: 10.0, 92: 6.0, 93: 10.0 }", ui)
@@ -5103,9 +5462,19 @@ class MeleeAdjacencyContractTest(unittest.TestCase):
                          "мерка расстояния для ближнего боя вернулась")
 
     def test_hero_melee_uses_adjacency_too(self) -> None:
-        """Герой — такой же юнит: у него то же правило (VA 0x421690)."""
+        """Герой — такой же юнит: он идёт ОБЩЕЙ веткой боя (VA 0x413894).
+
+        После слияния у героя нет своей проверки досягаемости: цикл юнитов
+        перебирает roster (герой — первая запись, как в отряде №0), и правило
+        соседства из test_melee_uses_adjacency_not_distance накрывает его
+        само. В combat.js геройской мерки быть не должно вовсе.
+        """
+        units = self.client("units.js")
+        self.assertIn("for (const unit of roster(units))", units)
+        self.assertIn("const isHero = unit === hero", units)
         combat = self.client("combat.js")
-        self.assertIn("withinReach(hero, target, distance, reachOf(hero))", combat)
+        self.assertNotIn("withinReach(hero", combat,
+                         "у героя снова своя проверка досягаемости")
         self.assertNotIn("distance <= reachOf(hero)", combat,
                          "герой снова меряет ближний бой расстоянием")
 
@@ -5466,13 +5835,20 @@ class SpawnCollisionContractTest(unittest.TestCase):
         for path in maps:
             номер = os.path.basename(os.path.dirname(path))
             карта = json.loads(io.open(path, encoding="utf-8").read())
-            счёт = collections.Counter()
+            счёт = collections.defaultdict(list)
             for unit in карта.get("units") or []:
                 cell = unit.get("cell") or {}
                 if cell.get("row") is None:
                     continue
-                счёт[(cell["row"], cell["col"])] += 1
-            лишние = sum(v - 1 for v in счёт.values() if v > 1)
+                счёт[(cell["row"], cell["col"])].append(unit)
+            # ЗАКОННОЕ СОВПАДЕНИЕ: все стоящие на клетке пришли с битом
+            # «координаты в силе» — движок при нём чужой занятости не
+            # смотрит (VA 0x43DF9C), и у донора на карте 18 Садык с Воином
+            # записаны в одну клетку САМОЙ игрой. Ловим только рассыпку:
+            # там расстановка обязана была найти свободную клетку.
+            лишние = sum(len(жильцы) - 1 for жильцы in счёт.values()
+                         if len(жильцы) > 1
+                         and not all(unit.get("pinned") for unit in жильцы))
             if лишние:
                 плохо[номер] = лишние
         self.assertEqual(плохо, {}, f"юниты стоят друг на друге: {плохо}")
@@ -5625,8 +6001,11 @@ class ContainerFurnitureContractTest(unittest.TestCase):
         # Пара (зона, гнездо) едет в пак.
         self.assertIn('"zone": int(pile["place"])', builder)
         self.assertIn('"nest": int(pile["slot"])', builder)
-        # Проходимость спрашиваем только у напольной.
-        self.assertIn('if pile["on_floor"] and not world.terrain.passable(cell)', builder)
+        # Проходимость спрашиваем только у напольной — и НЕ у разговорной:
+        # движок такой проверки не делает, а его волна доводит юнита до
+        # цели даже на мягкой глуши донора (третья бочка Кирингхольма).
+        self.assertIn('if (pile["on_floor"] and not talkative', builder)
+        self.assertIn('and not world.terrain.passable(cell)):', builder)
         # Обстановка тоже.
         self.assertIn("for (zone, nest), slot_data in interior_slots(kn2).items()", builder)
 
@@ -5645,7 +6024,13 @@ class ContainerFurnitureContractTest(unittest.TestCase):
             гнёзд += len(мебель)
             безкартинки += sum(1 for x in мебель if not x.get("frame"))
             пары = {(x["zone"], x["nest"]) for x in мебель}
-            for мир, кучи in (карта.get("loot_by_world") or {}).items():
+            # ПО МИРАМ ПИШЕТСЯ ТОЛЬКО ОТЛИЧИЕ ОТ ОБЩЕГО, и пока сюжетов нет
+            # отличий не бывает вовсе: `loot_by_world` пуст, а кучи лежат в
+            # общем `loot`. Клиент читает так же (loot.js:88), значит и тест
+            # обязан смотреть в оба места, иначе он считает пустоту.
+            наборы = {"общий": карта.get("loot") or [],
+                      **(карта.get("loot_by_world") or {})}
+            for мир, кучи in наборы.items():
                 for куча in кучи:
                     if куча.get("zone") is None:
                         continue
@@ -5752,7 +6137,11 @@ class UnknownPlaceContractTest(unittest.TestCase):
         app = self.client("app.js")
         self.assertIn("return locationName(here);", ui)          # подпись карты
         self.assertIn("under && locationName(under)", ui)        # наведение
-        self.assertIn("Входим: ${locationName(number)}", ui)     # вход
+        #: Вход печатает имя ТОГО, КУДА ИДЁМ. Строка переехала в
+        #: `ownGameLocation`: канонному герою значок Чёрного Бора отдаёт
+        #: канонную карту вместо донорской, и подписать надо итог подмены,
+        #: а не номер из клетки — иначе игрок прочтёт одно, а войдёт в другое.
+        self.assertIn("Входим: ${locationName(итог)}", ui)        # вход
         self.assertIn("return locationName(number);", app)       # приход в клетку
         # Прежнего пути «имя прямо из номера» остаться не должно.
         self.assertNotIn("rules.names?.[here]", ui)
@@ -5888,17 +6277,118 @@ class InsideDepthContractTest(unittest.TestCase):
         # Прежнего безусловного порядка быть не должно.
         self.assertNotIn("if (heroInside) drawHeroAtDepth();", ветка)
         # Ключ — тот же, что у сцены.
-        self.assertIn("UNIT_SORT_BIAS", ветка)
+        self.assertIn("unitSortKey(", ветка)
 
-    def test_the_sort_bias_has_one_owner(self) -> None:
+    def test_the_sort_key_has_one_owner(self) -> None:
+        """Ключ глубины юнита считает ровно одна функция.
+
+        Число стояло в трёх проходах — общем, нутре постройки и вырезе окна, —
+        и порядок внутри дома успел разъехаться с порядком снаружи.
+        """
         actor = self.client("actor.js")
-        self.assertIn("export const UNIT_SORT_BIAS = 6", actor)
-        # Ни в сцене, ни в объектах числа больше нет.
-        for name in ("scene.js", "entities.js"):
+        # Низ холста человека: +0x3A лежит на 144 выше якоря ног, +0x54 = 150,
+        # значит ключ это ноги + 6. Замерено на семи людях Борья.
+        self.assertIn("const HUMAN_CANVAS_BOTTOM = 6", actor)
+        self.assertIn("export function unitSortKey(actor)", actor)
+        # У твари ключ считается от её кадра, а не по человеческой мерке.
+        self.assertIn("isBeast(actor)", actor[actor.index("export function unitSortKey"):
+                                             actor.index("export function bodyKey")])
+        # Само число наружу не выдаётся: считать ключ можно только функцией.
+        self.assertNotIn("export const HUMAN_CANVAS_BOTTOM", actor)
+        for name in ("scene.js", "entities.js", "units.js"):
             текст = self.client(name)
             self.assertNotIn("Math.round(hero.y) + 6", текст)
             self.assertNotIn("Math.round(unit.y) + 6", текст)
-            self.assertIn("UNIT_SORT_BIAS", текст)
+            self.assertNotIn("UNIT_SORT_BIAS", текст)
+            self.assertIn("unitSortKey", текст)
+
+
+class ObjectDepthKeyContractTest(unittest.TestCase):
+    """Ключ глубины объекта — ПОДОШВА КАДРА минус четверть (VA 0x4267B8:204-217).
+
+        iVar9    = камера + (заголовок[состояние*2 + 0x30] >> 16) + объект_y
+        local_2c = max(высота main, высота стен)
+        ключ     = iVar9 + local_2c;  при флаге 8 — минус local_2c >> 2
+
+    Слагаемое из заголовка — `dy` якоря кадра (res.SIMPLE_ANCHORS_AT = 0xC0),
+    то есть наш `offset_y`. Один раз его отсюда сняли, и перед каждым домом
+    появилась полоса в 7-8 рядов, где персонаж пропадал целиком; живой замер
+    этого не поймал, потому что считал ключ той же формулой. Поэтому формула
+    закреплена числами здесь.
+    """
+
+    def bounds(self, **kw):
+        from konung2.world.geometry import Bounds
+        поля = dict(width=100, height=472, offset_x=-233, offset_y=-273,
+                    sort_height=472, sort_bias=118)
+        поля.update(kw)
+        return Bounds(**поля)
+
+    def test_the_key_is_the_frame_bottom_minus_a_quarter(self) -> None:
+        from konung2.world.geometry import Point
+        # Дом из Борья: якорь 1104, кадр от −273, высота 472, четверть 118.
+        # Подошва кадра 1104 − 273 + 472 = 1303, ключ 1303 − 118 = 1185.
+        self.assertEqual(self.bounds().sort_key(Point(0, 1104)), 1185)
+
+    def test_the_frame_offset_is_part_of_the_key(self) -> None:
+        from konung2.world.geometry import Point
+        сместили = self.bounds(offset_y=-373)
+        # Сдвинули кадр на сто точек вверх — на столько же уезжает и ключ.
+        self.assertEqual(сместили.sort_key(Point(0, 1104)),
+                         self.bounds().sort_key(Point(0, 1104)) - 100)
+
+    def test_without_the_flag_there_is_no_quarter(self) -> None:
+        from konung2.world.geometry import Point
+        без = self.bounds(sort_bias=0)
+        self.assertEqual(без.sort_key(Point(0, 1104)), 1303)
+
+
+class RoofRuleContractTest(unittest.TestCase):
+    """Правило крыши живёт в ОДНОМ месте (VA 0x428253 -> 0x428282).
+
+    Крыша прячется над постройкой, на клетках которой стоит кто-то из отряда
+    игрока — движок перебирает весь отряд начиная с него самого. Правило
+    спрашивают двое: сама отрисовка и самопроверка кадра, и раньше у
+    самопроверки была своя копия с гейтом «слот меньше тридцати», снятым в
+    отрисовке ещё в мердже «Продолжения легенды».
+    """
+
+    def client(self, name: str) -> str:
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parents[1]
+        return (root / "knyaz2" / "web" / "static" / name).read_text(encoding="utf-8")
+
+    def test_the_roof_rule_has_one_owner(self) -> None:
+        entities = self.client("entities.js")
+        self.assertIn("export function roofVisible(object, owners)", entities)
+        self.assertIn("export function partyRoofBuildings()", entities)
+        # Спрашивающие зовут правило, а не переписывают его.
+        for name in ("entities.js", "selfcheck.js"):
+            текст = self.client(name)
+            self.assertIn("roofVisible(object", текст)
+            self.assertNotIn("record_slot < 30", текст)
+
+    def test_the_owner_of_a_spot_is_decided_by_cells(self) -> None:
+        """«Чья это клетка» решается по КЛЕТКАМ, и другого ответа нет.
+
+        Прежняя редакция этого теста требовала обратного: чтобы `coverSortY`
+        жила в world.js и её звали и куча, и вырез окна. Принцип «один вопрос —
+        один владелец» был верен, а сторожил он не тот механизм: coverSortY
+        искала максимальный ключ среди объектов, чья РАМКА накрывает точку.
+        Рамка — не клетки и не пиксели: у лесной плитки она тянется на четыре
+        сотни точек. Из-за этого топор на земле получал чужой ключ, а спутник
+        под избой оставался без выреза силуэта и тонул в слое сцены.
+
+        Канон отвечает клетками: кучу на клетках постройки рисует сама
+        постройка сразу после пола (VA 0x424514). Это `lootSlotOf` по
+        `hero.buildingCells` — он и остался единственным ответом.
+        """
+        self.assertNotIn("export function coverSortY", self.client("world.js"))
+        for name in ("loot.js", "units.js", "scene.js"):
+            self.assertNotIn("coverSortY(", self.client(name))
+        loot = self.client("loot.js")
+        self.assertIn("hero.buildingCells", loot)
+        self.assertIn("lootSlotOf(pile) != null", loot)
 
 
 class ShopCounterOwnerContractTest(unittest.TestCase):
@@ -5922,11 +6412,15 @@ class ShopCounterOwnerContractTest(unittest.TestCase):
 
     def test_the_counter_lives_in_the_settlement(self) -> None:
         shops = self.client("shops.js")
-        self.assertIn("function counterBox(unit, role)", shops)
-        начало = shops.index("function counterBox(unit, role)")
+        # Запись поселения приходит доводом: хозяйство дальней деревни
+        # работает с её записью из склада, а не с записью текущей карты
+        # (в движке 0x4176C8 и 0x417BD8 зовутся для всех двенадцати).
+        # Без довода — по-прежнему своя, `world.map?.village`.
+        self.assertIn("function counterBox(unit, role, village = world.map?.village)",
+                      shops)
+        начало = shops.index("function counterBox(unit, role")
         конец = shops.index("function place(unit, box", начало)
         ветка = shops[начало:конец]
-        self.assertIn("world.map?.village", ветка)
         self.assertIn("village.counters", ветка)
         # Торговцу отдаётся ССЫЛКА на список мест, а не копия.
         self.assertIn("unit.counter = box.slots", ветка)
@@ -6050,10 +6544,29 @@ class PileOnArrivalContractTest(unittest.TestCase):
         self.assertLess(ветка.index("orderClear(unit);\n      return null;"),
                         ветка.index("handlers.take?."))
 
-    def test_the_hero_parses_the_order_on_an_empty_path(self) -> None:
+    def test_the_hero_parses_the_order_like_everyone(self) -> None:
+        """Разбор прибытия у героя ОБЩИЙ — walkToOrder (VA 0x4115AC).
+
+        Гейт «путь пуст» жил в combat.js только у героя и был неканоничен
+        (см. док-строку класса: провал перестройки пути должен СНИМАТЬ
+        приказ, а не разбирать его). После слияния герой идёт веткой
+        walkToOrder цикла юнитов: разбор — только при совпадении клетки,
+        провал пути — orderClear (0x416E24).
+        """
         combat = self.client("combat.js")
-        self.assertIn("if (hero.orderKind && !hero.moving && !hero.path?.length)",
-                      combat)
+        self.assertNotIn("if (hero.orderKind && !hero.moving && !hero.path?.length)",
+                         combat, "геройский гейт разбора вернулся в combat.js")
+        self.assertIn("world.onUnitArrived = (unit) => unitArrived(unit)", combat)
+        units = self.client("units.js")
+        начало = units.index("function walkToOrder(unit)")
+        конец = units.index("\n}", начало)
+        ветка = units[начало:конец]
+        # Разбор — строго по прибытии на клетку приказа.
+        self.assertIn("unit.cell.row === unit.orderRow && unit.cell.col === unit.orderCol",
+                      ветка)
+        self.assertIn("world.onUnitArrived?.(unit)", ветка)
+        # Провал перестройки пути снимает приказ, как 0x416574 -> 0x416E24.
+        self.assertIn("orderClear(unit)", ветка)
 
     def test_a_blocked_goal_cell_ends_the_walk(self) -> None:
         """VA 0x415090 — шаг в занятую клетку цели снимает НЕ боевой приказ.
@@ -6082,3 +6595,125 @@ class PileOnArrivalContractTest(unittest.TestCase):
         self.assertIn("heroAnchor(pile.cell.row, pile.cell.col)", ветка)
         self.assertNotIn("heroOrderTo(pile.x, pile.y", ветка,
                          "путь строится к КЛЕТКЕ приказа, а не к пикселям кучи")
+
+
+class PartialBuildKeepsSharedAssetsTest(unittest.TestCase):
+    """Сборка одной карты не обрезает ОБЩИЕ ассеты пака.
+
+    Кадры тел, слои снаряжения и наборы тварей лежат в shared.json одним
+    списком на всю игру, а списки для них собираются по картам. Пока
+    брались только карты текущего вызова, пересборка одной карты выкидывала
+    чужие наборы: после `--map 19` в паке оставалось 14 наборов тел из 72,
+    и жители прочих карт теряли облик — ровно как манифест терял их карты.
+    """
+
+    def test_shared_scope_is_the_whole_pack(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+        from knyaz2.content.builder import _pack_map_numbers
+
+        pack = Path(tempfile.mkdtemp())
+        (pack / "manifest.json").write_text(json.dumps({
+            "maps": [{"legacy_number": 33}, {"legacy_number": 154},
+                     {"legacy_number": 155}],
+        }), encoding="utf-8")
+        # собираем одну карту — считать общие ассеты обязаны по всем
+        self.assertEqual(_pack_map_numbers(pack, (19,)), (19, 33, 154, 155))
+        # пустая папка: считаем ровно по тому, что просят собрать
+        self.assertEqual(_pack_map_numbers(Path(tempfile.mkdtemp()), (19, 21)),
+                         (19, 21))
+
+
+class MapMemoryKeepsTheGoneContractTest(unittest.TestCase):
+    """Ушедший житель не возвращается и со ВТОРОГО круга.
+
+    Снимок жителей карты заменялся списком тех, кто сейчас на ней стоит. А
+    ушедшего (действия 44/46/70) следующий вход не поднимает вовсе — значит в
+    списке его нет, и снимок про него забывал. Третий заход поднимал его из
+    пака вместе с квестом.
+
+    Отсюда семь жалоб тестера одним корнем: сломанный меч, покупка дома,
+    купец Лесного лагеря, Белун в яме, охотник, братья в сгоревшем лагере и
+    уведённый наёмник. Все со второго круга, а не с первого — потому и
+    выглядело загадочно.
+
+    Соседний `dead` копился объединением и потому переживал; расхождение двух
+    половин одной памяти и было ошибкой.
+    """
+
+    def client(self, name: str) -> str:
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parents[1]
+        return (root / "knyaz2" / "web" / "static" / name).read_text(encoding="utf-8")
+
+    def test_the_snapshot_covers_instead_of_replacing(self) -> None:
+        текст = self.client("mapstate.js")
+        #: Прежней перезаписи целиком остаться не должно.
+        self.assertNotIn("entry.residents = (units ?? [])", текст)
+        #: Новое накрывает старое по слоту, а не выбрасывает его.
+        self.assertIn("const previous = new Map((entry.residents ?? [])", текст)
+        self.assertIn("previous.set(snap.slot, snap)", текст)
+        self.assertIn("entry.residents = [...previous.values()]", текст)
+
+    def test_the_snapshot_still_carries_the_slot(self) -> None:
+        """Ключ склейки — слот; без него накрывать было бы нечем."""
+        текст = self.client("mapstate.js")
+        начало = текст.index("function packResident(unit)")
+        конец = текст.index("\n}", начало)
+        self.assertIn("slot: unit.slot", текст[начало:конец])
+        self.assertIn("removed: Boolean(unit.removed)", текст[начало:конец])
+
+
+class BurrowingPoseContractTest(unittest.TestCase):
+    """Из земли встают только те, кто в неё закапывается.
+
+    Поза расстановки 4 переводилась в «поднимается из земли» БЕЗ разбора
+    породы, и под правило попал живой человек: Позвизд в Дубках у пещеры
+    висел в позе подъёма и не двигался, пока на него не нападут. Тестер
+    записал его как «чародей забаговался».
+
+    Замер по всему паку: в каноне позу 4 несут ровно три породы — ичетик
+    (5 юнитов), скелет (71) и кикимора (16); у донора те же три и ещё одна,
+    ровно ОДИН юнит на всю игру — Позвизд, порода 90.
+
+    Что он не тварь, говорит он сам: разговор 29, тринадцать узлов,
+    «Ты ответишь за это оскорбление — я человек, а не зверь!».
+    """
+
+    def client(self, name: str) -> str:
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parents[1]
+        return (root / "knyaz2" / "web" / "static" / name).read_text(encoding="utf-8")
+
+    def test_only_three_breeds_rise(self) -> None:
+        текст = self.client("units.js")
+        self.assertIn("const BURROWING = new Set([0x46, 0x4C, 0x53])", текст)
+        self.assertIn("BURROWING.has((entry.breed ?? 0) & 0x7F)", текст)
+
+    def test_the_pack_agrees_with_the_list(self) -> None:
+        """Список пород снят замером — он и должен сойтись с паком."""
+        import json
+        import pathlib
+        корень = pathlib.Path(__file__).resolve().parents[1]
+        карты = корень / "content_build_check" / "maps"
+        if not карты.is_dir():
+            self.skipTest("пак не собран")
+        закапываются = set()
+        особые = []
+        for каталог in карты.iterdir():
+            файл = каталог / "map.json"
+            if not файл.is_file():
+                continue
+            документ = json.loads(файл.read_text(encoding="utf-8"))
+            for юнит in документ.get("units") or []:
+                if юнит.get("pose") != 4:
+                    continue
+                порода = (юнит.get("breed") or 0) & 0x7F
+                закапываются.add(порода)
+                if порода not in (0x46, 0x4C, 0x53):
+                    особые.append(f"{каталог.name}:{юнит.get('name')}/{порода}")
+        self.assertTrue(закапываются, "в паке не нашлось ни одного лежащего в земле")
+        #: Единственное исключение известно поимённо — если появится ещё одно,
+        #: список пород надо пересматривать, а не расширять молча.
+        self.assertLessEqual(len(особые), 1, f"новые породы в позе 4: {особые}")

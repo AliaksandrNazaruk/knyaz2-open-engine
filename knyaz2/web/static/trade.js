@@ -24,6 +24,7 @@ import { enchantPrice } from "./jewels.js";
 import { carriedWeight, itemWeight } from "./carry.js";
 import { selectionLead } from "./orders.js";
 import { roundHalfEven } from "./round.js";
+import { lootEmptied } from "./loot.js";
 
 export const trade = {
   open: false,
@@ -80,13 +81,15 @@ function partnerIsPriced(partner) {
 //
 // Монеты в мешке движок при открытии приплюсовывает к деньгам: каждая вещь
 // вида 0x0B класса 0x24 стоит 50 (VA 0x433489).
-export function tradeOpen(partner, stock = [], village = false) {
+export function tradeOpen(partner, stock = [], village = false, owner = null) {
   const size = slots();
   const set = rules();
   trade.open = true;
   trade.partner = partner;
   // Торгует выбранный: панель и обмен в движке смотрят один указатель.
-  trade.trader = selectionLead() ?? hero;
+  //: Повторное открытие после сделки называет его прямо — выбор за это
+  //: время мог смениться, а торгующий обязан остаться тем же.
+  trade.trader = owner ?? selectionLead() ?? hero;
   trade.village = village;
   trade.priced = partnerIsPriced(partner);
   // Режим: должность деревенского торговца, 6 у обычного, 0 у кучи.
@@ -348,13 +351,19 @@ export function tradeFinish(deal) {
   const partner = trade.partner;
   if (partner) {
     if (partner.items) {
+      // Чем куча владела ДО пересборки: судьбу опустевшей движок решает по
+      // архивной записи, то есть по прежнему содержимому (0x4136A8:19-23).
+      const held = [...partner.items];
       partner.items = left.slice(0, size);
       // параллельные экземплярные поля кучи пересобираются по именам
       partner.details = partner.items.map((name) =>
         details[name] ? { ...details[name] } : {});
       partner.enchant = partner.items.map((name) => details[name]?.enchant ?? 0);
-      // Опустела — куча с земли убирается совсем (VA 0x4136A8).
-      if (!partner.items.length && !partner.money) partner.taken = true;
+      // Опустела — общая развязка (0x41F638 → 0x4136A8): гнездовая остаётся
+      // пустым контейнером, грядка получает метку сбора и отрастает,
+      // напольная уходит. Прежний безусловный `taken` хоронил и сундуки
+      // (тайники «становились недоступными»), и грядки (трава не росла).
+      lootEmptied(partner, held);
     } else if (!trade.village) {
       partner.bag = left.slice(0, size);
       partner.bagStrength = {};
@@ -402,8 +411,47 @@ export function tradeFinish(deal) {
     // «партнёр есть» (VA 0x41F638), у кучи его нет.
     if (trade.priced) learn();
   }
+  // «OK» НЕ ЗАКРЫВАЕТ ОБМЕН — ОН ОТКРЫВАЕТ ЕГО ЗАНОВО.
+  //
+  // У экрана две кнопки, и разбор щелчка (VA 0x00421690) разводит их так:
+  //
+  //     код 0xC8 «Закрыть»  -> FUN_0041F638(0); ... FUN_0042958C()   // выход
+  //     код 0xC9 «Ok»       -> FUN_0041F638(1); ...
+  //         если собеседника нет (куча):
+  //             номер кучи ещё жив -> FUN_00424128(та же куча)   // ЗАНОВО
+  //             иначе               -> FUN_0042958C()            // выход
+  //         иначе (живой торговец): FUN_0043346C(1)              // ЗАНОВО
+  //
+  // То есть согласие переписывает мешки и тут же набивает ряды свежими: с
+  // купцом торгуют, пока не нажмут «Закрыть». Единственный выход по «Ok» —
+  // опустевшая куча: её номер гасит сам разбор сделки
+  // (`_DAT_00849624 = 0`, VA 0x41F638:155), и кнопке возвращаться некуда.
+  if (deal && tradeReopen(partner)) {
+    world.onTrade?.(partner);
+    return true;
+  }
   trade.open = false;
   world.onTrade?.(partner);
+  return true;
+}
+
+// Чем набивают ПРАВЫЙ ряд — тем же правилом, что и при первом открытии
+// (VA 0x0043346C и 0x00424128): у кучи её содержимое, у деревенского
+// торговца прилавок его должности, у прочих собственный мешок.
+function stockOf(partner) {
+  if (!partner) return [];
+  if (partner.items) return partner.items;
+  if (!trade.village) return partner.bag ?? [];
+  const limit = rules()?.counters?.[String(partner.role ?? 0)]?.slots ?? slots();
+  return (partner.counter ?? []).slice(0, limit);
+}
+
+//: Открыть заново после согласия. Ложь значит «возвращаться некуда» —
+//: только опустевшая куча, см. разбор кнопок выше.
+function tradeReopen(partner) {
+  if (!partner) return false;
+  if (partner.items && !partner.items.some(Boolean)) return false;
+  tradeOpen(partner, stockOf(partner), trade.village, trade.trader);
   return true;
 }
 

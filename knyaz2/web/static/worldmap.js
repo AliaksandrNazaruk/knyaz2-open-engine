@@ -35,6 +35,14 @@ export const worldMap = {
   rules: null,
   trip: null,       // идущий поход: цель, шаг и сколько кадров осталось
   wandering: null,  // бродячие отряды: живое состояние поверх хвоста GAME.0
+  // КОРАБЕЛЬНОЕ ПРАВО — одно число, как 0x84960C движка (у донора то же
+  // поле зовётся 0x87F4B8): 0 — корабля нет; N — рейс разрешён с карты N;
+  // −1 — отряд ПЛЫВЁТ по глобальной карте (маска хода берёт бит моря).
+  // Ставят его получение «Грамоты на владение кораблём» — обработчик 35 с
+  // классом 4 (0x432F1C, у донора 0x4360E8) — и донорское применение
+  // грамоты из мешка (0x435E00); гасит сам рейс: шаг в зону выхода −2
+  // (0x420900) взводит «плывём».
+  ship: 0,
 };
 
 //: Пересчитать клетку из точки — как это делает движок каждый кадр.
@@ -57,11 +65,51 @@ function rulesOf() {
   return world.map?.hero?.rules?.world_map ?? null;
 }
 
+// КАРТИНКА КАРТЫ МИРА. У канона это спрайт 4 INTERF.RES, у расширенной
+// карты — своя, нарисованная, и она объявлена прямо в правилах. Живёт здесь,
+// а не в выводе: по картинке считается и угол сетки (ниже), и попадание
+// щелчка, а два разных ответа на «какая у нас картинка» — это две разные
+// карты в одном окне.
+export function mapPicture() {
+  return worldMap.rules?.picture ?? world.map?.interface?.map ?? null;
+}
+
+//: Ширина левой панели движка: на столько экранный отсчёт правее картинки.
+//: Запасное значение — пак присылает своё в `interface.screen.panel_width`.
+const PANEL_WIDTH = 140;
+
+// УГОЛ СЕТКИ — В КООРДИНАТАХ КАРТИНКИ, А НЕ ЭКРАНА.
+//
+// Движок рисует карту в окне мира и отсчитывает от левого края ЭКРАНА, то
+// есть его угол (0xA7, 0x19) лежит на ширину панели правее, чем начинается
+// сама картинка. Пересчёт делает пак — knyaz2/content/worldmap.py, там же и
+// правило. Но паки, собранные до этого, писали угол экранным.
+//
+// Старый пак с новым клиентом съезжал МОЛЧА: сетка, туман и все значки
+// уходили вправо на 140 точек, часть их вообще вылезала за край холста, а
+// картинка оставалась канонной 884x709. Именно это видно как «карта размером
+// с оригинал, а деревни не на своих местах».
+//
+// Отличаем не догадкой, а проверкой: СЕТКА ОБЯЗАНА УМЕЩАТЬСЯ В КАРТИНКУ.
+// У канона 167 + 32*26 = 999 при ширине 884 — не умещается, значит угол
+// экранный; 27 + 832 = 859 умещается. Тот же договор проверяется при сборке
+// пака, так что новый пак сюда не попадает.
+function originInPicture(rules) {
+  const [x, y] = rules.origin;
+  const picture = rules.picture ?? world.map?.interface?.map ?? null;
+  if (!picture?.width) return [x, y];
+  if (x + rules.cols * rules.cell[0] <= picture.width) return [x, y];
+  const panel = world.map?.interface?.screen?.panel_width ?? PANEL_WIDTH;
+  return [x - panel, y];
+}
+
 //: Завести сетку один раз за сеанс: туман — это накопленное знание.
 export function worldMapSetup() {
   const rules = rulesOf();
   if (!rules) return false;
-  worldMap.rules = rules;
+  // Копия, а не сам объект пака: угол мы можем поправить, а данные пака
+  // трогать нельзя — их читают и другие.
+  worldMap.rules = { ...rules, origin: originInPicture(rules) };
   if (!worldMap.cells) {
     worldMap.cells = rules.grid.map((row) => row.slice());
   }
@@ -73,6 +121,99 @@ export function worldMapSetup() {
     }));
   }
   return true;
+}
+
+// УГОЛ СТАРЫХ СОХРАНЕНИЙ. Сохранения, сделанные до расширения карты, угла в
+// себе не несут, а место отряда в них ЭКРАННОЕ: тогда `centre` считала от
+// (0xA7, 0x19) прямо. Поэтому запасной угол здесь экранный, а не картиночный:
+// с картиночным (27, 25) отряд после загрузки старой игры вставал бы на
+// 140 точек правее, чем стоял.
+const LEGACY_ORIGIN = [0xA7, 0x19];
+
+// ПЕРЕНОС СОХРАНЁННОЙ СЕТКИ. Сохранение хранит клетки целиком, а размер
+// карты мира зависит от того, канон в паке или расширение. Разложить одно
+// в другое надо ЯВНО: иначе сетка ложится с нулевого угла, и весь туман
+// (а с ним и «где отряд уже был») уезжает на двадцать два столбца.
+//
+// Кладём по `canon_at` — тому самому месту, куда сборщик вложил канон.
+// Обратный переход, с расширения на канон, вырезает тот же прямоугольник.
+// РАСКЛАД ЛОКАЦИЙ — ИЗ ПАКА, ТУМАН — ИЗ СОХРАНЕНИЯ. Сохранение хранит клетки
+// целиком, и если класть их как есть, то содержимое пака до старой партии не
+// доедет НИКОГДА: перенесли деревню на другую карту — игрок по-прежнему
+// входит в прежнюю, и никакой ошибки при этом не видно.
+//
+// Что чем владеет, видно по тому, кто это пишет. На ходу клиент трогает в
+// клетке ровно три бита: ставит `explored` и `seen` (обход карты) и снимает
+// `hidden` (сюжет открыл локацию). Всё остальное — номер локации в младшем
+// байте, карта случайной стычки, бит 0x10 «сюда бродячим нельзя» — пишет
+// только сборка. Значит прогресс это те самые три бита, а прочее берётся
+// свежим из пака.
+//
+// `hidden` снимается, если его снял ЛЮБОЙ из двух: пак (локацию открыли
+// решением проекта) или сохранение (её открыл сюжет). Иначе донорский
+// Чёрный Бор так и остался бы невидимым в уже начатой игре.
+function cellMerge(fresh, saved) {
+  const { explored, seen, hidden } = worldMap.rules.flags;
+  const walked = (explored | seen) << 24;      // где отряд был и что видел
+  const dark = hidden << 24;                   // «локация ещё не открыта»
+  return (((fresh & ~walked & ~dark) | (saved & walked) | (fresh & saved & dark))
+          >>> 0);
+}
+
+export function cellsRestore(saved) {
+  if (!Array.isArray(saved) || !saved.length) return false;
+  if (!worldMapSetup()) {
+    worldMap.cells = saved.map((row) => row.slice());
+    return true;
+  }
+  const { rows, cols, canon_at: at } = worldMap.rules;
+  const fresh = worldMap.rules.grid;
+  const [savedRows, savedCols] = [saved.length, saved[0]?.length ?? 0];
+  if (savedRows === rows && savedCols === cols) {
+    worldMap.cells = saved.map((row, r) =>
+      row.map((cell, c) => cellMerge(fresh[r][c], cell)));
+    return true;
+  }
+  const [row0, col0] = at ?? [0, 0];
+  if (savedRows < rows) {
+    // Канонное сохранение в расширенной карте: вкладываем на место канона,
+    // остальное остаётся свежим — там отряд и правда ещё не был.
+    for (let row = 0; row < savedRows && row0 + row < rows; row += 1) {
+      for (let col = 0; col < savedCols && col0 + col < cols; col += 1) {
+        worldMap.cells[row0 + row][col0 + col] =
+          cellMerge(fresh[row0 + row][col0 + col], saved[row][col]);
+      }
+    }
+  } else {
+    // Расширенное сохранение в канонной карте: берём только канонный кусок.
+    for (let row = 0; row < rows; row += 1) {
+      for (let col = 0; col < cols; col += 1) {
+        const cell = saved[row0 + row]?.[col0 + col];
+        if (cell !== undefined) {
+          worldMap.cells[row][col] = cellMerge(fresh[row][col], cell);
+        }
+      }
+    }
+  }
+  return true;
+}
+
+// ПЕРЕНОС МЕСТА ОТРЯДА. Оно хранится в ПИКСЕЛЯХ картинки, а картинки у
+// канона и у расширенной карты разные: у канона сетка сидит внутри со
+// сдвигом (27, 25), у нарисованной начинается с угла. Значит пиксель надо
+// пересчитать через клетку, иначе отряд окажется за морем.
+export function pointRestore(x, y, savedOrigin = null) {
+  const rules = worldMap.rules;
+  if (!rules || !Number.isFinite(x) || !Number.isFinite(y)) return { x, y };
+  const from = savedOrigin ?? LEGACY_ORIGIN;
+  const [width, height] = rules.cell;
+  const [row0, col0] = rules.canon_at ?? [0, 0];
+  const same = from[0] === rules.origin[0] && from[1] === rules.origin[1];
+  if (same) return { x, y };
+  return {
+    x: x - from[0] + col0 * width + rules.origin[0],
+    y: y - from[1] + row0 * height + rules.origin[1],
+  };
 }
 
 //: Счётчик жребиев бродячих: движок бросает их каждый 16-й тик игрового
@@ -121,7 +262,12 @@ function wanderingTick(pathfinder = 0) {
       const role = record.role ?? 0;
       record.alive = false;
       record.role = null;
-      const scene = encounterScene(worldMap.row, worldMap.col);
+      // В ПЛАВАНИИ сцена бродячей встречи не бросается по местности, а
+      // всегда «Корабль в пути» (0x422CCC: при 0x84960C == −1 карта боя
+      // 0x1A и фон SEA.RES — абордаж на своей палубе).
+      const scene = worldMap.ship === -1
+        ? (worldMap.rules?.scenes?.sea ?? 26)
+        : encounterScene(worldMap.row, worldMap.col);
       if (!scene) continue;
       return { group: (set.role_first ?? 0x8C) + role, scene, wandering: true };
     }
@@ -197,8 +343,6 @@ export const UNKNOWN_PLACE = "Неизвестное место";
 
 //: Наш `0x8442A0`. Заполняется тем же, чем в движке, — открытием локации.
 const known = new Set();
-
-export function locationKnown(number) { return known.has(Number(number)); }
 
 // Имя места для показа. Единственное место, где решается «называть или нет»:
 // его зовут и подпись карты, и наведение на значок, и приход в клетку.
@@ -421,9 +565,17 @@ export function rollEncounter(row, col, hero = {}) {
 // и для столкновения с бродячим отрядом (VA 0x4360A8 и 0x4277F4).
 function encounterScene(row, col) {
   const r = worldMap.rules;
-  const terrain = r.terrain?.[(worldMap.cells[row][col] >> 8) & 0xFF];
-  if (!terrain?.scenes?.length) return 0;
-  let scene = terrain.scenes[roll(terrain.scenes.length)] ?? 0;
+  const cell = worldMap.cells[row][col];
+  const terrain = r.terrain?.[(cell >> 8) & 0xFF];
+  if (!terrain) return 0;
+  // МЕСТО БОЯ У ДВУХ ИГР БЕРЁТСЯ ПО-РАЗНОМУ. Канон бросает жребий среди
+  // пятнадцати сцен ЗАПИСИ местности, а «Продолжение легенды» читает байт 2
+  // САМОЙ КЛЕТКИ (FUN_00439B38): у его местностей списка сцен нет вовсе.
+  // Признак ставит сборка, а не клиент — по тому, из чьей игры местность.
+  let scene = terrain.scene_from_cell
+    ? (cell >> 16) & 0xFF
+    : (terrain.scenes?.length ? terrain.scenes[roll(terrain.scenes.length)] : 0);
+  if (!scene) return 0;
   // Море дерётся не на берегу: сцена 26 переводится в бой на корабле.
   if (scene === r.scenes.sea) scene = r.scenes.sea_battle;
   return scene;

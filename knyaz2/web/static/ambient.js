@@ -2,6 +2,7 @@
 import { ambientNode } from "./dom.js";
 import { world } from "./world.js";
 import { context, visibleWorld, withMainContext } from "./viewport.js";
+import { cameraApply, perspective, withPerspective } from "./perspective.js";
 
 // Атмосфера — процедурные частицы без новых ресурсов: летящая листва на
 // ветру и редкие стайки птиц. Рисуется после объектов и до фильтра
@@ -110,6 +111,8 @@ export function renderAmbient(visible) {
   for (const leaf of ambient.leaves) {
     const fade = Math.min(1, leaf.life * 2, (leaf.ttl - leaf.life) * 1.5);
     context.save();
+    //: Лист летит сам по себе, якорь у него собственный.
+    if (perspective.on) cameraApply(context, leaf.x, leaf.y);
     context.translate(leaf.x, leaf.y);
     context.rotate(leaf.spin);
     context.globalAlpha = 0.85 * fade;
@@ -131,6 +134,9 @@ export function renderAmbient(visible) {
   // фильтре и живом локальном свете. Настоящие тени движок кладёт на уже
   // отфильтрованный кадр (проход 0x440788) — кладём туда же.
   for (const bird of ambient.birds) {
+    //: ПТИЦУ ВЕДЁМ ЗА ЕЁ ТЕНЬЮ. Тень — точка на земле, а сама птица летит
+    //: над ней; общий якорь держит их вместе, врозь они разъехались бы.
+    withPerspective(context, bird.x - 34, bird.y + 68, () => {
     withMainContext(() => {
       context.save();
       context.fillStyle = "rgba(10, 10, 12, 0.14)";
@@ -146,5 +152,6 @@ export function renderAmbient(visible) {
     context.moveTo(bird.x - 10, bird.y - 8 * flap);
     context.quadraticCurveTo(bird.x, bird.y + 4 * flap, bird.x + 10, bird.y - 8 * flap);
     context.stroke();
+    });
   }
 }

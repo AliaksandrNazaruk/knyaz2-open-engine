@@ -19,16 +19,19 @@
 // и числятся в TODO ревью; шаги и приказы движок тоже держит, но игрок
 // продолжает с места стоя, и это заметно только в бою.
 import { shared, world } from "./world.js";
-import { hero } from "./hero.js";
+import { hero, heroStampBuilding } from "./hero.js";
+import { preload } from "./content.js";
 import { units } from "./units.js";
-import { loot } from "./loot.js";
+import { loot, lootReattachTalk } from "./loot.js";
 import { dialog } from "./dialog.js";
 import { daylight } from "./daylight.js";
 import { village, villagePack, villageUnpack } from "./village.js";
-import { knownPack, knownUnpack, placeAt, worldMap,
-         worldMapSetup } from "./worldmap.js";
-import { mapStatePack, mapStateUnpack, packPile } from "./mapstate.js";
+import { cellsRestore, knownPack, knownUnpack, placeAt, pointRestore,
+         worldMap, worldMapSetup } from "./worldmap.js";
+import { mapStateCapture, mapStatePack, mapStateUnpack, packPile }
+  from "./mapstate.js";
 import { warbandsApply, warbandsPack } from "./warband.js";
+import { clock } from "./clock.js";
 
 const KEY = "knyaz2.save.v1";
 //: Предыдущее сохранение. Пишется перед каждой удачной записью, читается
@@ -47,6 +50,26 @@ function packActor(actor) {
     x: actor.x, y: actor.y,
     direction: actor.direction ?? 6,
     stance: actor.stance ?? "peace",
+    // ПАВШИЙ ДОЛЖЕН ОСТАТЬСЯ ПАВШИМ. В движке сохранять тут нечего: сейв
+    // пишет весь массив юнитов (0x423CB8), и бит смерти +0x1A|0x80 едет в
+    // нём сам собой, вместе с позой трупа. У нас спутники поднимаются из
+    // записи отряда, а расстановка ставит `alive: true` безусловно, —
+    // поэтому смерть надо возить явно, как это уже делает packFoe.
+    //
+    // Из отряда павшего вычёркивает СВЁРТКА КАРТЫ, а не сама смерть: движок
+    // проходит по бойцам начиная со второго, у кого поднят бит смерти —
+    // раздаёт добро, убавляет счёт отряда +0x1C и сдвигает хвост записей
+    // (VA 0x43A628:157-168). До ухода с карты труп лежит на месте — это и
+    // повторяет `partyCapture` на выходе. А вот сейв, снятый ДО ухода,
+    // воскрешал его живым с нулём здоровья.
+    alive: actor.alive !== false,
+    //: Поза трупа несёт номер варианта смерти (жребий из трёх, VA 0x416A5D),
+    //: и без неё лежачий встал бы в стойку. Живым позу не возим: она
+    //: доигрывается сама, а снятая посреди замаха только мешала бы.
+    pose: actor.pose ?? "stand",
+    //: Тело 15 трупа не оставляет вовсе (VA 0x416A15): бит породы и пустая
+    //: клетка. Признак едет вместе со смертью.
+    hidden: Boolean(actor.hidden),
     health: actor.health ?? null,
     maxHealth: actor.maxHealth ?? null,
     experience: actor.experience ?? 0,
@@ -54,6 +77,9 @@ function packActor(actor) {
     freeExperience: actor.freeExperience ?? 0,
     level: actor.level ?? 1,
     money: actor.money ?? 0,
+    // РЕПУТАЦИЯ — счёт «Продолжения легенды» (0x87F410). Движок пишет его в
+    // сохранение отдельным числом (0x425158), рядом с прочими глобальными.
+    reputation: actor.reputation ?? 0,
     equipment: { ...(actor.equipment ?? {}) },
     bag: [...(actor.bag ?? [])],
     enchant: { ...(actor.enchant ?? {}) },
@@ -90,6 +116,12 @@ function packActor(actor) {
     // герой лечился перезагрузкой.
     potionTicks: actor.potionTicks ?? 0,
     progressLock: actor.progressLock ?? false,
+    // Тумблеры окна персонажа — биты +0x19 (0x20 выбор оружия, 0x10
+    // защита вожака, 0x01/0x02 лечебные смеси): движок хранит их в самой
+    // записи юнита, значит и сейв обязан.
+    weaponLock: actor.weaponLock ?? false,
+    defendLeader: actor.defendLeader ?? false,
+    healTrigger: actor.healTrigger ?? 0,
     // Облик/точность (+0xF8) — его гасит истечение временного зелья.
     look: actor.look ?? null,
     // КВЕСТОВЫЕ ФЛАГИ ИГРОКА — байт героя +0xF9. Их ставит обработчик
@@ -105,6 +137,14 @@ function packActor(actor) {
     palette: actor.palette ?? 0,
     // лицо (+0xEF) — тоже поле записи юнита: по нему берётся портрет
     face: actor.face ?? 0,
+    // ЧЬЯ ИГРА В СЕЙВ НЕ ПИШЕТСЯ. Это ПРОИЗВОДНОЕ облика, а не состояние:
+    // герою её ставит шаблон выбранного мира (progressSetup), юнитам — пак
+    // карты и записи отряда. Сейв её и писал, и восстанавливал — и битые
+    // сохранения (залипший «legend» у канонного героя, см. progress.js)
+    // воскрешали палатку с Иззарком после каждой загрузки, хотя новая игра
+    // была уже здорова. Прежний страх «загруженный Драгомир показывался
+    // Эйнаром» закрыт шаблоном: он восстанавливается по saved.world ДО
+    // применения сейва.
   };
 }
 
@@ -203,6 +243,11 @@ function applyActor(actor, saved) {
   if (Number.isFinite(saved.body)) actor.body = saved.body;
   if (Number.isFinite(saved.palette)) actor.palette = saved.palette;
   if (Number.isFinite(saved.face)) actor.face = saved.face;
+  //: МЕТКА ИГРЫ ИЗ СЕЙВА НЕ ЧИТАЕТСЯ — даже если старое сохранение её
+  //: несёт. Она производная: герою её даёт шаблон мира (progressSetup до
+  //: applySave), юниту — пак его карты. Чтение отсюда возвращало залипший
+  //: «legend» канонному герою из сейвов, записанных до правки progress.js:
+  //: жалоба «сначала аватарки нормальные, а потом обратно палатка».
   if (Number.isFinite(saved.breed)) actor.breed = saved.breed;
   if (saved.cell) actor.cell = { ...saved.cell };
   if (Number.isFinite(saved.x)) actor.x = saved.x;
@@ -216,6 +261,7 @@ function applyActor(actor, saved) {
   actor.freeExperience = saved.freeExperience ?? actor.freeExperience;
   actor.level = saved.level ?? actor.level;
   actor.money = saved.money ?? actor.money;
+  actor.reputation = saved.reputation ?? actor.reputation ?? 0;
   if (saved.equipment) actor.equipment = { ...saved.equipment };
   if (saved.bag) actor.bag = [...saved.bag];
   if (saved.enchant) actor.enchant = { ...saved.enchant };
@@ -242,6 +288,10 @@ function applyActor(actor, saved) {
   actor.savedCharacteristics = saved.savedCharacteristics ?? null;
   actor.potionTicks = saved.potionTicks ?? 0;
   actor.progressLock = saved.progressLock ?? false;
+  // тумблеры окна персонажа (биты +0x19)
+  actor.weaponLock = saved.weaponLock ?? false;
+  actor.defendLeader = saved.defendLeader ?? false;
+  actor.healTrigger = saved.healTrigger ?? 0;
   if (saved.look !== undefined) actor.look = saved.look;
   actor.flags = saved.flags ?? actor.flags ?? 0;
   if (saved.stats) actor.stats = { ...actor.stats, ...saved.stats };
@@ -252,13 +302,36 @@ function applyActor(actor, saved) {
   actor.path = [];
   actor.step = null;
   actor.goal = null;
+  // СМЕРТЬ — ПОСЛЕДНЕЙ, поверх всего: расстановка подняла спутника живым
+  // (`alive: true` там безусловно), и вернуть ему бит смерти надо после
+  // того, как разложены здоровье и снаряжение. Порядок тот же, что у чужих
+  // в applyFoes. Старые сейвы поля не несут — `!== false` оставляет их
+  // живыми, как было.
+  actor.alive = saved.alive !== false;
+  if (!actor.alive) {
+    actor.pose = saved.pose ?? actor.pose;
+    actor.frame = 0;
+    actor.frameTime = 0;
+    actor.moving = false;
+    //: Исчезающее тело клетки не занимает (VA 0x416A15).
+    if (saved.hidden) { actor.hidden = true; actor.cell = null; }
+  }
 }
 
 export function saveState(mapNumber) {
+  // СНИМОК ТЕКУЩЕЙ КАРТЫ — ДО УПАКОВКИ ПАМЯТИ КАРТ. Движок пишет массив
+  // юнитов целиком (VA 0x423CB8), поэтому сейв, снятый стоя на карте, не
+  // теряет ничего. Наша память карты снималась только при УХОДЕ, и сейв на
+  // карте нёс устаревший (или пустой) снимок её жителей: после загрузки
+  // ушедший квестодатель воскресал из пака с квестом (Микула, Никифор), а
+  // мешок торговца-нежителя откатывался (волхв карты 17). villagePack так
+  // уже делает — зовёт villageCapture первым.
+  mapStateCapture(mapNumber, units, loot);
   return {
     // 3: добавлены поселение, постройки, бродячие отряды и недостающие
     // поля записи юнита. Старые сейвы читаются: всё новое необязательно.
-    version: 3,
+    // 4: мировой такт `ticks` и свежий снимок текущей карты в mapState.
+    version: 4,
     map: mapNumber ?? null,
     // АРХЕТИП ЖИВЁТ В СЕЙВЕ, а не в localStorage. В движке он — байт записи
     // героя (+0xFC), запись целиком уходит в сохранение, и другого источника
@@ -267,6 +340,9 @@ export function saveState(mapNumber) {
     // показывала Ратибора и лишь потом подменяла его сохранённым обликом —
     // отсюда и «два экземпляра героя».
     world: hero.data?.template?.world ?? null,
+    //: У своего персонажа мир чужой, поэтому его самого узнаём по слоту:
+    //: без этого загрузка сейва поднимала бы канонного героя того же мира.
+    slot: hero.data?.template?.slot ?? null,
     // ЗАПИСЬ ОТРЯДА ЦЕЛИКОМ. Движок сохраняет блок отрядов и блок юнитов
     // целиком, поэтому наём переживает загрузку сам собой: боец лежит в
     // срезе отряда игрока. У нас срез — это `party.members`, и без него
@@ -274,6 +350,13 @@ export function saveState(mapNumber) {
     // пака, а там его нет.
     party_members: hero.party?.members ?? null,
     clock: daylight.time,
+    // МИРОВОЙ ТАКТ — наш `0x84962C`. Движок пишет его в сейв первым же
+    // блоком (VA 0x423CB8:22) и восстанавливает при загрузке (0x4236E0:36).
+    // В его единицах живут метки отрастания грядок (pile.regrowAt): без
+    // него каждый запуск страницы начинал счёт с нуля, разность
+    // `clock.ticks - regrowAt` уходила глубоко в минус, и сорванная трава
+    // не отрастала никогда.
+    ticks: clock.ticks,
     hero: packActor(hero),
     // Спутники — своим упаковщиком: у них есть мешок, навыки и нажитое.
     party: units.filter((unit) => unit.ally).map(packActor),
@@ -304,7 +387,10 @@ export function saveState(mapNumber) {
     // который движок пишет в сейв целиком (0x423CB8). Без них сохранение
     // взводило бы сюжетные встречи заново: пятеро из шести гасят свой бит
     // действием 61, и после загрузки они снова кидались бы к игроку.
-    approach: [...dialog.approach],
+    //: Только ПРАВКИ набора «подойди и заговори». Сам набор — из пака
+    //: (см. dialog.approachEdits): плоский список пережил бы правку
+    //: данных и вернул отменённое.
+    approachEdits: [...dialog.approachEdits],
     flags: [...dialog.flags.entries()],
     // ПОСЕЛЕНИЕ. Движок пишет весь блок поселений целиком (0x83D408, 0x378C
     // байт), а здесь — те поля, которые игра меняет: залог и прочие флаги
@@ -319,9 +405,12 @@ export function saveState(mapNumber) {
       owned: village.data.owned ?? 0,
       treasury: village.data.treasury ?? 0,
       incomeStamp: village.incomeStamp ?? 0,
-      order: village.order ?? -1,
-      timer: village.timer ?? 0,
-      stock: { ...(village.stock ?? {}) },
+      // Заказ кузницы и часы варки живут на самой записи поселения
+      // (shops.js), как движковые +0x49F/+0x08 и +0x04.
+      forgeOrder: village.data.forgeOrder ?? -1,
+      forgeLeft: village.data.forgeLeft ?? 0,
+      brewTimer: village.data.brewTimer ?? null,
+      brewTokens: village.data.brewTokens ? [...village.data.brewTokens] : null,
       lastTime: village.lastTime ?? null,
       // ДОЛЖНОСТИ (+0x3D0, пять слов) и СЧЁТЧИК ОТРЯДА ДЕРЕВНИ (+0x1C).
       // Первое ставит действие 74, второе растёт при каждом «Останься
@@ -355,7 +444,14 @@ export function saveState(mapNumber) {
       ? worldMap.wandering.map((record) => ({ ...record })) : null,
     worldMap: {
       cells: worldMap.cells ? worldMap.cells.map((row) => row.slice()) : null,
+      // Угол сетки внутри картинки: по нему загрузка узнаёт, на канонной
+      // карте сохранялись или на расширенной, и пересчитывает место отряда.
+      // У сохранений, сделанных до расширения, его нет — там канонный.
+      origin: worldMap.rules?.origin ? [...worldMap.rules.origin] : null,
       x: worldMap.x, y: worldMap.y, onMap: worldMap.onMap,
+      // Корабельное право (0x84960C): движок пишет его в сейв четырьмя
+      // байтами (0x4236E0), иначе после загрузки с корабля не уплыть.
+      ship: worldMap.ship ?? 0,
       // ЧТО ИГРОК УЗНАЛ О МЕСТАХ — наш `0x8442A0`. Туман над значком и знание
       // имени в движке ставятся вместе (0x436908), но живут порознь, поэтому
       // и сохранять надо оба: без этого после загрузки все места снова
@@ -405,6 +501,18 @@ export function saveGame(mapNumber) {
     console.warn("сохранение пропущено: состояние не прошло проверку", state);
     return false;
   }
+  return savePut(state);
+}
+
+// Положить ГОТОВОЕ состояние в слот «Продолжить» — тот же путь записи, что
+// у saveGame, только состояние собирает вызывающий. Нужен респавну
+// (respawn.js): он кладёт якорный сейв с перенесёнными деньгами и сумкой,
+// и перезагрузка подхватывает его обычной дорогой загрузки.
+export function savePut(state) {
+  if (!saveUsable(state)) {
+    console.warn("запись пропущена: состояние не прошло проверку", state);
+    return false;
+  }
   const text = JSON.stringify(state);
   // ЗАПАСНАЯ КОПИЯ ПЕРЕД ЗАПИСЬЮ. Хранилище одно, и неудачная запись сверху
   // прежде оставляла игрока вообще без сохранения. Теперь предыдущее уходит
@@ -431,8 +539,6 @@ export function saveGame(mapNumber) {
 
 //: Последняя беда с записью — её показывает меню. Пусто, пока всё хорошо.
 let saveTrouble = null;
-export function saveTroubleText() { return saveTrouble; }
-
 function describeTrouble(error) {
   const имя = error?.name || "";
   if (имя === "QuotaExceededError" || имя === "NS_ERROR_DOM_QUOTA_REACHED") {
@@ -490,41 +596,6 @@ function usableText(text) {
   try { return saveUsable(JSON.parse(text)); } catch { return false; }
 }
 
-// ВЫГРУЗКА И ЗАГРУЗКА ФАЙЛОМ.
-//
-// Хранилище браузера — вещь ненадёжная и чужая: его чистит «очистить данные
-// сайта», его не бывает в приватном окне, и оно СВОЁ у каждого адреса, так что
-// партия с локального сервера на боевом не видна. Файл на диске от всего этого
-// не зависит, и он же переносит игру между машинами.
-export function saveExport() {
-  const text = localStorage.getItem(KEY);
-  if (!usableText(text)) return null;
-  const метка = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
-  return { text, name: `knyaz2-${метка}.json` };
-}
-
-//: Возвращаем беду словами, а не бросаем: зовущему надо показать её игроку.
-export function saveImport(text) {
-  let разобрано;
-  try { разобрано = JSON.parse(text); }
-  catch { return "это не файл сохранения: не разбирается"; }
-  if (!saveUsable(разобрано)) return "файл не похож на сохранение этой игры";
-  try {
-    const прежнее = localStorage.getItem(KEY);
-    if (прежнее) localStorage.setItem(BACKUP, прежнее);
-    localStorage.setItem(KEY, JSON.stringify(разобрано));
-    return null;
-  } catch (error) {
-    return describeTrouble(error);
-  }
-}
-
-export function hasSave() { return Boolean(savedGame()); }
-
-export function dropSave() {
-  try { localStorage.removeItem(KEY); return true; } catch { return false; }
-}
-
 // Разложить сохранение по уже загруженной карте. Карту переключает тот, кто
 // зовёт: здесь только состояние.
 export function applySave(saved) {
@@ -567,6 +638,9 @@ export function applySave(saved) {
       enchant: [...(pile.enchant ?? [])],
       cell: pile.cell ? { ...pile.cell } : null,
     })));
+    // Разговорные деревья куч — данные пака, в сейве их нет и не будет:
+    // подшиваются заново по id (loot.js, lootReattachTalk).
+    lootReattachTalk(world.map);
   } else {
     // Совместимость с v1: там хранились только полностью исчезнувшие кучи.
     const taken = new Set(saved.lootTaken ?? []);
@@ -574,11 +648,30 @@ export function applySave(saved) {
       if (taken.has(loot[i].id)) loot.splice(i, 1);
     }
   }
-  dialog.quests = new Map(saved.quests ?? []);
-  // Старые сейвы битов подхода не знают: там их поле отсутствует, и в этом
-  // случае оставляем те, что завёл questsReset из пака, — иначе сюжетные
-  // встречи пропали бы совсем.
-  if (Array.isArray(saved.approach)) dialog.approach = new Set(saved.approach);
+  // СТАРЫЕ СОХРАНЕНИЯ: донорские квесты переехали со 128 на 152. База
+  // считалась по занятым квестам канона (0…102), а индексом той же таблицы
+  // служит НОМЕР РАЗГОВОРА, и канонных разговоров 151 — донорские заявки
+  // ложились на канонных жителей. Ключ 128 и выше в сохранении может быть
+  // только донорским: канон выше 102 не пишет ничего.
+  const WAS_BASE = 128, NOW_BASE = 152, THEIR_LAST = 161;
+  dialog.quests = new Map((saved.quests ?? []).map(([key, value]) => {
+    const number = Number(key);
+    const theirs = number >= WAS_BASE && number <= WAS_BASE + THEIR_LAST;
+    return [theirs ? number - WAS_BASE + NOW_BASE : number, value];
+  }));
+  // НАБОР «ПОДОЙДИ И ЗАГОВОРИ» БЕРЁТСЯ ИЗ ПАКА, из сейва — только правки.
+  // Прежде сохранялся весь набор целиком, и он затирал паковый: правка
+  // данных до начатой игры не доезжала. Так Фёдора продолжала сама
+  // заговаривать после того, как бит у неё сняли.
+  //
+  // У сейвов до этой правки списка правок нет, и восстановить его не из
+  // чего: там лежал только итог. Такие сейвы получают паковый набор —
+  // то есть разово теряют то, что успели навзводить действия 61 и 62.
+  for (const [number, armed] of saved.approachEdits ?? []) {
+    dialog.approachEdits.set(Number(number), Boolean(armed));
+    if (armed) dialog.approach.add(Number(number));
+    else dialog.approach.delete(Number(number));
+  }
   dialog.flags = new Map(saved.flags ?? []);
   // Поселение: пишем прямо в блок пака — по нему и работают обработчики
   // разговора, казна и мастерская.
@@ -589,9 +682,18 @@ export function applySave(saved) {
     village.data.owned = saved.village.owned ?? village.data.owned ?? 0;
     village.data.treasury = saved.village.treasury ?? village.data.treasury ?? 0;
     village.incomeStamp = saved.village.incomeStamp ?? village.incomeStamp ?? 0;
-    village.order = saved.village.order ?? -1;
-    village.timer = saved.village.timer ?? 0;
-    village.stock = { ...(saved.village.stock ?? {}) };
+    if (Number.isFinite(saved.village.forgeOrder)) {
+      village.data.forgeOrder = saved.village.forgeOrder;
+    }
+    if (Number.isFinite(saved.village.forgeLeft)) {
+      village.data.forgeLeft = saved.village.forgeLeft;
+    }
+    if (Number.isFinite(saved.village.brewTimer)) {
+      village.data.brewTimer = saved.village.brewTimer;
+    }
+    if (Array.isArray(saved.village.brewTokens)) {
+      village.data.brewTokens = [...saved.village.brewTokens];
+    }
     village.lastTime = saved.village.lastTime ?? null;
     if (Array.isArray(saved.village.officials)) {
       village.data.officials = [...saved.village.officials];
@@ -603,17 +705,48 @@ export function applySave(saved) {
   //: Новый формат — все поселения разом; старый (`village`) разобран выше и
   //: описывает только ту деревню, где игрок сохранился.
   if (Array.isArray(saved.villages)) villageUnpack(saved.villages);
+  // СТУПЕНЬ ИЗ СОХРАНЕНИЯ — НЕ ПРОСТО ЧИСЛО.
+  //
+  // Стройка меняет ступень через `buildingsTick`, и та делает ещё две
+  // вещи: переставляет клетки постройки (`heroStampBuilding` — готовая
+  // пускает внутрь, недострой стоит стеной) и ДОГРУЖАЕТ картинки новой
+  // ступени. Карта тянет кадры только того состояния, в котором постройка
+  // приехала из пака, и у казармы это пустая площадка.
+  //
+  // Здесь ступень ставилась голым присваиванием, и обе вещи пропускались.
+  // Отсюда «построил, сохранил, загрузил — казармы нет»: в данных стоит
+  // тройка, а картинок достроенной ступени никто не запрашивал, и
+  // `buildingFrames` честно откатывался на плоскую площадку; клетки при
+  // этом оставались стеной, и внутрь никто не заходил.
+  const rebuilt = [];
   for (const entry of saved.buildings ?? []) {
     const object = (world.objects ?? [])[entry.index];
     if (!object?.states) continue;
     object.state = entry.state ?? object.state;
     object.timer = entry.timer ?? 0;
+    rebuilt.push(object);
+  }
+  if (rebuilt.length) {
+    const ready = world.map?.hero?.rules?.buildings?.states?.ready ?? 3;
+    const assets = [];
+    for (const object of rebuilt) {
+      heroStampBuilding(object, ready);
+      for (const frame of Object.values(object.states[String(object.state)] ?? {})) {
+        if (frame?.asset) assets.push(frame.asset);
+      }
+    }
+    //: Не ждём: до готовности картинок постройка рисуется прежними
+    //: кадрами — ровно так же, как во время стройки.
+    preload(assets);
   }
   if (Array.isArray(saved.mapState)) mapStateUnpack(saved.mapState);
   if (Array.isArray(saved.wandering)) {
     worldMap.wandering = saved.wandering.map((record) => ({ ...record }));
   }
-  if (saved.worldMap?.cells) worldMap.cells = saved.worldMap.cells.map((r) => r.slice());
+  // Сетка раскладывается ЧЕРЕЗ cellsRestore, а не присваиванием: размер
+  // карты мира зависит от того, канон в паке или расширение, и старое
+  // сохранение надо вложить на место канона, а не класть с нулевого угла.
+  if (saved.worldMap?.cells) cellsRestore(saved.worldMap.cells);
   if (Array.isArray(saved.worldMap?.known)) knownUnpack(saved.worldMap.known);
   // Через placeAt, а не полем: клетка отряда ВЫВОДИТСЯ из точки, и ставить
   // её отдельно нельзя — разъедутся. А выводится она по правилам сетки,
@@ -621,9 +754,21 @@ export function applySave(saved) {
   // раньше, чем заводит карту, поэтому сетку заводим здесь же, как standAt.
   // Клетки из сохранения уже разложены выше: setup их не перетирает.
   if (Number.isFinite(saved.worldMap?.x) && worldMapSetup()) {
-    placeAt(saved.worldMap.x, saved.worldMap.y);
+    // Место отряда — в пикселях КАРТИНКИ, а картинки у канона и расширения
+    // разные: пересчитываем по углу, записанному вместе с сохранением.
+    const point = pointRestore(saved.worldMap.x, saved.worldMap.y,
+                               saved.worldMap.origin ?? null);
+    placeAt(point.x, point.y);
   }
   worldMap.onMap = Boolean(saved.worldMap?.onMap);
+  // Старые сохранения права не знают — у них корабля нет (ноль движка).
+  worldMap.ship = Number.isFinite(saved.worldMap?.ship)
+    ? saved.worldMap.ship : 0;
   if (Number.isFinite(saved.clock)) daylight.time = saved.clock;
+  // Мировой такт — тем же движением: с ним сравниваются метки грядок.
+  // Бут восстанавливает его и РАНЬШЕ, до lootSetup (см. boot), но пути
+  // загрузки бывают разные, и контракт «упаковано — восстанавливается»
+  // держит эта строка.
+  if (Number.isFinite(saved.ticks)) clock.ticks = saved.ticks;
   return true;
 }

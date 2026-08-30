@@ -6,10 +6,21 @@ rsync под рукой нет, но он здесь и не нужен: в `man
 с серверным и отправляем tar-ом ровно те пути, что разошлись, плюс сам
 манифест. Удалённые файлы вычищаем отдельным списком.
 
-    python tools/deploy_pack.py            # посмотреть, что поедет
-    python tools/deploy_pack.py --send     # отправить
+    python tools/deploy_pack.py                      # посмотреть, что поедет
+    python tools/deploy_pack.py --send               # отправить
+    python tools/deploy_pack.py --pack content_build_check   # другой каталог
 
 Первая заливка на пустой сервер уедет целиком — это нормально.
+
+КРАЙ СЕТИ (24.08): в Cloudflare живёт Cache Rule «konung2 content cache»
+(URI Full wildcard …/content/* -> Eligible for cache, TTL по заголовкам
+origin) — без него .json край не кэширует вовсе (DYNAMIC), и каждая
+map.json ехала с origin. nginx отдаёт /content/ годовым immutable, а
+manifest.json — no-cache, так что край хранит карты и не хранит
+указатель версии. Чистить кэш при заливке НЕ нужно: клиент просит
+контент с ?v=<хеш из манифеста>, ключ кэша включает query — новая
+версия файла это новый ключ. Правило создано в дашборде зоны
+techvisioncloud.pl; в репозитории его нет, потеряется — пересоздать.
 """
 from __future__ import annotations
 
@@ -19,8 +30,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-ХОСТ = "vps2"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from deploy_ssh import ssh_pipe, ssh_read   # noqa: E402
+
 КОРЕНЬ_СЕРВЕРА = "/var/www/konung2/content"
+#: Пак по умолчанию. Каталог задаётся ключом, потому что пересобранный пак
+#: живёт рядом под своим именем, пока его не сверили с прежним, а сервер
+#: разработчика в это время отдаёт прежний.
 ПАК = Path("content_build")
 
 
@@ -30,9 +46,7 @@ def карта_файлов(манифест: dict) -> dict[str, str]:
 
 
 def серверный_манифест() -> dict:
-    готово = subprocess.run(
-        ["ssh", "-o", "BatchMode=yes", ХОСТ, f"cat {КОРЕНЬ_СЕРВЕРА}/manifest.json"],
-        capture_output=True, text=True, encoding="utf-8")
+    готово = ssh_read(f"cat {КОРЕНЬ_СЕРВЕРА}/manifest.json", timeout=120)
     if готово.returncode != 0 or not готово.stdout.strip():
         return {}
     try:
@@ -44,14 +58,16 @@ def серверный_манифест() -> dict:
 def main() -> int:
     разбор = argparse.ArgumentParser()
     разбор.add_argument("--send", action="store_true", help="отправить, а не только показать")
+    разбор.add_argument("--pack", type=Path, default=ПАК, help="каталог пака")
     аргументы = разбор.parse_args()
+    пак = аргументы.pack
 
-    свой = json.loads((ПАК / "manifest.json").read_text(encoding="utf-8"))
+    свой = json.loads((пак / "manifest.json").read_text(encoding="utf-8"))
     наши, чужие = карта_файлов(свой), карта_файлов(серверный_манифест())
 
     новые = [путь for путь, хеш in наши.items() if чужие.get(путь) != хеш]
     лишние = [путь for путь in чужие if путь not in наши]
-    вес = sum((ПАК / путь).stat().st_size for путь in новые if (ПАК / путь).exists())
+    вес = sum((пак / путь).stat().st_size for путь in новые if (пак / путь).exists())
 
     print(f"файлов в паке: {len(наши)}")
     print(f"изменилось:    {len(новые)}  ({вес / 1024 / 1024:.1f} МБ до сжатия)")
@@ -63,7 +79,7 @@ def main() -> int:
         print("нечего слать")
         return 0
 
-    список = ПАК / ".deploy-list"
+    список = пак / ".deploy-list"
     список.write_text("\n".join([*новые, "manifest.json"]), encoding="utf-8")
     удалить = " ".join(f"'{КОРЕНЬ_СЕРВЕРА}/{путь}'" for путь in лишние)
     # ПЕРЕЖИМАЕМ РОВНО ТО, ЧТО ЗАЛИЛИ. Раньше здесь стоял отбор по «новее
@@ -82,12 +98,21 @@ def main() -> int:
     # бы content_build внутри content_build и падал «Error is not recoverable».
     поток = subprocess.Popen(
         ["tar", "-czf", "-", "-T", str(список.name)],
-        cwd=str(ПАК), stdout=subprocess.PIPE)
-    итог = subprocess.run(["ssh", "-o", "BatchMode=yes", ХОСТ, команда],
-                          stdin=поток.stdout)
+        cwd=str(пак), stdout=subprocess.PIPE)
+    # Пак бывает на сотни мегабайт — потолок щедрый, но он ЕСТЬ: висеть
+    # сутками, как старый ssh, отправка больше не может.
+    код = ssh_pipe(команда, поток.stdout, timeout=3600)
     поток.wait()
     список.unlink(missing_ok=True)
-    return итог.returncode
+    if код != 0:
+        return код
+    # Замкнуть петлю: серверный манифест обязан стать нашим — сверка идёт
+    # мимо CDN, прямо по ssh, и ловит оборванную посреди заливку.
+    if карта_файлов(серверный_манифест()) != наши:
+        print("ПРОД РАЗОШЁЛСЯ: серверный манифест не равен локальному")
+        return 1
+    print("прод сверен: серверный манифест равен локальному")
+    return 0
 
 
 if __name__ == "__main__":

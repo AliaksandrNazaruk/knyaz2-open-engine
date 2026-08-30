@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Редактор карт К2</title>
+<style>
+  /* Хост дизайна: editor_design_raw.html (Claude Design пользователя)
+     остаётся нетронутой истиной вида; editor_live.js загружает его
+     экраны и вживляет данные живого API v2. Обновление дизайна =
+     перезаливка raw-файла, живость не переписывается. */
+  html, body { margin: 0; height: 100%; background: #0b0e14;
+               overflow: hidden;
+               font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+  /* карточка масштабируется от ЛЕВОГО ВЕРХНЕГО угла (см. масштаб() в
+     editor_live.js), поэтому центрировать её нельзя: при центрировании
+     сдвиг складывается с масштабом и правый край уходит за экран */
+  #stage { height: 100%; display: flex; align-items: flex-start;
+           justify-content: flex-start; overflow: auto; }
+  #stage > .dv-card { margin: 0 !important; border-radius: 0 !important;
+                      box-shadow: none !important; }
+  #boot { color: #94a3b8; font: 13px 'IBM Plex Mono', monospace;
+          padding: 24px; }
+</style>
+<script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+<div id="stage"><div id="boot">гружу дизайн…</div></div>
+<script src="editor_live.js"></script>
+</body>
+</html>

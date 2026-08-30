@@ -52,11 +52,49 @@ export function wornBonuses(actor = hero) {
   return total;
 }
 
+// ПРИБАВКИ ОТ КВЕСТОВЫХ ФЛАГОВ. Благословение волхва, проклятие и прочее
+// семейство: разговор поднимает бит в байте +0xF9 (обработчик 34), а саму
+// прибавку даёт таблица — та же, по которой считается «номер прибавки»
+// предмета. Пересчёт характеристик 0x41C494:72-74 перед каждым расчётом
+// делает `if (юнит[+0xF9] != 0) FUN_0041844C(+0xF9)`.
+//
+// Разборщик 0x41844C проходит по битам 8, 4, 2, 1 и берёт строку ПО САМОМУ
+// БИТУ, а не по номеру строки. Значит из шестнадцати строк для флагов живут
+// ровно четыре: 1 — благословение (Харизма +15, Интеллект +10), 2 —
+// проклятие, 4 — здоровье, 8 — Сила.
+//
+// Без этого благословение у волхва не давало НИЧЕГО, и тестеры справедливо
+// жаловались четвёртый заход подряд: в самом разговоре прибавки нет, есть
+// только флаг, и прежний разбор на этом остановился.
+export function flagBonuses(actor = hero) {
+  const rows = enchant()?.bonus_table;
+  const flags = actor.flags ?? 0;
+  const total = {};
+  if (!Array.isArray(rows) || !flags) return total;
+  for (const bit of [8, 4, 2, 1]) {
+    if (!(flags & bit)) continue;
+    for (const { field, value } of rows[bit] ?? []) {
+      total[String(field)] = (total[String(field)] ?? 0) + value;
+    }
+  }
+  return total;
+}
+
+//: Все прибавки разом — надетое и флаги. В движке они и складываются вместе,
+//: одним пересчётом, поэтому и здесь их не разводят.
+export function allBonuses(actor = hero) {
+  const total = { ...wornBonuses(actor) };
+  for (const [field, value] of Object.entries(flagBonuses(actor))) {
+    total[field] = (total[field] ?? 0) + value;
+  }
+  return total;
+}
+
 // Текущие характеристики: база плюс прибавка. В движке они лежат
 // отдельным блоком (+0xCC), а не поверх базы (+0xC0).
 export function currentCharacteristics(actor = hero) {
   const base = [...(actor.characteristics ?? [])];
-  const bonus = wornBonuses(actor);
+  const bonus = allBonuses(actor);
   for (const [field, value] of Object.entries(bonus)) {
     const index = Number(field) - 1;               // поля считаются с единицы
     if (index >= 0 && index < base.length) base[index] += value;
@@ -70,7 +108,8 @@ export function currentCharacteristics(actor = hero) {
 // единичные, так что в игре прибавки складываются.
 function fieldBonus(actor, name, fallback) {
   const fields = enchant()?.fields;
-  return wornBonuses(actor)[String(fields?.[name] ?? fallback)] ?? 0;
+  //: Флаги правят и эти три поля: у проклятия броня −100 и точность −200.
+  return allBonuses(actor)[String(fields?.[name] ?? fallback)] ?? 0;
 }
 
 export function bonusArmour(actor = hero) { return fieldBonus(actor, "armour", 7); }

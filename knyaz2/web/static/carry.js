@@ -800,9 +800,15 @@ export function carryPlaceBag(index = -1, into = null) {
   if (bagInsert(carry.item, index, actor) < 0) return refuse("bag_full");
   putInstanceState(name, actor);
   clear();
-  enchantToBag(name, word, carryActor());
-  poisonToBag(name, poison, carryActor());
-  countToBag(name, count, carryActor());
+  // ЭКЗЕМПЛЯРНЫЕ ПОЛЯ — ПОЛУЧАТЕЛЮ. Здесь стоял `carryActor()` — первый
+  // выбранный, а не тот, на чей портрет уронили: слово чар, отрава и счёт
+  // пачки оставались у ОТДАЮЩЕГО, и спутнику приезжала «голая» вещь — а у
+  // отдающего висла фантомная запись на имя, которого в его мешке нет.
+  // Отсюда «предмет передаётся, но в инвентаре не появляется» (стопка без
+  // счёта невидима для показа пачки).
+  enchantToBag(name, word, actor);
+  poisonToBag(name, poison, actor);
+  countToBag(name, count, actor);
   return true;
 }
 
@@ -871,7 +877,9 @@ export function carryOntoStack(targetCount, targetItem, targetPoison = 0,
   return [max, left];
 }
 
-// СКОРОСТЬ ЮНИТА (VA 0x41B3B8).
+// СКОРОСТЬ ЮНИТА (VA 0x41B3B8) — НО ФОРМУЛА ПОЛОЖЕНА ТОЛЬКО ОТРЯДУ ИГРОКА.
+//
+// Сама функция считает так:
 //
 //     скорость = (Выносливость + Ловкость) / 50
 //     если она меньше четырёх, её режет ноша:
@@ -883,13 +891,23 @@ export function carryOntoStack(targetCount, targetItem, targetPoison = 0,
 // (VA 0x423218). Текущие характеристики лежат с +0xCC, поэтому +0xCD — это
 // Ловкость, а +0xD1 — Выносливость; порядок имён в паке это подтверждает.
 //
-// У ТВАРИ скорость своя: старший байт +0x1A её породы, если она не нашей
-// стороны. Здесь этой ветки нет — у нас порода в отдельном поле, и звери
-// ходят общим правилом; отмечено, чтобы не выдавать за полный перенос.
+// НО пишут её результат в +0x1D РОВНО ТРИ МЕСТА, и все три — про отряд
+// игрока: мировой такт (0x41C944:305, под `if (отряд == №0)`), сам игрок в
+// главном цикле (0x438A00:749) и наём (0x433070:21). Все прочие юниты живут
+// со скоростью ИЗ ЗАПИСИ — в стартовых мирах это ноль у каждого. Пока
+// формула применялась ко всем, враг со статами 50/50 бежал те же 3 такта
+// на клетку, что и герой, — оттого «от врагов не оторваться» — и махал
+// оружием вдвое чаще (пауза замаха 4 − скорость, VA 0x416B50).
+//
+// Отрицательная скорость записи — особый случай самой 0x41B3B8: юниту НЕ
+// стороны игрока она возвращается как есть (клетка дольше базы, бег не
+// положен — 0x416574 требует скорость >= 0).
 export function unitSpeed(unit) {
-  const traits = unit === hero
-    ? (hero.characteristics ?? [])
-    : (unit.characteristics ?? unit.stats?.characteristics ?? []);
+  if (unit !== hero && !unit.ally) return unit.speed ?? 0;
+  // Характеристики — ТЕКУЩИЕ, с прибавками чар: движок читает +0xCD и
+  // +0xD1 (после пересчёта 0x41C494), а не голую базу.
+  const traits = unit.characteristics ? currentCharacteristics(unit)
+    : (unit.stats?.characteristics ?? []);
   const agility = traits[1] ?? 0;          // +0xCD
   const stamina = traits[5] ?? 0;          // +0xD1
   let speed = Math.trunc((stamina + agility) / 50);

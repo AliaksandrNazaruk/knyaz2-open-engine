@@ -31,7 +31,10 @@ html, body {
   inset: 0;
   z-index: 40;
   background-color: #05070c;
-  background-image: url("/loading.webp");
+  /* ВЕРСИЯ И ЗДЕСЬ. Картинку показывает ЭТОТ фон, а не предзагрузка в
+     loadscreen.js: без версии Cloudflare продолжал отдавать прежнюю, хотя
+     файл на сервере уже сменился. Поднимать вместе с PICTURE_VERSION. */
+  background-image: url("/loading.webp?v=3");
   background-position: center;
   background-size: cover;
   background-repeat: no-repeat;
@@ -43,6 +46,28 @@ html, body {
 }
 
 #load-screen[hidden] { display: none; }
+
+/* «Нажмите, чтобы продолжить»: показывается, когда локация уже готова, и
+   гаснет вместе с экраном. Мигает медленно — чтобы звать, а не дёргать. */
+#load-continue {
+  color: #f0e2c0;
+  font-size: 1.05rem;
+  letter-spacing: .04em;
+  text-shadow: 0 1px 3px #000, 0 0 12px rgb(0 0 0 / .8);
+  animation: load-continue-pulse 1.8s ease-in-out infinite;
+}
+
+#load-continue[hidden] { display: none; }
+
+@keyframes load-continue-pulse {
+  0%, 100% { opacity: .55; }
+  50%      { opacity: 1; }
+}
+
+/* Кому мешает движение — тому его и не будет (системная настройка). */
+@media (prefers-reduced-motion: reduce) {
+  #load-continue { animation: none; opacity: .9; }
+}
 
 #load-progress {
   width: min(38rem, 62vw);
@@ -172,6 +197,44 @@ body {
   image-rendering: pixelated;
 }
 
+/* Полоса подписи: имя врага под курсором, «Засада!», «Дальше пути нет».
+   Стоит НАД поясом, у нижней кромки окна мира — там же, где её рисует
+   движок. Пустая не занимает места и мышь не ловит: сквозь неё кликают
+   по миру. */
+#ui-status {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 52px;
+  z-index: 3;
+  padding: 0 10px;
+  color: #e6dcc0;
+  font-size: 13px;
+  line-height: 22px;
+  text-align: center;
+  text-shadow: 0 1px 2px #000, 0 0 6px #000;
+  pointer-events: none;
+}
+
+#ui-status:empty { display: none; }
+
+/* Табличка у курсора. Держится на `fixed`, потому что ведётся по экранным
+   координатам мыши, и мышь не ловит — иначе она перехватывала бы щелчки по
+   тому самому, что подписывает. */
+#ui-tip {
+  position: fixed;
+  z-index: 9;
+  padding: 3px 8px;
+  max-width: 40ch;
+  color: #e6dcc0;
+  font-size: 12px;
+  line-height: 17px;
+  white-space: nowrap;
+  background: rgba(12, 11, 8, .86);
+  border: 1px solid rgba(222, 204, 157, .3);
+  pointer-events: none;
+}
+
 #bag-slots { position: absolute; inset: 0; }
 
 /* Гнездо интерфейса: прозрачная кликабельная область поверх рамки. */
@@ -187,8 +250,15 @@ body {
 .ui-cell:hover { border-color: rgba(215, 183, 95, .75); }
 .ui-cell.disabled { opacity: .45; cursor: default; }
 .ui-cell.disabled:hover { border-color: transparent; }
-.ui-cell img { width: 100%; height: 100%; object-fit: contain;
-               image-rendering: pixelated; }
+/* ЗНАЧОК РИСУЕТСЯ СВОИМ РАЗМЕРОМ, а не в размер гнезда. Движок кладёт спрайт
+   как есть, и значки у всех вещей одинаковые — 68x68. Гнёзда же разные: рука
+   89x84, щит 90x84, кольцо 39x37. Стояло `width: 100%; height: 100%`, и в
+   больших гнёздах значок раздувало до 84x84 — на четверть больше натурального,
+   отчего он наползал на нарисованную рамку. В мелких гнёздах этого не видно:
+   там он, наоборот, ужимался, и жалоба была ровно про щит и оружие.
+   Ужимать по-прежнему можно — за это отвечают max-*. */
+.ui-cell img { max-width: 100%; max-height: 100%; width: auto; height: auto;
+               object-fit: contain; image-rendering: pixelated; }
 .ui-cell.active { border-color: #d7b75f; }
 
 /* Выход в меню — герб на свободной полосе панели. На мыши он ведёт себя как
@@ -429,25 +499,24 @@ dd { margin: 0; color: #efe7d2; font-variant-numeric: tabular-nums; }
   font-weight: 700;
   cursor: pointer;
   pointer-events: auto;
+  /* Паддинг — зона клика в экранных точках; левое поле возвращает сам
+     символ на координату движка, иначе столбец «+» съезжал на паддинг и
+     слово «поднять» шапки не ложилось над ним. */
   padding: 0 4px;
+  margin-left: -4px;
 }
 .ui-char.raise:hover { color: #fff2c0; }
+/* Тумблеры окна персонажа (0x42A8F4:126-180): значения кликабельны,
+   активное движок печатает второй палитрой 0x60054C. */
+.ui-char.toggle { pointer-events: auto; cursor: pointer; color: #b9ac8a; }
+.ui-char.toggle:hover { color: #fff2c0; }
+.ui-char.toggle.on { color: #ffd45e; }
 /* Перегруз: движок печатает вес красной палитрой (0x60054C). */
 .ui-char.over { color: #e05a4e; }
 
-/* Таблица прокачки в окне персонажа. */
-.ui-progress { position: absolute; right: 2%; top: 6%; width: 44%;
-               max-height: 88%; overflow: auto; font-size: 12px;
-               color: #e6dcbe; background: rgba(18, 15, 10, .72);
-               border: 1px solid rgba(222, 204, 157, .25); padding: 8px 10px; }
-.ui-progress-head { color: #d7b75f; margin-bottom: 6px; line-height: 1.4; }
-.ui-progress-row { display: grid; grid-template-columns: 1fr auto auto;
-                   gap: 8px; align-items: center; padding: 1px 0; }
-.ui-progress-row b { color: #f0e6c8; font-weight: 600; }
-.ui-progress-row button { background: #2c2416; color: #e8dfc4; cursor: pointer;
-                          border: 1px solid rgba(222, 204, 157, .4);
-                          font-size: 11px; padding: 0 6px; }
-.ui-progress-row button:disabled { opacity: .35; cursor: default; }
+/* Таблицы прокачки .ui-progress больше нет: её узлы не строил ни один
+   модуль (старый вариант, вытесненный знаками «+» по координатам движка),
+   и стили лежали мёртвым грузом. */
 
 /* Торговый экран: он занимает проём мира, а всё внутри стоит по
    координатам из exe. */
@@ -613,6 +682,15 @@ body.creation-open #world, body.creation-open .ui { display: none; }
   font: 400 clamp(8px, 1.45cqw, 14px)/1.3 "Trebuchet MS", system-ui, sans-serif;
   text-shadow: 0 1px 2px #000;
 }
+/* Имя героя — заголовком описания: на родном фоне имена были вшиты под
+   шестью рамками, с девятью слотами их печатаем здесь. */
+.creation__story-name {
+  display: block;
+  margin-bottom: 0.35em;
+  color: rgb(255 214 138);
+  font-size: 1.25em;
+  font-weight: 700;
+}
 
 /* Несомая вещь видна и над панелями: в движке перенос — режим курсора (8),
    и он рисуется поверх всего экрана. Перебиваем `cursor: pointer` ячеек. */
@@ -632,11 +710,27 @@ body.creation-open #world, body.creation-open .ui { display: none; }
 
 #game-menu[hidden] { display: none; }
 
-/* ЦВЕТ ЗНАЧКА ВЕЩИ (VA 0x42FF20). Движок красит палитру значка перед
-   отрисовкой: красным — то, что нельзя надеть по характеристикам, жёлтым —
-   неопознанное, зелёным — с прибавками. Выбор состояния канонический;
-   сам оттенок пока приближённый — табличная краска движка (0x4BEA2C,
-   0x479D50, 0x474950) в пак ещё не вывезена. */
-.ui-cell img.item-unusable { filter: drop-shadow(0 0 2px #f22) saturate(1.4) hue-rotate(-18deg); }
-.ui-cell img.item-unknown  { filter: drop-shadow(0 0 2px #dd0) brightness(1.15); }
-.ui-cell img.item-special  { filter: drop-shadow(0 0 2px #2d2) brightness(1.1); }
+/* ЦВЕТ ВЕЩИ БОЛЬШЕ НЕ ЗДЕСЬ. Движок (VA 0x42FF20) красит не значок и не
+   кайму, а ПОДЛОЖКУ ячейки целиком: пак печёт красный и зелёный варианты
+   спрайта ячейки по таблицам движка (0x43C228, шаг ряда 0.01), а ui.js
+   подставляет их фоном (interface.cell_unusable / cell_special). Прежний
+   тонкий кант drop-shadow ушёл вместе с классами item-*. */
+
+/* СВОЙ ПЕРСОНАЖ НА ЭКРАНЕ ВЫБОРА. Портрета у него нет — в NEWHERO.RES
+   девять клеток, а он десятый, — поэтому клетка рисуется сама: рамка того
+   же вида, что у канонных, и имя внутри. */
+.creation__zone--own {
+  border: 1px solid rgba(210, 180, 120, 0.55);
+  background: rgba(20, 14, 8, 0.55);
+  color: #e8d7a8;
+  font: 12px/1.2 inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 2px;
+}
+.creation__zone--own.выбран {
+  border-color: #f0d48a;
+  background: rgba(60, 40, 16, 0.75);
+}

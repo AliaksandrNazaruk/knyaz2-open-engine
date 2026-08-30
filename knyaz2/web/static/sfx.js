@@ -9,7 +9,7 @@
 // снаряжение) приходит в аргументах: герой — такой же объект юнита.
 import { world } from "./world.js";
 import { actorItem } from "./actor.js";
-import { fixes, playEffect, playPositional, playUnitVoice, sound }
+import { fixes, playEffect, playPositional, playUnitVoice, slotEntry, sound }
   from "./sound.js";
 
 const rnd = (n) => Math.floor(Math.random() * n);
@@ -42,22 +42,9 @@ export function sfxClick() {
   if (ui()) playEffect(ui().click);
 }
 
-// Подтверждение/вход (18), взять-положить (17): 0x420900, 0x436C48, 0x41D954.
-export function sfxConfirm() { if (ui()) playEffect(ui().confirm); }
-export function sfxTake() { if (ui()) playEffect(ui().take); }
-
-// Надеть предмет (0x41E280/0x41E8D8): кольца и амулеты — слот 0, он в данных
-// ПУСТ (немое событие оригинала); броня и шлемы — 2, остальное носимое — 1.
-//: Ветвление 0x41E280 по виду пофайлово не разобрано; здесь его крупная
-//: сетка по слою класса (доспехи и шлемы 23…48). Уточнение — задача канона,
-//: а не клиента: слоты те же.
-export function sfxEquip(item) {
-  const slots = ui()?.equip;
-  if (!slots) return;
-  const layer = item?.layer ?? 0;
-  if (!layer) { playEffect(slots[0]); return; }          // немой канон
-  playEffect(layer >= 23 && layer <= 48 ? slots[2] : slots[1]);
-}
+//: `sfxTake` удалён: слот 17 — звук ПРИМЕНЕНИЯ ЗЕЛЬЯ (единственный
+//: вызывающий — 0x41D954), а подъём и сброс вещи в оригинале немые.
+//: Зелья зовут его напрямую (carry.js, playEffect(0x11)).
 
 // Фанфара уровня (0x413110): только сторона игрока — гейт уже в progress.js.
 export function sfxLevelUp() { if (ui()) playEffect(ui().level_up); }
@@ -69,13 +56,18 @@ export function sfxLevelUp() { if (ui()) playEffect(ui().level_up); }
 export function sfxSwing(actor) {
   const rules = combatRules();
   if (!rules) return;
+  // ЗВУК — ПО ПОЗЕ, а не по режиму стрельбы: в движке он привязан к
+  // смене блока (0x429B2C), и ближний замах лучника — тренировка в
+  // казарме прежде всего — должен свистеть, а не натягивать тетиву.
+  // Стреляющие позы приходят сюда только из настоящего выстрела.
+  const shooting = String(actor?.pose ?? "").startsWith("shoot");
   const weapon = actor?.equipment
-    ? actorItem(actor.rangedMode ? actor.equipment.ranged : actor.equipment.hand)
+    ? actorItem(shooting ? actor.equipment.ranged : actor.equipment.hand)
     : null;
   // Выстрел — набор 4 (0x429B2C): самострел (класс слоя 0x15) взводится
   // слотом 1, лук натягивается слотом 5. Ближний замах — набор 8, по типу.
   let slot;
-  if (actor?.rangedMode && weapon) {
+  if (shooting && weapon) {
     slot = weapon.layer === rules.crossbow_layer
       ? rules.shot_crossbow : rules.shot_bow;
   } else {
@@ -164,7 +156,7 @@ export function sfxPose(unit, pose) {
     const special = record * rules.stride + rules.special_offset;
     const wants = (record === 9 && (pose === "walk" || pose === "run")) ||
                   (record === 15 && pose.startsWith("death"));
-    if (wants && sound.slots?.[String(special)]) {
+    if (wants && slotEntry(special)) {
       playPositional(special, unit.cell.row, unit.cell.col);
     }
   }
@@ -238,8 +230,13 @@ export function sfxSetup({ hero } = {}) {
   if (sfxSetup.done) return;
   sfxSetup.done = true;
   chain("onLevelUp", () => sfxLevelUp());
-  chain("onPickup", () => sfxTake());
-  chain("onDrop", () => sfxTake());
+  // ПОДЪЁМ И СБРОС ВЕЩИ В ОРИГИНАЛЕ НЕМЫЕ. По всем 26 вызовам проигрывателя
+  // 0x42D660 в декомпиляте: «положить в клетку» (0x423360), ветка «уронить»
+  // (0x421690:156-168), «взять» (0x423538/0x420B7C) звука не зовут вовсе.
+  // Здесь на оба события вешался слот 17 — а он у движка играет РОВНО из
+  // одного места, 0x41D954, и это ПРИМЕНЕНИЕ ЗЕЛЬЯ (строка «взять/положить
+  // предмет | 17» в AUDIO_AUDIT.md подписана неверно). Оттого при сбросе
+  // лута и звучало зелье.
   chain("onOrder", (unit, kind, row, col, target) => {
     // Озвучен только приказ «подойти и заговорить» (0x410A08, case 2) —
     // и его в движке отдаёт ИГРОК. Движение и приказ цели идут молча.

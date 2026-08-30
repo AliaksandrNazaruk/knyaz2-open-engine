@@ -12,6 +12,7 @@
 import { hero } from "./hero.js";
 import { world } from "./world.js";
 import { actorItem } from "./actor.js";
+import { currentCharacteristics } from "./jewels.js";
 import { difficultyNow } from "./settings.js";
 
 function rules() { return hero.data?.rules?.progression ?? null; }
@@ -30,10 +31,17 @@ export function progressSetup() {
   // Два массива, как в юните движка: базовые (+0xC0) сверяет потолок
   // прокачки (VA 0x413214), текущие (+0xCC) читают пределы навыков и вся
   // арифметика боя; расходятся они на прибавках надетых чар (VA 0x41C494).
-  hero.characteristics = template?.current
-    ? [...template.current]
-    : template?.characteristics
-      ? [...template.characteristics]
+  //
+  // СЕЕТСЯ БАЗА, а не текущие. `hero.characteristics` в порте — это
+  // «база с уровнями»: прибавки надетого досчитывает currentCharacteristics
+  // (jewels.js) при каждом чтении. Пока сюда клали template.current (уже
+  // +0xCC, С прибавками), чары надетого считались ДВАЖДЫ — латентно у
+  // стартовых героев (у них база равна текущим), громко у любого юнита с
+  // зачарованной вещью в записи.
+  hero.characteristics = template?.characteristics
+    ? [...template.characteristics]
+    : template?.current
+      ? [...template.current]
       : hero.characteristics ?? new Array(names.length || 6).fill(10);
   hero.baseCharacteristics = template?.characteristics
     ? [...template.characteristics]
@@ -48,6 +56,27 @@ export function progressSetup() {
   hero.face = template?.face ?? hero.face ?? 0;
   hero.body = template?.body ?? hero.body ?? 0;
   hero.palette = template?.palette ?? hero.palette ?? 0;
+  //: ПОРОДА — ЧЕТВЁРТОЕ ПОЛЕ ОБЛИКА У СВОЕГО ГЕРОЯ. У канонных шаблонов её
+  //: нет вовсе, и запасной ход оставляет всё как было. А своему она нужна:
+  //: бит 0x40 — единственное, по чему отрисовка ищет набор вместо слоёв
+  //: HEROES.RES (actor.js isBeast).
+  hero.breed = template?.breed ?? hero.breed ?? 0;
+  // ЧЬЯ ИГРА — ЧЕТВЁРТОЕ ПОЛЕ ОБЛИКА, и без него три первых бесполезны.
+  // Кадры и палитры двух игр лежат в паке под разными ключами (`bodyKey`:
+  // `legend:6:247` против `6:247`), потому что графика у них РАЗНАЯ — общих
+  // тел всего 34 набора из 77. Без этой строки Иззарк искал набор `6:247`,
+  // не находил ничего и выходил чёрным силуэтом, а панель просила портрет
+  // без приставки и получала канонного Ратибора.
+  //
+  // У КАНОННЫХ ШАБЛОНОВ ПОЛЯ `game` НЕТ ВОВСЕ, и запасной ход «?? hero.game»
+  // (списанный с соседних полей облика — у тех поле есть в каждом шаблоне)
+  // здесь ЗАЛИПАЛ: посмотрел на экране выбора донорского героя, выбрал
+  // Ратибора — hero.game остался «legend», и панель уезжала в донорские
+  // портреты: герой — Иззарк (`legend:0`), Путята (лицо 10) — legend_ui_271
+  // (у донора это предметная иконка, база его портретов 274), Тур (лицо
+  // 14) — legend_ui_275, то есть ИХ Велиславна. Шаблон дан — игра берётся
+  // только из него; запасной ход остаётся лишь вызовам без шаблона.
+  hero.game = template ? template.game ?? null : hero.game ?? null;
   // Деньги — кошелёк героя (+0x26 его записи), общий на весь отряд. Ступень
   // сложности множит ИМЕННО стартовую сумму из записи, а не текущую: строка
   // и так ставит кошелёк из шаблона, поэтому повторный вход на карту ничего
@@ -58,6 +87,21 @@ export function progressSetup() {
     : hero.money ?? 0;
   // Отряд: герой первым, дальше спутники; вместимость — из записи отряда.
   hero.party = template?.party ?? hero.party ?? null;
+  // РАЗГОВОР С САМИМ СОБОЙ. У записи игрока есть свой номер разговора
+  // (+0xF2), как у любого юнита: 138 у канонных героев, 14 у донорских. Это
+  // и есть HERO.QST — «Надо с толком использовать передышку между боями» с
+  // ремонтом снаряжения и лечением себя и отряда. Через него герой и растит
+  // своё Знахарство и Кузнечное дело: других дверей к ним в игре нет.
+  //
+  // Дерево приезжает в паке ПЕРВЫМ участником отряда — это и есть сам герой
+  // (builder.py кладёт `dialog_tree` каждому бойцу), поэтому отдельного поля
+  // шаблону не заводим. Своему герою (слот 9) достаётся дерево того мира, в
+  // который он играет, — и это правильно: сюжет у него мира 0.
+  const own = hero.party?.members?.[0] ?? null;
+  hero.dialog = own?.dialog_tree ?? hero.dialog ?? null;
+  //: Номер разговора — ещё и «голос» для питча реплик (_VOICES). У 138 и 14
+  //: своей частоты в таблице нет, так что звучание не меняется.
+  hero.dialogNumber = own?.dialog ?? hero.dialogNumber ?? null;
 }
 
 // Характеристики движка в боевые поля: Ловкость даёт парирование, а
@@ -126,10 +170,15 @@ export function killExperience(unit) {
   const weights = (beast ? config?.kill_xp_weights : config?.kill_xp_weights_human)
     ?? { parry: 0.2, strength: 0.3, endurance: 0.3, armour: 0.1,
          melee_skill: 1.2, ranged_skill: 1.8 };
+  // ХАРАКТЕРИСТИКИ ЖЕРТВЫ — ЖИВЫЕ, а не снимок дня появления: движок
+  // читает байты +0xCD/+0xD0/+0xD1 прямо из записи (0x41B044:16-18) — с
+  // прокачкой и прибавками чар. Снимок `unit.stats` остаётся запасным для
+  // юнитов без массива характеристик.
   const stats = unit.stats ?? {};
-  let total = (stats.parry ?? 0) * weights.parry +
-    (stats.strength ?? stats.power ?? 0) * weights.strength +
-    (stats.toughness ?? 0) * weights.endurance;
+  const current = unit.characteristics ? currentCharacteristics(unit) : null;
+  let total = (current?.[1] ?? stats.parry ?? 0) * weights.parry +
+    (current?.[4] ?? stats.strength ?? stats.power ?? 0) * weights.strength +
+    (current?.[5] ?? stats.toughness ?? 0) * weights.endurance;
   if (!beast) {
     const held = victimSkills(unit);
     total += held.melee * (weights.melee_skill ?? 1.2) +
@@ -305,10 +354,14 @@ export function skillLimit(index, unit = hero) {
   if (prereq && prereq.skills.every((i) => (skills[i] ?? 0) < prereq.threshold)) {
     return 0;
   }
+  // ХАРАКТЕРИСТИКИ — ТЕКУЩИЕ, С ПРИБАВКАМИ ЧАР (+0xCC…+0xD1): движок
+  // читает в 0x413268 именно их, поэтому кольцо на Обучаемость поднимает
+  // предел навыка. Здесь читался голый массив без прибавок надетого.
+  const current = currentCharacteristics(unit);
   const learning = config.learning ?? { index: 3, divisor: 4 };
-  const base = Math.floor((unit.characteristics?.[learning.index] ?? 0) / learning.divisor);
+  const base = Math.floor((current[learning.index] ?? 0) / learning.divisor);
   const chars = rule.chars ?? [];
-  const total = chars.reduce((sum, i) => sum + (unit.characteristics?.[i] ?? 0), 0);
+  const total = chars.reduce((sum, i) => sum + (current[i] ?? 0), 0);
   let limit;
   if (rule.kind === "half") limit = Math.floor((total + base) / 2);
   else if (rule.kind === "double") limit = (total + base) * 2;

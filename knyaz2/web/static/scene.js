@@ -2,20 +2,28 @@
 import { canvas } from "./dom.js";
 import { world } from "./world.js";
 import { applyDaylight, band, beginSceneLayer, cellVisible, context, endSceneLayer,
-         setLayeredFrame, traceDiamond, useMainContext, visibleWorld,
+         overcast,
+         setLayeredFrame, useMainContext, visibleWorld,
          worldTransform } from "./viewport.js";
+import { clock } from "./clock.js";
 import { daylight } from "./daylight.js";
 import { lightActive, nightDarkness, renderLightGlow } from "./light.js";
 import { renderShadows } from "./shadows.js";
-import { drawObject } from "./entities.js";
+import { buildingAnchor, drawObject, entitiesBeginPass, entitiesEndPass,
+         partyRoofBuildings } from "./entities.js";
 import { drawHeroAtDepth, hero, renderHero } from "./hero.js";
 import { drawPile, lootDrawList } from "./loot.js";
-import { UNIT_SORT_BIAS } from "./actor.js";
-import { renderProjectiles } from "./projectiles.js";
+import { unitSortKey } from "./actor.js";
+import { renderBursts, renderFire, renderProjectiles } from "./projectiles.js";
 import { renderUnit, renderUnitsOverlay, units } from "./units.js";
 import { renderAmbient } from "./ambient.js";
 import { renderGroundDebug, renderObjectDebug } from "./debug.js";
 import { water, waterRender } from "./water.js";
+import { renderGround } from "./ground.js";
+import { renderRain, renderStreaks, streaksTick,
+         weatherTick } from "./weather.js";
+import { drawPlane, withPerspective } from "./perspective.js";
+import { probe } from "./profiler.js";
 
 // Рамка выбора поверх сцены. Оформление наше: в движке она рисуется
 // средствами DirectDraw, здесь — обычной пунктирной обводкой.
@@ -55,7 +63,11 @@ export function render() {
   // вне заливки, поэтому кадр собирается послойно:
   //   [земля и оверлеи + фильтр] -> аура -> тени ->
   //   [объекты и герой + фильтр, светлые кадры на холст] -> призрак игрока
-  const filtered = daylight.levels.some((level) => level !== 0);
+  //: пасмурность — такой же уровень канала, как ночной, значит и слои
+  //: она обязана включать: иначе тучи затемнят светлые кадры (интерьеры,
+  //: bright-юнитов), которые движок держит вне заливки суток.
+  const filtered = daylight.levels.some((level) => level !== 0)
+    || overcast.level > 0;
   const layered = filtered &&
     (lightActive() || world.brightObjects || Boolean(hero.data && hero.bright));
   setLayeredFrame(layered);
@@ -72,70 +84,64 @@ export function render() {
     for (const cell of world.underlay) {
       if (cell.x > visible.right || cell.y > visible.bottom ||
           cell.x + cell.size < visible.left || cell.y + cell.size < visible.top) continue;
-      context.drawImage(underlayImage, cell.x, cell.y);
+      //: Подложка — ТА ЖЕ ПЛОСКОСТЬ, что земля, и корёжится так же. Возьми
+      //: её спрайтовым правилом (равномерный масштаб по нижнему краю) — и
+      //: между плитками разошлись бы швы.
+      //: Размер берём НАТУРАЛЬНЫЙ, а не `cell.size`: при выключенном флаге
+      //: `drawPlane` вырождается в тот же самый `drawImage(image, x, y)`,
+      //: и кадр обязан совпасть с прежним точка в точку.
+      drawPlane(context, underlayImage, cell.x, cell.y,
+                underlayImage.width, underlayImage.height);
     }
   }
 
-  for (const cell of world.ground) {
-    if (!cell.asset || cell.x > visible.right || cell.y > visible.bottom ||
-        cell.x + 120 < visible.left || cell.y + 70 < visible.top) continue;
-    const image = world.images.get(cell.asset);
-    if (image) {
-      context.drawImage(image, cell.x, cell.y);
-    } else if (cell.asset) {
-      traceDiamond(cell.x, cell.y);
-      context.fillStyle = "#d3009e";
-      context.fill();
-    }
-  }
+  //: ДОЖДЬ — СРАЗУ ЗА ПОДЛОЖКОЙ И ДО ЗЕМЛИ.
+  //:
+  //: Кольцо лежит НА ВОДЕ, а вода у нас самый нижний слой: земля кладётся
+  //: поверх неё со своей прозрачностью, и сквозь прорехи в земле видна
+  //: именно подложка. Значит и кольцо обязано уходить под землю ровно так
+  //: же, как уходит вода под ним. Раньше я рисовал его после выпечки земли,
+  //: рассудив «кольцо лежит на грунте», — и круги шли поверх берега.
+  //:
+  //: Такт берём тут же: у него под рукой видимая коробка, по которой кольца
+  //: и сеются, а от него зависят и струи, и тучи ниже по кадру.
+  weatherTick(visible);
+  probe(". дождь", renderRain);
 
-  // konung2.exe VA 0x42543D..0x4254A5: the first 12-byte KN2 table is
-  // rendered in record-slot order immediately after the ground. These
-  // GRAPH.RES frames are river banks, lilies, reeds and other terrain
-  // overlays which cover the deliberately incomplete base-cell mosaic.
-  for (const overlay of world.terrainOverlays) {
-    const frame = overlay.frame;
-    if (!frame) continue;
-    const x = overlay.position.x;
-    const y = overlay.position.y;
-    if (x > visible.right || y > visible.bottom ||
-        x + frame.width < visible.left || y + frame.height < visible.top) continue;
-    const image = world.images.get(frame.asset);
-    if (image) {
-      context.drawImage(image, x, y);
-    } else {
-      context.fillStyle = "rgba(211, 0, 158, .65)";
-      context.fillRect(x, y, frame.width, frame.height);
-    }
-  }
+  // ЗЕМЛЯ И НАКЛАДКИ МЕСТНОСТИ — ОДНИМ ИСПЕЧЁННЫМ КУСКОМ (ground.js).
+  // Они статичны, а рисовались поклеточно каждый кадр: при отдалении в кадр
+  // попадает вся карта, и это тысячи блитов (у Тиграта 7 807 плиток и 378
+  // накладок). Порядок сохранён — выпечка ложится поверх живой подложки со
+  // своей прозрачностью, как ложились сами плитки.
+  probe(". земля", () => renderGround(visible));
 
   // Земля собрана: закрываем слой и кладём на готовый кадр ауру — она
   // прибавляется к уже затемнённой земле, как ветка света внутри самого
   // прохода земли. Тени идут следом: проход VA 0x440788 делит яркость
   // всего нарисованного, включая освещённые клетки. Дальше — новый слой
   // под объекты; светлые кадры внутри него уходят прямо на холст.
-  renderProjectiles();
+  probe(". снаряды", renderProjectiles);
+  probe(". вспышки", renderBursts);
 
   if (layered) {
-    endSceneLayer();
-    renderLightGlow(visible);
-    renderShadows(visible);
-    beginSceneLayer();
+    probe(". слой суток", endSceneLayer);
+    probe(". аура", () => renderLightGlow(visible));
+    probe(". тени", () => renderShadows(visible));
+    probe(". слой суток", beginSceneLayer);
   } else {
-    renderShadows(visible);
+    probe(". тени", () => renderShadows(visible));
   }
 
-  // Объекты и герой в общем порядке по глубине. Ключ юнита в движке —
-  // нижняя строка холста 256x150, то есть ноги + 6 (VA 0x426D45); ключ
-  // здания уже понижен на sort_bias при сборке пака. Непрозрачная копия
-  // героя: обычная вставка, либо проход здания при бите 21. При бите 15
-  // поверх всей сцены добавляется полупрозрачная копия (список 0x866F5C).
+  // Объекты, герой и юниты — одним порядком по глубине (docs/RENDER_DEPTH.md).
+  // Ключ юнита даёт `unitSortKey`, ключ постройки посчитан при сборке пака и
+  // лежит в `bounds.sort_y`. Непрозрачная копия героя: обычная вставка, либо
+  // проход здания при бите 21. При бите 15 поверх всей сцены добавляется
+  // полупрозрачная копия (список 0x866F5C).
   const heroMode = !hero.data ? "none"
-    : hero.insideSlot != null ? "building" : "painter";
-  const heroSortY = Math.round(hero.y) + UNIT_SORT_BIAS;
+    : hero.insideBuilding != null ? "building" : "painter";
+  const heroSortY = unitSortKey(hero);
   let heroDrawn = heroMode !== "painter";
   let heroInBuildingDrawn = false;
-  // Ключ глубины юнита — тот же, что у героя: ноги + 6 (VA 0x426D45).
   // Юнита, стоящего в постройке, рисует сама постройка сразу после пола
   // (VA 0x425AA8) — из общего прохода по глубине он исключается, иначе
   // пол лёг бы поверх него.
@@ -143,58 +149,97 @@ export function render() {
   // (presence.js), и только он: в обычной игре `world.ghosts` пуст, и эта
   // раскладка ничего не стоит. В список `units` призраки не попадают
   // намеренно — туда смотрят бой, приказы и память карты.
-  const pending = [...units.filter((unit) => unit.insideSlot == null),
+  const pending = [...units.filter((unit) => unit.insideBuilding == null),
                    ...(world.ghosts ?? [])]
-    .map((unit) => ({ unit, sortY: Math.round(unit.y) + UNIT_SORT_BIAS }))
+    .map((unit) => ({ unit, sortY: unitSortKey(unit) }))
     .sort((a, b) => a.sortY - b.sortY);
   let nextUnit = 0;
   // КУЧИ — В ТОТ ЖЕ ПРОХОД. Ключ глубины у кучи на клетках постройки берётся
   // от самой постройки: в движке её рисует отрисовщик объекта сразу после
-  // пола (VA 0x00424514), см. lootDrawList.
-  // Хозяин кучи ищется ПО ПЕРЕКРЫТИЮ, а не по номеру места: у объектов
-  // сцены своего номера нет, и связать их с `buildingCells` не через что.
-  // Берём наибольший ключ среди объектов, чья рамка накрывает точку кучи, —
-  // тогда куча ложится сразу за самым «поздним» из них, как её рисует сама
-  // постройка в движке (VA 0x00424514).
-  const coverSortY = (x, y) => {
-    let key = null;
-    for (const object of world.objects ?? []) {
-      const b = object.bounds;
-      if (!b) continue;
-      if (x < b.draw_x || x > b.draw_x + b.width) continue;
-      if (y < b.draw_y || y > b.draw_y + b.height) continue;
-      if (key == null || b.sort_y > key) key = b.sort_y;
-    }
-    return key;
-  };
-  const piles = lootDrawList(visible, null, coverSortY);
+  // пола (VA 0x00424514), см. lootDrawList: хозяин решается по КЛЕТКАМ.
+  const piles = lootDrawList(visible);
   let nextPile = 0;
+  // ГЕРОЙ ИДЁТ В ОБЩЕМ ПОТОКЕ, ПО СВОЕМУ КЛЮЧУ.
+  //
+  // Здесь он вставлялся на ГРАНИЦАХ ОБЪЕКТОВ: сперва рисовались все юниты до
+  // глубины очередной постройки, и лишь потом герой. Стоило ему оказаться
+  // ДАЛЬШЕ спутника, а ближайшей постройке — глубже обоих, и спутника рисовали
+  // раньше героя: ноги дальнего ложились на ближнего. Снаружи это видно, а в
+  // доме нет — там жильцов рисует сама постройка своим порядком.
+  //
+  // Теперь кучи, юниты и герой сливаются в одну очередь по ключу глубины, как
+  // в движке: он раскладывает всех по ТАБЛИЦЕ СТРОК (0x84F53C) и идёт по ней
+  // сверху вниз, не разделяя, кто из них игрок.
   const drawUnitsBefore = (sortY) => {
-    while (nextPile < piles.length && piles[nextPile].sortY <= sortY) {
-      drawPile(piles[nextPile].pile);
-      nextPile += 1;
-    }
-    while (nextUnit < pending.length && pending[nextUnit].sortY <= sortY) {
-      renderUnit(pending[nextUnit].unit);
-      nextUnit += 1;
+    for (;;) {
+      const pileY = nextPile < piles.length ? piles[nextPile].sortY : Infinity;
+      const unitY = nextUnit < pending.length ? pending[nextUnit].sortY : Infinity;
+      const ownY = (heroMode === "painter" && !heroDrawn) ? heroSortY : Infinity;
+      const next = Math.min(pileY, unitY, ownY);
+      //: ОЧЕРЕДЬ ПУСТА — ВЫХОД. Здесь стояло только `next > sortY`, и на
+      //: последнем вызове с `Infinity` сравнение бесконечности с самой собой
+      //: ложно: цикл не кончался вовсе. Поймал стенд tools/scene_depth.js.
+      if (!Number.isFinite(next) || next > sortY) return;
+      // ОПЫТ С ПЕРСПЕКТИВОЙ (perspective.js, флаг ?perspective).
+      //
+      // Стоящий спрайт Diablo не растягивает: его якорь проходит через то
+      // же преобразование, что земля, а сам он масштабируется РАВНОМЕРНО.
+      // Поэтому обёртка ставится вокруг ЦЕЛОЙ отрисовки существа и берёт
+      // его собственную точку на земле — так фигура остаётся фигурой, а не
+      // вытягивается вслед за квадратичной вертикалью плоскости.
+      //
+      // Без флага `withPerspective` просто зовёт переданную отрисовку.
+      if (ownY === next) {
+        probe(".. герой", () => withPerspective(context, hero.x, hero.y,
+                                                drawHeroAtDepth));
+        heroDrawn = true;
+      } else if (pileY <= unitY) {
+        const pile = piles[nextPile].pile;
+        probe(".. кучи", () => withPerspective(context, pile.x, pile.y,
+                                               () => drawPile(pile)));
+        nextPile += 1;
+      } else {
+        const unit = pending[nextUnit].unit;
+        probe(".. юниты в кадре", () => withPerspective(context, unit.x, unit.y,
+                                                        () => renderUnit(unit)));
+        nextUnit += 1;
+      }
     }
   };
-  for (const object of world.objects) {
-    if (!object.frames?.main) continue;
-    drawUnitsBefore(object.bounds.sort_y);
-    if (object.bounds.sort_y > heroSortY && !heroDrawn) {
-      drawHeroAtDepth();
-      heroDrawn = true;
+  // Постройки, чьи крыши сейчас сняты, — набор общий на весь проход
+  // (правило целиком в entities.partyRoofBuildings).
+  const roofOwners = partyRoofBuildings();
+  entitiesBeginPass();
+  probe(". объекты и юниты", () => {
+    for (const object of world.objects) {
+      if (!object.frames?.main) continue;
+      //: Героя вставляет сама очередь — отдельной проверки на границе
+      //: объекта больше нет, она и путала порядок между ним и спутниками.
+      drawUnitsBefore(object.bounds.sort_y);
+      const { draw_x: x, draw_y: y, width, height } = object.bounds;
+      if (x > visible.right || y > visible.bottom ||
+          x + width < visible.left || y + height < visible.top) continue;
+      //: Якорь постройки берём ИЗ ОДНОГО МЕСТА (entities.buildingAnchor):
+      //: та же точка нужна полосовой укладке кадров, и разойтись им нельзя.
+      const anchor = buildingAnchor(object);
+      const anchorX = anchor.x;
+      const anchorY = anchor.y;
+      if (probe(".. постройки",
+                () => withPerspective(context, anchorX, anchorY,
+                                      () => drawObject(object, roofOwners)))) {
+        heroInBuildingDrawn = true;
+      }
     }
-    const { draw_x: x, draw_y: y, width, height } = object.bounds;
-    if (x > visible.right || y > visible.bottom ||
-        x + width < visible.left || y + height < visible.top) continue;
-    if (drawObject(object)) heroInBuildingDrawn = true;
-  }
-  drawUnitsBefore(Infinity);
-  if (heroMode === "painter" && !heroDrawn) drawHeroAtDepth();
-  if (heroMode === "building" && !heroInBuildingDrawn) drawHeroAtDepth();
-  renderAmbient(visible);
+    drawUnitsBefore(Infinity);
+    if (heroMode === "painter" && !heroDrawn) {
+      withPerspective(context, hero.x, hero.y, drawHeroAtDepth);
+    }
+    if (heroMode === "building" && !heroInBuildingDrawn) {
+      withPerspective(context, hero.x, hero.y, drawHeroAtDepth);
+    }
+  });
+  entitiesEndPass();
+  probe(". амбиент сцены", () => renderAmbient(visible));
   drawSelectionBand();
 
   if (layered) {
@@ -202,6 +247,18 @@ export function render() {
   } else {
     applyDaylight();
   }
+  //: ОГОНЬ — ПОСЛЕ СЛОЯ СУТОК И ПОСЛЕ ЮНИТОВ. Он светит сам: затенять его
+  //: нечем, а вспышка в руках обязана лечь НА фигуру, а не под неё. Канонная
+  //: стрела при этом осталась внутри сцены, как в движке (projectiles.js).
+  probe(". огонь", renderFire);
+
+  //: СТРУИ — ПОВЕРХ ВСЕЙ СЦЕНЫ И В ЭКРАННЫХ КООРДИНАТАХ, как у них: границы
+  //: частицы сверяются с шириной и высотой кадра (VA 0x50C270), значит она
+  //: живёт перед камерой, а не в мире. Ни перспектива, ни фильтр суток её не
+  //: касаются. Кольца при этом лежат на земле и рисуются сразу за землёй.
+  streaksTick(canvas.width, canvas.height, clock.elapsed ?? 0);
+  probe(". струи", () => renderStreaks(context));
+
 
   // Отложенный список 0x866F5C: движок рисует эти копии юнитов ПОСЛЕ всей
   // сцены (VA 0x428900), безусловно — в оригинале шахматным полупрозрачным

@@ -39,13 +39,38 @@ export async function readJson(path) {
   return response.json();
 }
 
-export function loadImage(path) {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error(`Не удалось загрузить ${path}`));
-    image.src = contentUrl(path);
-  });
+// РАСПАКОВАННЫЕ ПИКСЕЛИ, А НЕ ЛЕНИВАЯ КАРТИНКА.
+//
+// `Image` держит СЖАТЫЕ данные, а распаковывает их браузер сам, когда
+// понадобится, — и вправе выбросить распакованное в любой момент. На наших
+// листах (4095x1709, по 27 МБ распакованными) он это и делает: в трейсе игры
+// 2 121 распаковка при 151 разной картинке, то есть 1 970 ПОВТОРНЫХ, у
+// иных по сорок девять раз. Отсюда и «вблизи хорошо, отдалил — один кадр»:
+// вблизи рабочий набор в кэш браузера влезает, на отдалении в кадре 187
+// картинок, и начинается выброс с распаковкой заново каждый кадр.
+//
+// `ImageBitmap` — это уже распакованные пиксели. Браузер их не выбрасывает и
+// не распаковывает повторно, а распаковка идёт вне главного потока, разом
+// при загрузке. Память та же, что и была: она и так тратилась, просто
+// втихую и с перезаписью.
+export async function loadImage(path) {
+  const response = await fetch(contentUrl(path));
+  if (!response.ok) {
+    throw new Error(`Не удалось загрузить ${path}: ${response.status}`);
+  }
+  const blob = await response.blob();
+  try {
+    return await createImageBitmap(blob);
+  } catch (error) {
+    //: Запасной путь на случай, если распаковка не удалась (битый файл или
+    //: браузер без createImageBitmap): рисовать всё равно чем-то надо.
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(error);
+      image.src = URL.createObjectURL(blob);
+    });
+  }
 }
 
 export async function preload(paths) {

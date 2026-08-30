@@ -27,8 +27,10 @@ import { world } from "./world.js";
 import { hero } from "./hero.js";
 import { actorItem, actorNewItemRef } from "./actor.js";
 import { units } from "./units.js";
-import { officialRole } from "./village.js";
+import { eventAlive, officialRole } from "./village.js";
 import { potionMix } from "./craft.js";
+import { SLOTS, requirementMet } from "./inventory.js";
+import { roundHalfEven } from "./round.js";
 
 //: Бросок движка FUN_00442B93 — остаток от деления на границу.
 const roll = (bound) => (bound > 0 ? Math.floor(Math.random() * bound) : 0);
@@ -97,8 +99,9 @@ function enchantWord(range, shifts) {
 // при каждом входе — счётчик всякий раз оказывался пуст, и лавка набивалась
 // заново. Теперь список мест лежит в записи поселения, а торговцу отдаётся
 // ССЫЛКА на него: покупка (`trade.js` гасит место) правит сразу поселение.
-function counterBox(unit, role) {
-  const village = world.map?.village;
+//: Запись поселения приходит доводом: прилавок дальней деревни лежит в её
+//: записи из склада, а не в записи карты, на которой стоит игрок.
+function counterBox(unit, role, village = world.map?.village) {
   if (!village) return { slots: unit.counter ?? (unit.counter = []), details: null };
   village.counters = village.counters ?? {};
   const box = village.counters[String(role)] ??
@@ -197,15 +200,112 @@ function restockGoods(unit, slots, level, culture) {
   });
 
   // 4. Снаряжение: броня, щит или шлем — по броску из трёх, каждому своя
-  // база класса и свой делитель уровня. Школа здесь берётся соседняя,
-  // (культура + 1) % 3, а не та же, что у оружия.
+  // база класса и свой делитель уровня.
+  //
+  // ШКОЛА ЗДЕСЬ СВОЯ НА КАЖДУЮ ВЕЩЬ. Стояло `(культура + 1) % 3` — соседняя
+  // по счёту, — а движок зовёт FUN_00416E80(культура) отдельно для брони,
+  // щита и шлема (VA 0x418F5D, 0x418FC8, 0x419033: `mov eax,[ebp-4]` —
+  // культура — и сразу `call 0x416E80`). Помощник возвращает СЛУЧАЙНУЮ из
+  // двух ЧУЖИХ школ, поэтому у деревни в снаряжении встречались обе, а у нас
+  // всегда одна и та же.
+  //
+  // И СЕМЬ ПРОЦЕНТОВ НА ЧАРЫ — их не было вовсе: VA 0x4190BA, `idiv 0x64` и
+  // `cmp edx, 7`, дальше слово прибавок от половины уровня со сдвигом из
+  // пяти. Ровно как у оружия третьей группы, только шанс там десять.
   group(3, (at) => {
     const branch = roll(3);
     const [base, divisor] = branch === 0 ? [0x78, 4]
       : branch === 1 ? [0x7c, 3] : [0x81, 3];
     const step = rollUnder(Math.trunc(level / divisor) + 1);
-    return place(unit, box, at,
-                 ((culture + 1) % 3) * 0x22 + base + step);
+    const word = roll(100) < 7 ? enchantWord(Math.trunc(level / 2), 5) : 0;
+    return place(unit, box, at, school(culture) * 0x22 + base + step, word);
+  });
+  return put + restockTail(unit, box, slots, level, culture);
+}
+
+//: Первое место хвоста. До него — четыре группы по жребию (3 + 2 + 3 + 6).
+const TAIL_AT = 14;
+
+// ХВОСТ ПРИЛАВКА КУПЦА: места 14…31, восемнадцать вещей.
+//
+// Их движок кладёт БЕЗ ЖРЕБИЯ и БЕЗ ПРОВЕРКИ «место пусто». Сперва гасит всё,
+// что там лежало (VA 0x419126: цикл `0xE…0x20`, каждой прежней записи предмета
+// ставится вид 0xFF — «исчезла»), а затем заполняет все восемнадцать заново.
+// То есть половина прилавка перевыпекается при каждом входе на карту, и она-то
+// и даёт купцу настоящий ассортимент: без неё у него оставались одни жребии
+// первых четырнадцати мест, и тестеры видели «одни стрелы».
+//
+// ХВОСТ НЕ ПОД УСЛОВИЕМ. `cmp eax, [ebp-8]` / `jge 0x419126` (VA 0x418E8A) —
+// это выход из цикла четвёртой группы прямо сюда, а не гейт. Прежняя запись в
+// docs/SHOP_STOCK_SPEC.md — «никакого скрытого гейта нет» — приняла сравнение
+// за границу группы и весь хвост проглядела.
+//
+// ТРИ НАБОРА ПО ШКОЛАМ: (культура+1)%3, (культура+2)%3 и — внимание —
+// СЛУЧАЙНАЯ НА КАЖДУЮ ВЕЩЬ. Ghidra печатает у последних пяти мест `iVar5 % 3`,
+// и `iVar5` выглядит культурой, но к этому месту он давно переприсвоен
+// броском. Проверено по стеку: культура лежит в `[ebp-4]`, и в хвосте её
+// читают ровно двенадцать раз — все до места 26 включительно, дальше ни разу.
+//
+// Чары достаются восьми вещам из восемнадцати: трём украшениям и всей
+// последней пятёрке (записи слова в `+0x0E` — VA 0x419267, 0x41936E, 0x419475,
+// 0x419E23, 0x41A003, 0x41A15A, 0x41A2AF, 0x41A409).
+function restockTail(unit, box, slots, level, culture) {
+  const byEight = Math.trunc(level / 8);
+  const byFive = Math.trunc(level / 5);
+  const byFour = Math.trunc(level / 4);
+  const byThree = Math.trunc(level / 3);
+  //: Слово прибавок хвоста: величина от восьмой доли уровня, сдвиг из четырёх
+  //: (VA 0x41A3EC — `mov ecx, 4`, и `lea ecx,[edx+edx*2]` — те же три бита).
+  const word = () => enchantWord(byEight * 2 + 2, 4);
+  //: Метательное (вид 1), база 0x73: шаг мерится то восьмой долей уровня, то
+  //: пятой — движок бросает монетку.
+  const thrown = (pick) => pick * 0x22 + 0x73 +
+    (roll(2) === 0 ? rollUnder(byEight + 1) : rollUnder(byFive + 1));
+  const armour = (pick) => pick * 0x22 + 0x78 + rollUnder(byFour + 1);
+  const shield = (pick) => pick * 0x22 + 0x7c + rollUnder(byThree + 1);
+  const helmet = (pick) => pick * 0x22 + 0x81 + rollUnder(byThree + 1);
+  const near = (culture + 1) % 3;
+  const far = (culture + 2) % 3;
+  const any = () => roll(3);
+
+  //: Порядок мест — движковый, менять нельзя: по нему же считает окно
+  //: торговли, и он определяет, что игрок увидит в первом ряду.
+  const goods = [
+    () => [0x3f + rollUnder(byFive), word()],        // 14 браслет
+    () => [0x3c + rollUnder(byFive), word()],        // 15 ожерелье
+    () => [0x42 + rollUnder(byFive), word()],        // 16 кольцо
+    () => [weaponClass(near, level), 0],             // 17 оружие
+    () => [weaponClass(far, level), 0],              // 18 оружие
+    () => [thrown(near), 0],                         // 19 метательное
+    () => [thrown(far), 0],                          // 20 метательное
+    () => [armour(near), 0],                         // 21 броня
+    () => [shield(near), 0],                         // 22 щит
+    () => [helmet(near), 0],                         // 23 шлем
+    () => [armour(far), 0],                          // 24 броня
+    () => [shield(far), 0],                          // 25 щит
+    () => [helmet(far), 0],                          // 26 шлем
+    () => [weaponClass(any(), level), word()],       // 27 оружие
+    () => [thrown(any()), word()],                   // 28 метательное
+    () => [armour(any()), word()],                   // 29 броня
+    () => [shield(any()), word()],                   // 30 щит
+    () => [helmet(any()), word()],                   // 31 шлем
+  ];
+
+  const last = Math.min(slots, TAIL_AT + goods.length);
+  if (last <= TAIL_AT) return 0;
+  //: Чистка идёт ДО набивки и по всему хвосту, а не только по тем местам,
+  //: куда что-то ляжет: в движке гасятся все восемнадцать.
+  for (let slot = TAIL_AT; slot < last; slot += 1) {
+    const was = box.slots[slot];
+    if (was && box.details) delete box.details[was];
+    box.slots[slot] = undefined;
+  }
+  let put = 0;
+  goods.forEach((make, index) => {
+    const slot = TAIL_AT + index;
+    if (slot >= last) return;
+    const [item, enchant] = make();
+    if (place(unit, box, slot, item, enchant)) put += 1;
   });
   return put;
 }
@@ -274,16 +374,28 @@ function brewPut(box, engineSlot, value) {
   box.slots[engineSlot - BREW_SHOP_FROM] = value;
 }
 
-export function villageBrew(phases = 1) {
-  const village = world.map?.village;
+//: ГДЕ ВАРИТ. Без доводов — своя деревня и живой знахарь. С доводами —
+//: дальняя: её запись из склада и знахарь из снимка жителя карты. В движке
+//: разницы нет вовсе: 0x4176C8 зовётся для всех двенадцати записей подряд,
+//: карту эта ветка не спрашивает.
+export function villageBrew(phases = 1, data = null, official = null) {
+  const village = data ?? world.map?.village;
   if (!village || phases < 1) return 0;
-  const healer = units.find((unit) => officialRole(unit) === 2 && unit.alive !== false);
+  const healer = official
+    ?? units.find((unit) => officialRole(unit) === 2 && unit.alive !== false);
   if (!healer) return 0;
-  const box = counterBox(healer, 2);
+  const box = counterBox(healer, 2, village);
   village.brewTokens = village.brewTokens ?? [0, 0, 0];
   let brewed = 0;
   for (let phase = 0; phase < phases; phase += 1) {
-    village.brewTimer = (village.brewTimer ?? BREW_PERIOD) - 1;
+    // СТАРТ ЧАСОВ — ИЗ ЗАПИСИ ПОСЕЛЕНИЯ (+0x04), а не с полного круга. В
+    // мирах поле нулевое, и канонная ветка 0x4176C8 «< 1 → перезаряд И все
+    // три жетона» срабатывает НА ПЕРВОМ ЖЕ тике деревни: знахарь сразу
+    // получает чем варить. Прежний старт с BREW_PERIOD заставлял ждать
+    // жетона Яда полный круг — ~30 минут на карте, — и Противоядие (Яд +
+    // Бальзам) было недостижимо; отсюда разом «не продаёт снадобья» и
+    // «не лечит отраву» (лечит его в игре только Противоядие).
+    village.brewTimer = (village.brewTimer ?? village.brew_timer ?? 0) - 1;
     if (village.brewTimer < 1) {
       village.brewTimer = BREW_PERIOD;
       village.brewTokens = [1, 1, 1];
@@ -366,18 +478,61 @@ function brewInto(healer, box, slot, bottleClass) {
 // ничего не нужно. Сверка с сохранением оригинала сходится: у кузнеца там
 // лежат Нож (16), Топор (9), Дубина (5), Палица (13) — и НЕТ Меча (40) и
 // Длинного меча (70), то есть ровно то, что пускает его навык.
+// ЕДИНСТВЕННАЯ РЕАЛИЗАЦИЯ. Функция кузнеца была портирована ДВАЖДЫ: полная
+// механика (сроки с корнем, рост навыка, раздача) жила в village.js и
+// складывала товар в `village.stock`, которого не читал ни один торговый
+// экран, а здешняя копия клала на настоящий прилавок, но потеряла делитель
+// срока `sqrt(навык/10 + 1)` — ковка шла в 1.5–3.3 раза дольше канона, — и
+// не имела ни роста навыка, ни раздачи. Отсюда «кузнец не куёт оружия»:
+// пять патронных мест впереди, каждое втрое дольше, а без раздачи и роста
+// навыка очередь до оружия не доходила. Дубль из village.js удалён, вся
+// механика — здесь, с выходом на настоящий прилавок.
 const SMITH_AMMO = [
-  { class: 202, need: 1 },   // Кремниевые стрелы
-  { class: 203, need: 2 },   // Медные стрелы
-  { class: 204, need: 3 },   // Железные стрелы
+  { class: 202, need: 1 },   // Кремниевые стрелы (пороги — таблицы
+  { class: 203, need: 2 },   // 0x45F438 и 0x45F458, а не durability
+  { class: 204, need: 3 },   // самих классов)
   { class: 206, need: 3 },   // Медные болты
   { class: 207, need: 5 },   // Железные болты
 ];
 const SMITH_PLACES = 39;
 const SMITH_CLASS_FROM = 95;        //: класс = культура*34 + 95 + место
 const SMITH_CULTURE_STEP = 34;      //: 0x22
-const SMITH_WORK_SCALE = 60;        //: срок = порог * 60 фаз деревни
-const SMITH_SKILL = 17;             //: «Кузнечное дело», байт +0xE3
+
+function workshopRules() {
+  return world.map?.hero?.rules?.buildings?.workshop ?? {};
+}
+
+// Навык «Кузнечное дело» — по имени из правил, как у village.js: мастер —
+// обычный житель, и навык растёт прямо в его юните.
+function smithSkillIndex() {
+  const names = world.map?.hero?.rules?.progression?.skills?.names ?? [];
+  return names.indexOf("Кузнечное дело");
+}
+
+function smithSkill(unit) {
+  const index = smithSkillIndex();
+  return index >= 0 ? unit.skills?.[index] ?? 0 : 0;
+}
+
+function setSmithSkill(unit, value) {
+  const index = smithSkillIndex();
+  if (index >= 0 && unit.skills) unit.skills[index] = value;
+}
+
+//: Срок ПЕРВОГО заказа (0x417CE5-0x417D15, снято дизасмом): round(нужда·60
+//: / sqrt(навык/10 + 1)) — единица стоит ПОД корнем, ноль невозможен.
+function orderTicks(need, skillTenth, shop) {
+  const root = Math.sqrt(skillTenth);
+  if (!root) return 0;
+  return roundHalfEven(need * (shop.minute ?? 60) / root);
+}
+
+//: Срок ПЕРЕЗАКАЗА после выдачи (0x417F22 и 0x41800A): формула ДРУГАЯ —
+//: round(нужда·60 / (sqrt(навык/10) + 1)): единица прибавляется ПОСЛЕ корня.
+function reorderTicks(need, skill, shop) {
+  const root = Math.sqrt(Math.trunc(skill / (shop.skill_divisor ?? 10))) + 1;
+  return roundHalfEven(need * (shop.minute ?? 60) / root);
+}
 
 function smithNeed(place, culture) {
   if (place < SMITH_AMMO.length) return SMITH_AMMO[place];
@@ -387,26 +542,86 @@ function smithNeed(place, culture) {
   return { class: klass, need: item.durability ?? 0 };
 }
 
-export function villageForge(phases = 1) {
-  const village = world.map?.village;
+// РАЗДАЧА ГОТОВОГО (хвост 0x417BD8): когда ковать больше нечего, бросок
+// d8 против порога по статусу и владельцу деревни, и один товар с прилавка
+// уходит годному жителю — стрелы стрелку с пустым гнездом, вещь в слот
+// вида, если она мощнее носимой, с проверкой требований 0x418648. Выдав,
+// движок ТУТ ЖЕ заказывает то же место снова — сроком перезаказа.
+function giveForged(village, smith, box, shop, crew = units) {
+  const thresholds = (village.status ?? 0) === 1
+    ? (shop.give_thresholds?.["1"] ?? [7, 6, 4])
+    : (shop.give_thresholds?.other ?? [6, 4, 0]);
+  const bar = thresholds[Math.min(village.owner ?? 0, 2)] ?? 0;
+  if (roll(shop.give_die ?? 8) < bar) return false;
+  const side = village.side;
+  for (let index = 0; index < box.slots.length; index += 1) {
+    const name = box.slots[index];
+    if (!name) continue;
+    const item = actorItem(name);
+    if (!item) continue;
+    for (const unit of crew) {
+      if (unit.alive === false || unit.side !== side) continue;
+      // зверям мастерская не раздаёт (0x417BD8: бит 0x40 породы)
+      //: у снимка жителя поля нет — там мерка движка «облик меньше шести»
+      if (unit.beast ?? (unit.body ?? 0) >= 6) continue;
+      if (index < SMITH_AMMO.length && !unit.equipment?.ranged) continue;
+      if (!requirementMet(name, unit)) continue;
+      if (index < SMITH_AMMO.length) {
+        if (unit.equipment.ammo) continue;
+        unit.equipment.ammo = name;
+      } else {
+        const slot = SLOTS[item.kind ?? 0];
+        if (!slot || !(slot in (unit.equipment ?? {}))) continue;
+        const worn = actorItem(unit.equipment[slot]);
+        if (worn && (worn.power ?? 0) >= (item.power ?? 0)) continue;
+        // старая вещь пропадает: движок помечает её запись пустой
+        unit.equipment[slot] = name;
+      }
+      box.slots[index] = null;
+      if (box.details) delete box.details[name];
+      village.forgeOrder = index;
+      village.forgeLeft = reorderTicks(item.durability ?? 0,
+                                       smithSkill(smith), shop);
+      return true;
+    }
+  }
+  return false;
+}
+
+//: Те же доводы, что у варки: 0x417BD8 в движке тоже идёт по всем записям.
+//: `crew` — кому раздавать откованное: жители своей карты или их снимки.
+export function villageForge(phases = 1, data = null, official = null,
+                             crew = null) {
+  const village = data ?? world.map?.village;
   if (!village || phases < 1) return 0;
-  const smith = units.find((unit) => officialRole(unit) === 4 && unit.alive !== false);
+  const shop = workshopRules();
+  const smith = official
+    ?? units.find((unit) => officialRole(unit) === 4 && unit.alive !== false);
   if (!smith) return 0;
-  const box = counterBox(smith, 4);
-  const skill = smith.skills?.[SMITH_SKILL] ?? 0;
+  const box = counterBox(smith, 4, village);
   const culture = village.culture ?? 0;
   let made = 0;
   for (let phase = 0; phase < phases; phase += 1) {
     if (village.forgeOrder == null || village.forgeOrder < 0) {
-      //: Заказа нет — берём первое годное свободное место.
+      //: Заказа нет — первое годное свободное место: порог не выше навыка,
+      //: место прилавка пусто (0x417BD8, выбор заказа).
       village.forgeOrder = -1;
+      const skill = smithSkill(smith);
       for (let place = 0; place < SMITH_PLACES; place += 1) {
         const what = smithNeed(place, culture);
         if (!what || what.need > skill) continue;
         if (box.slots[place]) continue;
         village.forgeOrder = place;
-        village.forgeLeft = Math.round(what.need * SMITH_WORK_SCALE);
+        village.forgeLeft = orderTicks(
+          what.need, Math.trunc(skill / (shop.skill_divisor ?? 10)) + 1, shop);
         break;
+      }
+      // Всё годное отковано — раздача жителям, но не при живом отряде
+      // события (0x417BD8 зовёт 0x435214, ту же проверку, что обработчик 23).
+      //: Отряд события виден только на СВОЕЙ карте: у дальней деревни его
+      //: событий в памяти нет, и раздача там идёт без этой оговорки.
+      if (village.forgeOrder < 0 && (data ? true : !eventAlive())) {
+        if (giveForged(village, smith, box, shop, crew ?? units)) made += 1;
       }
       continue;
     }
@@ -414,7 +629,13 @@ export function villageForge(phases = 1) {
     if (village.forgeLeft >= 1) continue;
     const what = smithNeed(village.forgeOrder, culture);
     if (what && !box.slots[village.forgeOrder]) {
-      if (place(smith, box, village.forgeOrder, what.class)) made += 1;
+      if (place(smith, box, village.forgeOrder, what.class)) {
+        made += 1;
+        // Рост мастера (хвост 0x417BD8): sqrt-формула, кап 100.
+        const skill = smithSkill(smith);
+        setSmithSkill(smith, Math.min(100,
+          roundHalfEven(Math.sqrt(what.need * 2 + skill * skill + 10))));
+      }
     }
     village.forgeOrder = -1;
   }

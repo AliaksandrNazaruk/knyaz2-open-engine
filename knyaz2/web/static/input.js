@@ -1,19 +1,22 @@
 // Ввод: клавиши героя, перетаскивание камеры, зум, флажки панели.
 import { canvas, clockMoonNode, clockRunNode, clockTimeNode, combatStanceNode,
          cursorNode, debugGroundNode, debugObjectsNode, dynamicShadowsNode,
-         showRoofsNode, statusNode } from "./dom.js";
+         showRoofsNode } from "./dom.js";
 import { cameraFollow, clampCamera, screenToWorld, updateZoom, zoomClamp,
          view } from "./viewport.js";
 import { daylight, daylightSet } from "./daylight.js";
 import { edgeScroll, hero, heroCellAt, heroOrderTo, keys } from "./hero.js";
-import { orderAt } from "./combat.js";
+import { heroCast, heroCastAt, orderAt } from "./combat.js";
 import { beltToggle, panelToHero, panelUnit, pressButton,
          refresh as refreshUi } from "./ui.js";
 import { orderKinds, orderSelected, select as selectUnit,
          selectBand } from "./orders.js";
 import { world } from "./world.js";
 import { trade } from "./trade.js";
-import { units } from "./units.js";
+import { unitAt, units } from "./units.js";
+import { actorPoseKnown } from "./actor.js";
+//: `view` уже пришёл из viewport.js строкой выше — второй такой же
+//: биндинг это SyntaxError модуля, и клиент не грузился вовсе
 import { band } from "./viewport.js";
 import { updateDebugInfo } from "./debug.js";
 import { render } from "./scene.js";
@@ -40,7 +43,30 @@ let lastGoal = null;
 
 //: Подпись под курсором и то, что стояло в строке до неё.
 let lastHint = null;
-let statusBeforeHint = null;
+
+//: Табличка у курсора. Живёт своим узлом, а не строкой состояния: та занята
+//: сообщениями игры, и наведение прежде их затирало.
+const tipNode = document.getElementById("ui-tip");
+//: Отступ, чтобы табличка не легла ПОД сам курсор и не мешала целиться.
+const TIP_GAP = 14;
+
+function tipShow(clientX, clientY) {
+  if (!tipNode || tipNode.hidden) return;
+  const box = tipNode.getBoundingClientRect();
+  // У правого и нижнего края переносим табличку на другую сторону курсора,
+  // иначе её обрезало бы окном.
+  const x = clientX + TIP_GAP + box.width > window.innerWidth
+    ? clientX - TIP_GAP - box.width : clientX + TIP_GAP;
+  const y = clientY + TIP_GAP + box.height > window.innerHeight
+    ? clientY - TIP_GAP - box.height : clientY + TIP_GAP;
+  tipNode.style.left = `${Math.max(0, x)}px`;
+  tipNode.style.top = `${Math.max(0, y)}px`;
+}
+
+function tipHide() {
+  lastHint = null;
+  if (tipNode) tipNode.hidden = true;
+}
 
 //: Взведён ли режим копки — его ставит применение Лопаты (см. carryTrinket).
 let digging = false;
@@ -60,6 +86,19 @@ world.digMode = (on = true) => { digging = Boolean(on); };
 // другой точке возвращает ходьбу, как и раньше.
 function heroOrderMove(event, running) {
   if (!hero.data) return;
+  // ПОКА ОТКРЫТ ЭКРАН, МИР ЩЕЛЧКОВ НЕ ПРИНИМАЕТ.
+  //
+  // В движке это не проверка, а устройство: попадание мыши разбирает
+  // FUN_0043AEF0 через `switch(_DAT_008495F0)`, и код мира (0) отдаёт
+  // РОВНО ветка `default` — состояние 0, сама игра. Разговор (состояние 1)
+  // возвращает −1 всему, что не попало в прямоугольник варианта ответа;
+  // обмен (7), лист персонажа (3), карта мира (5) и создание (2) мира тоже
+  // не отдают. Приказа поэтому не выходит вовсе.
+  //
+  // У нас разговор — полоска внизу, а не картинка во весь экран, и холст
+  // под ней оставался живым: собеседник обещал набить лицо, а игрок в это
+  // время уходил из лагеря, не закрывая разговора.
+  if (screenBlocksWorld()) return;
   const point = screenToWorld(event.clientX, event.clientY);
   const cell = heroCellAt(point.x, point.y);
   // РЕЖИМ КОПКИ. Лопата не тратится, а переводит курсор в особое состояние
@@ -76,7 +115,7 @@ function heroOrderMove(event, running) {
     digging = false;
     orderSelected(cell.row, cell.col, orderKinds().take);
     refreshUi();
-    render();
+    view.dirty = true;
     return;
   }
   const repeat = lastGoal && lastGoal.row === cell.row && lastGoal.col === cell.col;
@@ -89,12 +128,19 @@ function heroOrderMove(event, running) {
   // выбор или дополнять (VA 0x423F80 смотрит флаг 0x849608).
   // Ctrl — «заговорить со своим» (0x8495AC), Shift — «добавить к выбору»
   // (0x849608). Оба флага движок держит по виртуальным клавишам 0x11 и 0x10.
-  orderAt(point.x, point.y, running, event.shiftKey, event.ctrlKey);
+  //: Кнопка «заговорить» на панели держит тот же флаг, что и клавиша: на
+  //: сенсорном экране Ctrl зажать нечем (ui.js, ACTIONS.talk_mode).
+  orderAt(point.x, point.y, running, event.shiftKey,
+          event.ctrlKey || world.talkMode === true);
+  //: Кадр ЗАКАЗЫВАЕМ. Синхронная отрисовка прямо здесь стоила 30 мс на
+  //: щелчок и 46 на двойной (замер трейса), причём поверх той, что и так
+  //: идёт из кадрового цикла. Круг под юнитом появится следующим кадром,
+  //: то есть не позже шестнадцати миллисекунд — на глаз это то же самое.
   // Щелчок мог сменить выбор — а значит и круг под юнитом, и содержимое
   // панели. Без этого выбор менялся молча: новый круг появлялся только
   // со следующим кадром, а панель не обновлялась вовсе.
   refreshUi();
-  render();
+  view.dirty = true;
 }
 
 // ДВОЙНОЕ КАСАНИЕ СЧИТАЕМ САМИ.
@@ -150,7 +196,28 @@ canvas.addEventListener("dblclick", (event) => heroOrderMove(event, true));
 //                  а смещение пояса и гнездо смешивания сбрасываются.
 canvas.addEventListener("contextmenu", (event) => {
   event.preventDefault();
-  if (carrying()) { carryCancel(); refreshUi(); render(); return; }
+  // ТАСКАНИЕ КАМЕРЫ — НЕ ЩЕЛЧОК. Правой кнопкой у нас возят камеру (левая
+  // занята рамкой выделения), а `contextmenu` приходит на её ОТПУСКАНИИ — и
+  // прежде каждый проезд по карте заканчивался тем, что выбор сбрасывался на
+  // главного, а панель уезжала к нему же. У левой кнопки такая проверка
+  // стоит с самого начала («перетаскивание камеры — не приказ»), правой её
+  // просто забыли дать.
+  if (view.dragged) return;
+  //: И правая по миру тоже молчит при открытом экране: код попадания там
+  //: не ноль, а −1 (FUN_0043AEF0), и ветка мира в 0x422AFC не заводится.
+  if (screenBlocksWorld()) return;
+  if (carrying()) { carryCancel(); refreshUi(); view.dirty = true; return; }
+  //: ПРАВАЯ КНОПКА У ЧАРОДЕЯ — ОГОНЬ В СТОРОНУ, как в Diablo: летит, куда
+  //: послали, и жжёт первого встречного. Канонного героя это не касается
+  //: вовсе: позы `cast` у кадров HEROES.RES нет, и ветка не срабатывает,
+  //: так что «панель игроку» правой кнопкой работает как работала.
+  if (actorPoseKnown(hero, "cast")) {
+    const point = screenToWorld(event.clientX, event.clientY);
+    const said = heroCastAt(point.x, point.y);
+    if (said !== "каст") console.info(`каст: ${said}`);
+    view.dirty = true;
+    return;
+  }
   // ВЫДЕЛЯЕТСЯ ГЛАВНЫЙ. Движок кладёт указатель панели на игрока
   // (0x420644: `_DAT_00849514 = _DAT_00840B94`, а туда 0x422AFC только что
   // положил самого игрока). У нас панель ВЫВОДИТСЯ из выбора, поэтому «панель
@@ -158,7 +225,7 @@ canvas.addEventListener("contextmenu", (event) => {
   selectUnit(hero);
   panelToHero();
   refreshUi();
-  render();
+  view.dirty = true;
 });
 
 // Стойка — бит 0x04 байта unit+0x19. В движке её переключает бой; пока боя
@@ -240,7 +307,10 @@ function zoomTo(next, anchorX, anchorY) {
   // отъехав, камера иначе показала бы пустоту за краем карты.
   clampCamera();
   updateZoom();
-  render();
+  //: Зум тоже только заказывает кадр: 48 мс на одно движение колеса
+  //: (замер трейса) — это перепечка земли под новый масштаб плюс полная
+  //: сборка сцены, и делать её по каждому щелчку колеса незачем.
+  view.dirty = true;
 }
 
 function pinchMove() {
@@ -250,6 +320,12 @@ function pinchMove() {
   zoomTo(pinch.zoom * (now.span / pinch.span), now.x, now.y);
 }
 
+//: Тот же гейт, что у приказа: пока идёт разговор или открыт обмен, холст
+//: не ловит ни приказ, ни рамку выбора (FUN_0043AEF0, ветки 1 и 7).
+export function screenBlocksWorld() {
+  return Boolean(world.talking || trade.open);
+}
+
 canvas.addEventListener("pointerdown", (event) => {
   pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
   view.pointerX = event.clientX;
@@ -257,6 +333,12 @@ canvas.addEventListener("pointerdown", (event) => {
   view.dragged = false;
   if (pointers.size >= 2) {
     pinchStart();
+    canvas.setPointerCapture(event.pointerId);
+    return;
+  }
+  //: Левая кнопка при открытом экране не делает НИЧЕГО: ни рамки, ни
+  //: перетаскивания камеры — второе иначе досталось бы ей по «иначе».
+  if (event.button === 0 && screenBlocksWorld()) {
     canvas.setPointerCapture(event.pointerId);
     return;
   }
@@ -293,7 +375,7 @@ canvas.addEventListener("pointermove", (event) => {
     if (Math.abs(event.clientX - view.pointerX) + Math.abs(event.clientY - view.pointerY) > 3) {
       view.dragged = true;
     }
-    render();
+    view.dirty = true;
   }
   if (view.dragging) {
     if (Math.abs(event.clientX - view.pointerX) + Math.abs(event.clientY - view.pointerY) > 3) {
@@ -304,7 +386,7 @@ canvas.addEventListener("pointermove", (event) => {
     clampCamera();
     view.pointerX = event.clientX;
     view.pointerY = event.clientY;
-    render();
+    view.dirty = true;
   }
   //: Краевую прокрутку здесь больше не считаем: её точку ведёт слушатель на
   //: ОКНЕ (см. ниже). Иначе владельцев два, и пояс с панелью отбирают у
@@ -316,20 +398,21 @@ canvas.addEventListener("pointermove", (event) => {
   // куда ведёт переход. В движке это отдельный разбор той же точки
   // (VA 0x420E88), и главный цикл зовёт его каждый кадр.
   //
-  //: Табличка в движке живёт двенадцать мировых тактов и гаснет сама
-  //: (0x84972C). У нас она лежит в строке состояния и держится, пока курсор
-  //: над предметом внимания; ушёл — строка возвращает своё прежнее слово.
+  //: ТАБЛИЧКА ИДЁТ ЗА КУРСОРОМ, а не лежит в строке состояния. Движок держит
+  //: её полосой внизу (0x432A44) и гасит через двенадцать тактов (0x84972C),
+  //: но у него и разрешение одно на всех; у нас окно любого размера, и у
+  //: курсора подпись видно сразу — как у подсказки вещи.
+  //:
+  //: Заодно это развело две разные вещи, которые прежде делили один узел:
+  //: наведение затирало сообщение игры («Засада!») и потом восстанавливало
+  //: его из запомненного. Теперь сообщения живут в полосе, подпись — здесь.
   const hint = hintAt(point.x, point.y);
   if (hint !== lastHint) {
-    if (hint) {
-      if (lastHint === null) statusBeforeHint = statusNode.textContent;
-      statusNode.textContent = hint;
-    } else if (statusBeforeHint !== null) {
-      statusNode.textContent = statusBeforeHint;
-      statusBeforeHint = null;
-    }
+    tipNode.hidden = !hint;
+    if (hint) tipNode.textContent = hint;
     lastHint = hint;
   }
+  if (hint) tipShow(event.clientX, event.clientY);
   cursorNode.textContent = `Мировая точка: ${Math.round(point.x)}, ${Math.round(point.y)}`;
   updateDebugInfo(point);
 });
@@ -377,6 +460,7 @@ canvas.addEventListener("pointercancel", endDrag);
 canvas.addEventListener("wheel", (event) => {
   event.preventDefault();
   zoomTo(view.zoom * Math.exp(-event.deltaY * 0.001), event.clientX, event.clientY);
+  view.dirty = true;
 }, { passive: false });
 
 for (const control of [showRoofsNode, debugGroundNode, debugObjectsNode]) {
@@ -406,6 +490,39 @@ window.addEventListener("keydown", (event) => {
   event.preventDefault();
   pressButton(action);
 });
+
+// КАСТ — клавиша C. Канонных клавиш она не занимает: у панели заняты
+// F, M, Пробел, A, Q, I, у отладки D, у пояса Ё.
+//
+// Цель берётся из-под курсора тем же попиксельным попаданием, что и щелчок
+// (unitAt), а если под курсором пусто — ближайший чужой в дальности каста.
+window.addEventListener("keydown", (event) => {
+  if (event.code !== "KeyC" || event.repeat) return;
+  if (event.ctrlKey || event.altKey || event.metaKey) return;
+  if (world.talking || trade.open) return;
+  event.preventDefault();
+  const point = screenToWorld(view.pointerX, view.pointerY);
+  const under = unitAt(point.x, point.y);
+  const target = under && under !== hero ? under : nearestFoe();
+  const said = heroCast(target);
+  if (said !== "каст") console.info(`каст: ${said}`);
+});
+
+//: Ближайший чужой живой — на случай, когда курсор ни на кого не показывает.
+//: СВОЙ — ЭТО СОЮЗНИК ИЛИ ОДНА СТОРОНА, и проверять надо оба: наёмник
+//: стоит в своём отряде (сторона другая), а бить его нельзя. Тем же
+//: правилом живут курсор (cursors.js) и приказы боя.
+function nearestFoe() {
+  let best = null;
+  let bestRange = Infinity;
+  for (const unit of units) {
+    if (!unit?.alive || unit === hero) continue;
+    if (unit.ally || (unit.side ?? 0) === (hero.side ?? 0)) continue;
+    const range = Math.hypot(unit.x - hero.x, unit.y - hero.y);
+    if (range < bestRange) { best = unit; bestRange = range; }
+  }
+  return best;
+}
 
 // Ё/~ ПРЯЧЕТ И ПОКАЗЫВАЕТ ПОЯС (VA 0x437FF8:220, клавиша 0xC0 = VK_OEM_3).
 // Ветка движка живёт только в режиме экрана 0 — в самой игре, — поэтому и
@@ -457,6 +574,8 @@ window.addEventListener("pointermove", (event) => {
 // Курсор ушёл из окна (а не просто с холста) — прокрутка останавливается.
 // `relatedTarget` пуст только когда указатель покинул документ целиком.
 window.addEventListener("pointerout", (event) => {
-  if (!event.relatedTarget) edge.inside = false;
+  if (!event.relatedTarget) { edge.inside = false; tipHide(); }
 }, { passive: true });
+//: Ушёл с холста на панель или пояс — подписи там нечего подписывать.
+canvas.addEventListener("pointerleave", tipHide);
 window.addEventListener("blur", () => { edge.inside = false; });

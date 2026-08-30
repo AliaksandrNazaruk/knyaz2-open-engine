@@ -15,7 +15,8 @@ import { contentUrl } from "./content.js";
 import { centreOn, hero } from "./hero.js";
 import { render } from "./scene.js";
 import { actorItem } from "./actor.js";
-import { orderModes, setMode } from "./orders.js";
+import { orderClear, orderModes, setMode } from "./orders.js";
+import { warbandOf } from "./warband.js";
 import { isSelected, select as selectUnit, selection,
          selectionLead } from "./orders.js";
 import { combatStanceNode } from "./dom.js";
@@ -25,14 +26,14 @@ import { carriedWeight, carry, carryActor, carryApplyTo, carryCancel, carryDrop,
          weightLimit } from "./carry.js";
 import { mixing, mixingHides, mixingSlot, mixingTake } from "./craft.js";
 import { carryCursorSync } from "./cursors.js";
-import { SLOT_TITLES, equipFromBag, inventoryWeight,
+import { SLOT_TITLES, bagSize, equipFromBag, inventoryWeight,
          requirementMet, unequip } from "./inventory.js";
-import { armourOf, orderTalkTo } from "./combat.js";
-import { bonusStrike, currentCharacteristics,
-         enchantBonuses } from "./jewels.js";
+import { armourOf, orderTalkTo, strengthOf } from "./combat.js";
+import { reputationValue } from "./reputation.js";
+import { currentCharacteristics } from "./jewels.js";
 import { dialog, dialogChoose, dialogClose, dialogJournal,
          dialogOptions } from "./dialog.js";
-import { locationName, markerVisible, standAt, startTravel,
+import { locationName, mapPicture, markerVisible, standAt, startTravel,
          startTravelTo, travelling,
          worldMap, worldMapSetup } from "./worldmap.js";
 import { canRaiseCharacteristic,
@@ -67,11 +68,30 @@ const weightNode = document.querySelector("#inventory-weight");
 //: Зажатые модификаторы. В движке это два отдельных флага главного цикла:
 //: 0x849608 «добавить к выбору» по клавише 0x10 (Shift) и 0x8495AC
 //: «заговорить» по клавише 0x11 (Ctrl) — VA 0x438A00:44.
+//: Насколько кнопка «заговорить» уже своего гнезда, в точках экрана.
+//: Подогнано на глаз: сперва ужали на десять, потом отпустили вправо на
+//: четыре — рисунок у неё свой, и в паковую ширину он не ложится.
+const TALK_TRIM = 6;
+
 const keyHeld = { shift: false, ctrl: false };
 function keyHeldFrom(event) {
   keyHeld.shift = event.shiftKey;
   keyHeld.ctrl = event.ctrlKey;
 }
+
+// РЕЖИМ РАЗГОВОРА — КОСТЫЛЬ ДЛЯ СЕНСОРНОГО ЭКРАНА.
+//
+// Ctrl в движке — не действие, а ФЛАГ главного цикла (0x8495AC, клавиша
+// 0x11, VA 0x438A00:44): с ним щелчок по своему становится «подойти и
+// заговорить» вместо «выбрать». На телефоне зажать его нечем, а без него
+// закрыты и разговор с самим собой (лечение и починка), и назначение
+// спутника на должность.
+//
+// Поэтому кнопка панели держит тот же флаг взведённым, пока её не отожмут.
+// Живёт он в `world`, а не здесь: спрашивают его трое — панель, щелчок по
+// миру (input.js) и курсор (cursors.js), — а `cursors.js` ui.js импортировать
+// не может, иначе выйдет петля (ui.js тянет его сам).
+function ctrlHeld() { return keyHeld.ctrl || world.talkMode === true; }
 window.addEventListener("keydown", keyHeldFrom);
 window.addEventListener("keyup", keyHeldFrom);
 
@@ -100,19 +120,30 @@ function beltArrows() {
   return (set?.left?.width ?? 28) + (set?.right?.width ?? 27);
 }
 
-// СКОЛЬКО ЯЧЕЕК ПОМЕЩАЕТСЯ — НЕ БОЛЬШЕ ДВЕНАДЦАТИ, НО МОЖЕТ БЫТЬ МЕНЬШЕ.
+// СКОЛЬКО ЯЧЕЕК ПОМЕЩАЕТСЯ — ПО ПРОЁМУ, А НЕ ПО ДВЕНАДЦАТИ.
 //
-// В игре их всегда двенадцать: экран 1024x768, и ряд от кромки панели до
-// правого края рассчитан ровно на них. У нас окно любой формы, и когда оно
-// уже четырёх третей, двенадцать ячеек в общем масштабе в проём не лезут —
-// ряд вылезал на панель. Считаем, сколько шагов поместится в проёме, и
-// показываем столько; до остальных мешок листается стрелками, как и прежде.
+// В игре их всегда двенадцать, но это не свойство пояса, а следствие
+// экрана: при 1024x768 ряд от кромки панели (x=140) до правого края
+// (x=1023) вмещает ровно столько шагов по 69. Само гнездо ничем не
+// выделено — пояс показывает ТОТ ЖЕ мешок юнита (+0x62, сорок два
+// слова), просто лентой, и до остальных ячеек движок листает стрелками.
+//
+// У нас окно любой формы. На узком двенадцать в проём не лезли, и ряд
+// вылезал на панель, — это чинилось и раньше. На широком же места
+// ОСТАВАЛОСЬ БОЛЬШЕ, а ряд всё равно обрывался на двенадцатой и дальше
+// требовал стрелок впустую. Теперь потолок один — сколько вещей вообще
+// может быть в мешке; между ним и проёмом выбирается меньшее.
+//
+// Ширина ряда считается из этого же числа и потому в окно попадает
+// ровно: `arrows + cells*pitch <= arrows + room = ширина вида`.
 export function beltCells() {
   const geometry = belt();
-  const most = geometry.cells ?? 12;
+  //: `geometry.cells` (двенадцать из exe) остаётся запасом на случай,
+  //: когда проём ещё не измерен — до первой раскладки.
+  const most = bagSize() || geometry.cells || 12;
   const pitch = geometry.pitch ?? 69;
   const room = (viewNode?.clientWidth ?? 0) / (scale || 1) - beltArrows();
-  if (!(room > 0)) return most;
+  if (!(room > 0)) return Math.min(geometry.cells ?? 12, most);
   return Math.max(1, Math.min(most, Math.floor(room / pitch)));
 }
 
@@ -120,136 +151,190 @@ export function beltCells() {
 //: 0x432324): «Масло» и класс 93 хотят десять, «Эликсир Мудрости» — шесть.
 const WEAK_BELOW = { 87: 10.0, 92: 6.0, 93: 10.0 };
 
-// Подсказка предмета — те же поля, что печатает игра (VA 0x4315A0): урон
-// или броня, вес в килограммах, цена, дальность и требование.
-// ВЛАДЕЛЬЦА СПРАШИВАЕМ У ВЫЗЫВАЮЩЕГО. Концентрация зелья — это float +0x04
-// САМОЙ ЗАПИСИ предмета, и движку всё равно, у кого она в руках. У нас
-// экземплярные поля живут картами владельца, поэтому владельца надо назвать:
-// в окне обмена вещь принадлежит собеседнику, а не игроку. Здесь всегда
-// стоял `panelUnit()`, то есть игрок, — и любое зелье на чужом прилавке
-// показывало «концентрация 0.00», хотя в паке у него честные 5.0 и 6.0.
+//: Короткие имена полей — таблица 0x462D74, приезжает в паке
+//: (rules.inventory.tooltip). Имя несёт ведущий пробел — так печатает игра.
+function statShort(field) {
+  const stats = hero.data?.rules?.inventory?.tooltip?.stats ?? {};
+  return stats[String(field)] ?? ` поле ${field}`;
+}
+
+//: Чары для подсказки — СВОИМ ходом по группам слова, а не через свёртку
+//: `enchantBonuses`: печать идёт в порядке групп движка (старшая тройка
+//: первой: броня, удар, ловкость, сила, выносливость), а объект со
+//: числовыми ключами перечисляется по возрастанию и путал порядок.
+function enchantParts(word) {
+  const set = hero.data?.rules?.jewellery?.enchant;
+  if (!set || !word || (word & set.dormant)) return "";
+  let out = "";
+  for (const { shift, section } of set.groups) {
+    const level = (word >> shift) & 0x7;
+    if (!level) continue;
+    const row = set.table[section + level - 1];
+    if (!row) continue;
+    // « Сил» «+» «2» — ровно три куска печатника (0x431898…0x4318CF)
+    out += `${statShort(row.field)}+${row.value}`;
+  }
+  return out;
+}
+
+// Подсказка предмета — перенос печатника 0x4315A0 ДОСЛОВНО: те же строки
+// (сняты из exe, см. docs/_descr_strings*.txt), тот же порядок, та же
+// развилка по ВИДУ записи (байт +0x00; в паке он у класса — `kind`).
+// Цены и дальности в канонной подсказке НЕТ ВООБЩЕ — они были нашей
+// отсебятиной, как и разделитель « · ».
+//
+// ВЛАДЕЛЬЦА СПРАШИВАЕМ У ВЫЗЫВАЮЩЕГО. Экземплярные поля (износ, чары,
+// отрава, счёт стрел) живут картами владельца, а в открытом обмене — его
+// складом details; движок читает их из самой записи предмета.
 function describe(name, owner = panelUnit()) {
   const item = actorItem(name);
   if (!item) return "";
-  const parts = [item.name];
-  //: Экземплярные поля вещи: в открытом обмене они лежат в его складе (туда
-  //: `tradeOpen` собирает обе стороны по ссылке записи), иначе — у владельца.
   const traded = trade.open ? trade.details?.[name] : null;
-  // СНАДОБЬЕ ОПИСЫВАЕТСЯ ИНАЧЕ (VA 0x4322A1).
-  //
-  // Признак — ОТРИЦАТЕЛЬНАЯ ЦЕНА в записи класса: движок читает знаковое
-  // поле +0x12 и при минусе дописывает к названию концентрацию:
-  //
-  //     mov eax, [eax + 0x45db00]; sar eax, 0x10; test eax, eax
-  //     jge пропустить
-  //       strcat(буфер, ", концентрация ")
-  //       fld dword [запись + 4]; sprintf(врем, "%5.2f", крепость)
-  //
-  // Минус стоит ровно у восьми варимых зелий (85…92: бальзам, яд, масло,
-  // противоядие, брага, зелье, чистая слеза, эликсир), и цену движок им НЕ
-  // печатает вовсе — ветка кончается весом. Мы же выводили сырое поле, и в
-  // подсказке Яда стояло «цена -11».
-  //
-  // Сама концентрация — тот же float +0x04 записи предмета, что у оружия
-  // служит прочностью; у нас оба живут в `bagStrength`, как и в движке.
-  if (item.price < 0) {
-    const value = (name === mixing.name && typeof mixing.strength === "number")
-      ? mixing.strength
-      : (traded?.strength ?? owner?.bagStrength?.[name] ?? 0);
-    parts.push(`концентрация ${value.toFixed(2)}`);
-    const need = WEAK_BELOW[item.index];
-    if (need !== undefined && value < need) parts.push("недостаточная концентрация");
-    parts.push(`вес ${(item.weight / 1000).toFixed(2)} кг`);
-    return parts.join(" · ");
-  }
-  if (item.power) parts.push(`${item.slot === "hand" || item.slot === "ranged"
-    ? "урон" : "броня"} ${item.power}`);
-  parts.push(`вес ${(item.weight / 1000).toFixed(2)} кг`, `цена ${item.price}`);
-  if (item.range_cells > 1) parts.push(`дальность ${item.range_cells}`);
-  if (item.requires && item.requirement) {
-    parts.push(`требует ${item.requires} ${item.requirement}`);
-  }
-  // ЧТО ВЕЩЬ ДАЁТ. Слово прибавок (+0x0E записи) — пять значений по три
-  // бита, и величину каждому даёт таблица (VA 0x41C494). Неопознанная магия
-  // молчит: пока стоит старший бит, прибавок нет вовсе, и это канон —
-  // `enchantBonuses` возвращает пусто.
-  //
-  // Показываем и в мешке, и на чужом прилавке: до этой строки судить об
-  // украшении можно было, только купив его и надев.
   const word = traded?.enchant ?? owner?.bagEnchant?.[name] ?? 0;
-  for (const [field, value] of Object.entries(enchantBonuses(word))) {
-    parts.push(`${bonusName(field)} +${value}`);
+  const dormant = hero.data?.rules?.jewellery?.enchant?.dormant ?? 0x8000;
+  const asleep = Boolean(word & dormant);       // заколдованное = не опознано
+  const kind = item.kind ?? (item.ammo ? 12 : null);
+  const kg = (grams) => (grams / 1000).toFixed(2);     // «%4.2f» печатника
+  // вид отравы — байт +0x02 записи: масло кладёт ноль («, зажигательные»)
+  const poisons = hero.data?.rules?.inventory?.tooltip?.poisons ?? [];
+  const oiled = Boolean(traded?.oiled ?? owner?.itemOiled?.[name]);
+  const poison = traded?.poison ?? owner?.bagPoison?.[name] ?? 0;
+
+  // СНАРЯЖЕНИЕ, виды 0…4: оружие, стрелковое, доспех, шлем, щит.
+  if (kind !== null && kind >= 0 && kind <= 4) {
+    if (asleep) {
+      return kind === 0 ? "Заколдованное оружие"
+        : kind === 1 ? "Заколдованное стрелковое оружие"
+        : "Заколдованный предмет";
+    }
+    let out = item.name;
+    out += (kind < 2 ? ", урон " : ", броня: ") + item.power;
+    // износ: текущий из записи (0 печатается единицей — 0x4315A0), полный
+    // — из неё же; у вещи без экземплярных полей оба равны классу
+    const full = Math.round(traded?.max ?? owner?.wearMax?.[name]
+      ?? item.durability ?? 0);
+    const worn = Math.round(traded?.strength ?? owner?.bagStrength?.[name]
+      ?? full) || 1;
+    out += `, износ ${worn}/${full}`;
+    out += `, вес ${kg(item.weight)}`;
+    if (kind === 0 && poison) out += `, отравление: ${poison}`;
+    if (oiled && poisons[0]) out += poisons[0];
+    out += enchantParts(word);
+    if (item.requires && item.requirement) {
+      out += `, требует: ${statShort(requirementField(item))}:${item.requirement}`;
+    }
+    return out;
   }
-  return parts.join(" · ");
+
+  // УКРАШЕНИЯ, виды 6…8: ожерелье, браслет, кольцо.
+  if (kind === 6 || kind === 7 || kind === 8) {
+    if (asleep) return "Заколдованный предмет";
+    return `${item.name}, вес ${kg(item.weight)}${enchantParts(word)}`;
+  }
+
+  // ЗЕЛЬЯ, вид 9: бит «заколдовано» печатник не смотрит вовсе.
+  if (kind === 9) {
+    let out = item.name;
+    if (item.price < 0) {
+      const value = (name === mixing.name && typeof mixing.strength === "number")
+        ? mixing.strength
+        : (traded?.strength ?? owner?.bagStrength?.[name] ?? 0);
+      out += `, концентрация ${value.toFixed(2).padStart(5)}`;   // «%5.2f»
+      const need = WEAK_BELOW[item.index];
+      if (need !== undefined && value < need) out += ", недостаточная концентрация";
+    }
+    return out + `, вес ${kg(item.weight)}`;
+  }
+
+  // СТРЕЛЫ, вид 0x0C: счёт, урон и вес ВСЕЙ пачки.
+  if (kind === 12) {
+    // печатник обрывает заколдованные стрелы на заголовке (0x431C84:
+    // strcat строки 0x45267C и переход в конец) — воспроизводим как есть
+    if (asleep) return "Заколдованные стрелы: ";
+    const count = traded?.count ?? owner?.bagCount?.[name]
+      ?? (owner?.equipment?.ammo === name ? owner?.ammoCount : null) ?? 0;
+    let out = `${item.name}${count} шт.`;
+    out += `, урон ${item.power}`;
+    out += `, вес ${kg(count * item.weight)}`;
+    if (poison) out += `, отравление: ${poison}`;
+    if (oiled && poisons[0]) out += poisons[0];
+    if (item.requires && item.requirement) {
+      out += `, требует: ${statShort(requirementField(item))}:${item.requirement}`;
+    }
+    return out;
+  }
+
+  // ПРОЧЕЕ, вид 0x0B (и вещи без вида): имя и вес.
+  if (asleep) return "Заколдованный предмет";
+  return `${item.name}, вес ${kg(item.weight)}`;
 }
 
-// ИМЯ ПРИБАВКИ ВМЕСТО НОМЕРА ПОЛЯ. В подсказке стояло сырое число, и игрок
-// видел «6 +1» — а это Выносливость.
-//
-// Номера полей у чар единые с требованиями вещей и считаются С ЕДИНИЦЫ:
-// `FUN_0041AAD8` разрешает их так же — 0 уровень, 1…6 байты +0xCC…+0xD1
-// (Харизма, Ловкость, Интеллект, Обучаемость, Сила, Выносливость), а дальше
-// вычисляемые. У чар сверх шестёрки идут три поля самой записи юнита, и они
-// названы в паке: 7 броня (+0x42), 8 сила удара (+0x44), 9 точность (+0x46).
-const BONUS_EXTRA = { 7: "Броня", 8: "Удар", 9: "Точность" };
-
-function bonusName(field) {
-  const number = Number(field);
+//: Номер поля требования. Пак несёт `requires` ИМЕНЕМ («Сила»), печатник —
+//: номером в таблицу коротких имён; сводим по полным именам прокачки.
+function requirementField(item) {
   const names = hero.data?.rules?.progression?.characteristics?.names ?? [];
-  if (number >= 1 && number <= names.length) return names[number - 1];
-  return BONUS_EXTRA[number] ?? `поле ${number}`;
+  const at = names.indexOf(item.requires);
+  if (at >= 0) return at + 1;
+  return BONUS_EXTRA_FIELDS[item.requires] ?? 0;
 }
 
-// ЦВЕТ ЗНАЧКА ВЕЩИ — перенос FUN_0042FF20. Движок не рисует значок как есть:
-// он подбирает вещи палитру и красит её ПЕРЕД отрисовкой (зовут из разбора
-// мешка, VA 0x42BFE8 и 0x43096C). Порядок проверок такой:
+//: Поля сверх шести характеристик — как в требованиях классов (0x462D74).
+const BONUS_EXTRA_FIELDS = { "Броня": 7, "Удар": 8, "Вера": 9, "Здоровье": 10 };
+
+// ЦВЕТ ЯЧЕЙКИ ПОД ВЕЩЬЮ — перенос FUN_0042FF20. КРАСИТСЯ ПОДЛОЖКА, А НЕ
+// ЗНАЧОК: разбор мешка (VA 0x42BFE8, обмен) и пояс (VA 0x43096C) рисуют
+// спрайт-ячейку перекрашенной палитрой, а значок кладут вторым проходом
+// РОДНЫМИ цветами, по центру, без масштаба. Прежний комментарий здесь
+// приписывал краску значку — это было неверное чтение: `0x42FF20`
+// перекрашивает палитру ЯЧЕЙКИ (аргумент — её палитра, DAT_006B26A4).
+// Порядок проверок такой:
 //
-//     не может надеть (FUN_00418648)      -> FUN_0044293F(0x18, 0, 0)  красный
+//     не может надеть (FUN_00418648)      -> FUN_0044293F(0x18, 0, 0)  красная
 //     опознана:
 //         байт +1 отрицателен И слово чар (маска 0x7FFF) ноль -> без краски
-//         иначе                            -> FUN_0044293F(0, 0x0C, 0)  зелёный
-//     не опознана (вещь[+0x0F] бит 0x80)   -> FUN_0044293F(0x0F, 0x0F, 0) жёлтый
+//         иначе                            -> FUN_0044293F(0, 0x0C, 0)  зелёная
+//     не опознана (вещь[+0x0F] бит 0x80)   -> FUN_0044293F(0x0F, 0x0F, 0) жёлтая
 //
-// ЖЁЛТЫЙ В ОБЫЧНОЙ ИГРЕ НЕ ПОКАЗЫВАЕТСЯ, и это не наша недоделка. Тело
+// ЖЁЛТАЯ В ОБЫЧНОЙ ИГРЕ НЕ ПОКАЗЫВАЕТСЯ, и это не наша недоделка. Тело
 // `FUN_00418648` целиком лежит под `if ((вещь[+0x0F] & 0x80) == 0)` — то есть
 // неопознанная вещь не проходит саму проверку «можно ли надеть» и красится
-// КРАСНЫМ раньше, чем разбор дойдёт до жёлтой ветки. Открыть её может только
+// КРАСНОЙ раньше, чем разбор дойдёт до жёлтой ветки. Открыть её может только
 // флаг `0x849620`, который снимает проверку целиком. Мы повторяем это как
 // есть: у нас `requirementMet` тоже отвергает неопознанное первой строкой.
 //
-// Ровно этого и не хватало игроку: у торговца всё выглядело одинаково, и
-// понять, что вещь не надеть по характеристикам, можно было только купив её.
-//
-//: Сама КРАСКА в движке табличная: `0x4429 3F` выбирает три строки заранее
-//: посчитанных таблиц (0x4BEA2C красная, 0x479D50 зелёная, 0x474950 синяя,
-//: плюс «вычитающие» близнецы), а `0x441DF9` гоняет через них каждый из трёх
-//: пятибитных каналов палитры. Таблиц в паке пока нет, поэтому здесь оттенок
-//: приближённый — ВЫБОР состояния канонический, а сам цвет ещё нет.
+// Сами крашеные подложки испечены паком по таблицам движка (0x43C228
+// строит ряды с шагом 0.01; краска — ряд 0x18 красного канала, зелень —
+// ряд 0x0C зелёного) — `interface.cell_unusable` и `interface.cell_special`.
 function itemTint(name, owner = panelUnit()) {
   if (!name || !owner) return null;
-  if (!requirementMet(name, owner)) return "unusable";
+  //: Слово чар — ИЗ САМОЙ ВЕЩИ (в обмене — из склада details), и оно же
+  //: уходит в проверку «можно ли надеть»: иначе заколдованный товар на
+  //: прилавке проходил её по пустому слову ПОКУПАТЕЛЯ и терял красную.
   const traded = trade.open ? trade.details?.[name] : null;
   const word = traded?.enchant ?? owner.bagEnchant?.[name] ?? 0;
+  if (!requirementMet(name, owner, word)) return "unusable";
   const dormant = world.map?.hero?.rules?.jewellery?.enchant?.dormant ?? 0x8000;
   if (word & dormant) return "unknown";
   return word ? "special" : null;
 }
 
-function iconNode(name, owner = panelUnit()) {
+function iconNode(name, owner = panelUnit(), k = scale) {
   const icon = actorItem(name)?.icon;
   if (!icon) return null;
   const image = document.createElement("img");
   image.src = contentUrl(icon.path);
   image.alt = name;
-  const tint = itemTint(name, owner);
-  // ЦВЕТ — ЭТО ЦВЕТ, А НЕ ПОДПИСЬ. Здесь стояло `image.title = ITEM_TINTS[tint]`,
-  // и всплывающая подсказка над значком говорила игроку «зелёный» или
-  // «красный» вместо описания вещи: своя подсказка у картинки перебивает
-  // подсказку ячейки, в которой она лежит. Никакой такой подписи в движке
-  // нет — там `FUN_0042FF20` только подбирает вещи палитру перед отрисовкой
-  // значка, и весь смысл передаётся самим цветом. Название вещи ставит
-  // ячейка (`describe`), и мешать ему нельзя.
-  if (tint) image.classList.add(`item-${tint}`);
+  // ЗНАЧОК БОЛЬШЕ НЕ КРАСИТСЯ И НЕ ОБВОДИТСЯ: движок рисует его родными
+  // цветами поверх КРАШЕНОЙ ПОДЛОЖКИ ячейки (см. itemTint) — краску несёт
+  // сама ячейка. И рисует он его 1:1 В МАСШТАБЕ ИГРЫ, по центру бокса
+  // ячейки (0x42BFE8/0x43096C: x + (70-ширина)/2, y + (71-высота)/2, без
+  // масштаба) — потому размер значка задаётся здесь, множителем интерфейса
+  // ВЫЗЫВАЮЩЕГО (у пояса, обмена и окна снаряжения он свой), а не «своим
+  // размером» картинки, который у прежней вёрстки не рос вместе с экраном.
+  if (k > 0 && k !== 1) {
+    image.style.width = `${Math.round(icon.width * k)}px`;
+    image.style.height = `${Math.round(icon.height * k)}px`;
+  }
   return image;
 }
 
@@ -260,7 +345,7 @@ const TAP_SLIP = 24;
 
 function cell({ x, y, width, height, name = null, title = "", art = null,
                 onClick = null, onDoubleClick = null, onDrop = null,
-                className = "" }) {
+                className = "", iconScale = null }) {
   const node = document.createElement("div");
   node.className = `ui-cell ${className}`.trim();
   node.style.left = `${x}px`;
@@ -269,12 +354,24 @@ function cell({ x, y, width, height, name = null, title = "", art = null,
   node.style.height = `${height}px`;
   node.title = name ? describe(name) : title;
   // Подложка ячейки — спрайт игры (пустая ячейка, кнопка, овал оружия).
-  if (art) {
-    node.style.backgroundImage = `url("${contentUrl(art.path)}")`;
+  // ЯЧЕЙКА ПОД ВЕЩЬЮ КРАСИТСЯ ЦЕЛИКОМ, как её рисует движок (см. itemTint):
+  // подложке с вещью, которую нельзя надеть, пак даёт красный вариант
+  // спрайта, вещи с чарами — зелёный. Красится только сама ячейка (спрайт
+  // 17) — кнопок и овалов окна снаряжения краска не касается, их и движок
+  // не красит (0x42FF20 зовут только разбор мешка и пояс).
+  let paint = art;
+  if (name && art && art === info()?.cell) {
+    const tint = itemTint(name);
+    paint = tint === "unusable" ? info()?.cell_unusable ?? art
+      : tint === "special" ? info()?.cell_special ?? art
+      : art;
+  }
+  if (paint) {
+    node.style.backgroundImage = `url("${contentUrl(paint.path)}")`;
     node.style.backgroundSize = "100% 100%";
     node.style.backgroundRepeat = "no-repeat";
   }
-  const icon = name && iconNode(name);
+  const icon = name && iconNode(name, undefined, iconScale ?? scale);
   if (icon) node.append(icon);
   //: Модификаторы берём из САМОГО щелчка, а не только из клавиатуры: мышью
   //: можно нажать Ctrl или Shift и не дать окну ни одного keydown — скажем,
@@ -357,19 +454,58 @@ const ACTIONS = {
       else status("Некого атаковать");
     },
   },
+  // ЗАГОВОРИТЬ — вместо «атаковать» (см. renderPanel). Кнопка не делает
+  // ничего сама: она держит взведённым тот же флаг, что и зажатый Ctrl, и
+  // пока горит, щелчок по себе или по своему открывает разговор, а не
+  // выбирает. Второе нажатие отпускает.
+  talk_mode: {
+    active: () => world.talkMode === true,
+    press: () => {
+      world.talkMode = !world.talkMode;
+      status(world.talkMode
+        ? "Разговор: щёлкни по себе или по своему"
+        : "Разговор выключен");
+    },
+  },
   // «Все ко мне» — движок переводит весь отряд в режим 0x30, то есть
-  // «следовать за вожаком» (VA 0x420BFC).
+  // «следовать за вожаком» (VA 0x420BFC), и ЭТИМ ЖЕ выводит отряд из боя:
+  //
+  //     *(отряд_игрока + 0x1D) = 0;          // война снята
+  //     каждому живому бойцу: +0x16 = 0x30   // весь байт, приказ стёрт
+  //                           +0x01 = 0xFF   // путь очищен
+  //                           +0x19 &= 0xBF  // бит «занят» снят
+  //
+  // Это и есть канонный способ увести отряд из драки: просто приказ
+  // «идти» войну не снимает — дошедший юнит вернётся в бой рассудком.
+  // Порт держит кнопку переключателем (игрок настоял: отряд без зова не
+  // бродит), но начинка при включении — движковая.
   call_party: {
     press: () => {
       const mates = (world.units ?? []).filter((unit) => unit.ally && unit.alive);
       if (!mates.length) { status("Отряда пока нет"); return; }
-      // Бит «за вожаком» — единственное, чем спутник отличается от
-      // стоящего на месте (VA 0x4111E8 смотрит только его). Кнопка его и
-      // переключает: идут следом или ждут там, где стоят.
       const bit = orderModes().follow;
       const following = mates.every((mate) => (mate.orderByte ?? 0) & bit);
+      if (!following) {
+        // Зов: война отряда игрока гаснет (0x420BFC, третья строка тела).
+        const ours = warbandOf(hero);
+        if (ours) ours.fighting = false;
+      }
       for (const mate of mates) {
-        setMode(mate, bit, !following);
+        if (!following) {
+          // Весь байт целиком, как пишет движок: приказ и цель стёрты.
+          orderClear(mate);
+          // …и РУКА ИГРОКА ОТПУСКАЕТ БОЙЦА (+0x19 &= 0xBF). Раньше это делал
+          // сам orderClear, но там бит стоял не в своём байте; теперь снимаем
+          // тут, ровно как движок, — иначе позванный спутник остался бы
+          // «занятым» и за вожаком не пошёл.
+          mate.busy = false;
+          mate.orderByte = 0x30;
+          mate.target = null;
+          mate.goal = null;
+          mate.goalTarget = null;
+        } else {
+          setMode(mate, bit, false);
+        }
         mate.path = [];
       }
       status(following ? `Отряд ждёт на месте: ${mates.length}`
@@ -405,7 +541,7 @@ function status(text) { world.onStatus?.(text); }
 let mapOpen = false;
 
 export function showWorldMap(open = !mapOpen) {
-  const picture = info()?.map;
+  const picture = mapPicture();
   if (open && !picture) { status("Карты в паке нет"); return false; }
   if (open && !worldMapSetup()) { status("Сетки карты мира в паке нет"); return false; }
   // Отряд встаёт туда, где стоит: в клетку текущей локации. Её же
@@ -448,13 +584,16 @@ let mapCanvas = null;
 
 function mapGeometry() {
   const rules = worldMap.rules;
-  const picture = info()?.map;
+  const picture = mapPicture();
   if (!rules || !picture) return null;
-  // Сетка задана в координатах всего экрана 1024x768, а картинка карты
-  // это окно мира, начинающееся со столбца panel_width — отсюда сдвиг.
+  // УГОЛ УЖЕ В КООРДИНАТАХ КАРТИНКИ. Движок держит его экранным (0xA7,
+  // 0x19), потому что рисует карту в окне мира и считает от левого края
+  // ЭКРАНА; пересчёт на ширину панели делает пак — knyaz2/content/worldmap.py,
+  // а старый пак поправляет `worldMapSetup`. Здесь вычитать нечего: у
+  // нарисованной карты панели нет вовсе.
   return {
     picture,
-    x0: rules.origin[0] - screen().panel_width,
+    x0: rules.origin[0],
     y0: rules.origin[1],
     w: rules.cell[0], h: rules.cell[1],
     rows: rules.rows, cols: rules.cols,
@@ -477,16 +616,27 @@ function mapImage(entry) {
 }
 
 function renderWorldMap() {
-  const picture = info()?.map;
+  const picture = mapPicture();
   if (!mapOpen || !picture) { mapNode.hidden = true; return; }
   const view = viewNode.getBoundingClientRect();
   const game = gameNode.getBoundingClientRect();
-  const k = Math.min(scale, view.width / picture.width);
+  // ВПИСЫВАЕМ В ПРОЁМ ПО ОБЕИМ ОСЯМ И СТАВИМ ПО ЦЕНТРУ.
+  //
+  // Канонная карта ровно в размер проёма (884x709), и для неё это по-прежнему
+  // общий масштаб игры — вид не меняется. Нарисованная другой формы, и предела
+  // по высоте тут раньше не было вовсе: на высоком узком окне она вылезала
+  // вниз за рамку, а прижатая к левому верхнему углу выглядела съехавшей.
+  const k = Math.min(scale, view.width / picture.width,
+                     view.height / picture.height);
+  const width = Math.round(picture.width * k);
+  const height = Math.round(picture.height * k);
   mapNode.hidden = false;
-  mapNode.style.left = `${view.left - game.left}px`;
-  mapNode.style.top = "0px";
-  mapNode.style.width = `${Math.round(picture.width * k)}px`;
-  mapNode.style.height = `${Math.round(picture.height * k)}px`;
+  mapNode.style.left =
+    `${Math.round(view.left - game.left + (view.width - width) / 2)}px`;
+  mapNode.style.top =
+    `${Math.round(view.top - game.top + (view.height - height) / 2)}px`;
+  mapNode.style.width = `${width}px`;
+  mapNode.style.height = `${height}px`;
   mapNode.style.backgroundImage = `url("${contentUrl(picture.path)}")`;
   mapNode.style.backgroundSize = "100% 100%";
   const title = mapNode.querySelector(".ui-map-title");
@@ -519,7 +669,9 @@ function drawWorldMap(picture) {
     mapCanvas.className = "ui-map-layer";
     mapNode.prepend(mapCanvas);
   }
-  if (mapCanvas.width !== picture.width) {
+  // Сверяем ОБЕ стороны: карты разной высоты при одной ширине холст бы не
+  // переразметил, и туман лёг бы по чужой сетке.
+  if (mapCanvas.width !== picture.width || mapCanvas.height !== picture.height) {
     mapCanvas.width = picture.width;
     mapCanvas.height = picture.height;
   }
@@ -577,16 +729,20 @@ function drawWorldMap(picture) {
     // клетки у отряда нет вовсе, есть пиксельное место (0x84956C/0x849570),
     // и клетка из него только выводится. Поэтому отряд и стоит там, где
     // остановился, а не прыгает в середину клетки.
+    //
+    // Точка отряда — В КООРДИНАТАХ КАРТИНКИ: её считает `centre` по тому же
+    // углу сетки, что и всё здесь. Ширину панели тут вычитали, пока угол
+    // приходил экранным; теперь это увело бы один только щит отряда влево,
+    // и он разошёлся бы со своей же клеткой.
     const offset = rules.player_offset ?? -7;
-    ctx.drawImage(player, worldMap.x - screen().panel_width + offset,
-                  worldMap.y + offset);
+    ctx.drawImage(player, worldMap.x + offset, worldMap.y + offset);
   }
 }
 
 //: Точка события в координатах картинки карты.
 function mapPoint(event) {
   const rect = mapNode.getBoundingClientRect();
-  const picture = info()?.map;
+  const picture = mapPicture();
   if (!picture || !rect.width) return null;
   return {
     x: ((event.clientX - rect.left) / rect.width) * picture.width,
@@ -646,8 +802,29 @@ function enterHere() {
   let number = markerVisible(cell) ? (cell & 0xFF) : 0;
   if (!number) number = (cell >> 16) & 0xFF;
   if (!number) number = spare;
-  status(`Входим: ${locationName(number)}`);
-  world.onTravel?.(number);
+  world.onTravel?.(ownGameLocation(number));
+}
+
+// ЗНАЧОК ВЕДЁТ В СВОЮ ИГРУ.
+//
+// Под локацию в клетке отведён один байт, и на месте Чёрного Бора стоит
+// донорский: он объявил `"replaces": 19` и занял клетку канонного. Значок
+// при этом канонный — клетка лежит на канонной части картинки. Оттого
+// канонный герой со значка приходил в чужую деревню, где нет Велиславны и
+// стоит Ярополк, и тестер записал это как «не Кровь Титанов канон».
+//
+// Байт остаётся один, а выбор делает клиент — то же правило «дома читаешь
+// свой мир», что уже применено к деревням (world.js) и отрядам. Таблицу
+// подмены печёт сборщик (locations.canon_instead).
+//
+// Донорского героя не трогаем: ему в клетке стоит ровно его карта.
+function ownGameLocation(number) {
+  const свои = worldMap.rules?.canon_instead;
+  const канонный = !hero.game || hero.game === "canon";
+  const вместо = свои?.[String(number)];
+  const итог = канонный && вместо ? вместо : number;
+  status(`Входим: ${locationName(итог)}`);
+  return итог;
 }
 
 function worldMapClick(event) {
@@ -674,8 +851,12 @@ function worldMapClick(event) {
   // Поэтому щелчок по далёкому значку никуда не переносит: он просто ведёт
   // туда отряд. А чтобы войти, надо стоять на клетке и щёлкнуть по своему
   // же значку.
-  const screenX = point.x + (screen().panel_width ?? 140);
-  if (Math.abs(worldMap.x - screenX) < ENTER_RADIUS &&
+  //
+  // Обе точки — В КООРДИНАТАХ КАРТИНКИ: и щелчок, и место отряда. Ширину
+  // панели тут прибавляли, пока место отряда было экранным; с ней «войти»
+  // не срабатывало бы вовсе — курсор не может отстоять от отряда меньше чем
+  // на семь точек и одновременно на сто сорок.
+  if (Math.abs(worldMap.x - point.x) < ENTER_RADIUS &&
       Math.abs(worldMap.y - point.y) < ENTER_RADIUS) {
     enterHere();
     return;
@@ -690,14 +871,15 @@ function worldMapClick(event) {
   // пройти» не говорит — отряд идёт, сколько может, и встаёт у преграды
   // (маска смотрится на каждом кадре хода, VA 0x427951).
   //
-  // ТОЧКА ЩЕЛЧКА — В КООРДИНАТАХ КАРТИНКИ, а сетка и место отряда заданы в
-  // координатах ЭКРАНА 1024x768 (начало сетки 167, а картинка начинается со
-  // столбца panel_width). Без этого сдвига цель уезжала влево на ширину
-  // панели, и отряд шёл не туда, куда показали.
+  // ЦЕЛЬ БЕРЁТСЯ КАК ЕСТЬ. Точка щелчка и место отряда теперь в одних и тех
+  // же координатах — картинки; ширину панели тут прибавляли, пока сетка
+  // задавалась экранным углом, и без этого цель уезжала влево. Теперь та же
+  // прибавка увела бы отряд вправо.
   const speed = partySpeed();
-  const toX = point.x + (screen().panel_width ?? 140);
-  if (!startTravelTo(toX, point.y, { speed })) return;
-  status("В пути");
+  // Плывём или идём — решает корабельное право (0x4277F4: при 0x84960C ==
+  // −1 маска хода берёт бит моря, а не суши).
+  if (!startTravelTo(point.x, point.y, { speed, ship: worldMap.ship === -1 })) return;
+  status(worldMap.ship === -1 ? "В плавании" : "В пути");
   refresh();
   onChange();
 }
@@ -794,11 +976,18 @@ const portraitCache = new Map();
 
 // Портрет спутника — тот же спрайт, только по его номеру лица: движок
 // берёт лицо юнита плюс 261 (VA 0x430631).
-function portraitPath(data, face) {
+function portraitPath(data, face, game = null) {
   const own = data.portrait?.path;
   if (!own) return null;
   const base = data.portrait_base ?? 261;
-  return own.replace(/ui_\d+\.png$/, `ui_${base + face}.png`);
+  // ЛИЦО ДОНОРА — ЕГО ПОРТРЕТ. Номер спрайта у обеих игр один («лицо +
+  // 261»), но лица под ним разные: за Иззарка (лицо 0) панель показывала
+  // нашего Ратибора, за Гильдис (лицо 3) — Хельгу. Выпечка кладёт его
+  // портреты под ключом `legend:<лицо>` и файлом `legend_ui_N.png`.
+  const ready = game ? data.portraits?.[`${game}:${face}`] : null;
+  if (ready?.path) return ready.path;
+  const name = `${game ? `${game}_` : ""}ui_${base + face}.png`;
+  return own.replace(/(?:legend_)?ui_\d+\.png$/, name);
 }
 
 // Картинку портрета держим свою: в общий склад изображений мира она не
@@ -820,7 +1009,10 @@ function portraitImage(source) {
 }
 
 function portraitFace(data, actor, face = null) {
-  const source = face == null ? data.portrait : { path: portraitPath(data, face) };
+  const game = actor?.game ?? null;
+  const source = (face == null && !game)
+    ? data.portrait
+    : { path: portraitPath(data, face ?? 0, game) };
   if (!source.path) return null;
   const image = portraitImage(source);
   if (!image) return null;
@@ -889,20 +1081,52 @@ function renderPanel() {
     if (rect.name.startsWith("button_")) {
       const index = Number(rect.name.slice("button_".length)) - 1;
       const button = data.buttons?.[index] ?? null;
-      const action = button && ACTIONS[button.id];
+      // МЕСТО «АТАКОВАТЬ» ОТДАНО «ЗАГОВОРИТЬ» — И ЭТО НАШЕ ОТСТУПЛЕНИЕ.
+      //
+      // Кнопка атаки канонная: и спрайт (`assets/icons/ui_7.png`), и подпись
+      // «Атаковать», и клавиша A приезжают в паке из данных самой игры. Мы
+      // забираем у неё ГНЕЗДО ПАНЕЛИ, потому что сенсорному экрану нужнее
+      // то, чего у него нет вовсе: держатель Ctrl. Атака при этом никуда не
+      // девается — клавиша A по-прежнему зовёт её (input.js, PANEL_KEYS), а
+      // на телефоне клавиатуры нет и кнопка там всё равно была бы вторым
+      // способом сделать то же, что и щелчок по врагу.
+      //
+      // Гнездо, размер и место остаются паковыми; меняются действие,
+      // подпись и картинка.
+      const id = button?.id === "attack" ? "talk_mode" : button?.id;
+      const action = id && ACTIONS[id];
       // Две первые кнопки меняют картинку: первая по оружию, вторая по
       // стойке. Предметы в панель не кладутся — гнёзд под них там нет.
       let art = button;
-      if (button?.id === "weapon_mode") art = weaponFace() ?? button;
-      if (button?.id === "toggle_weapon") {
+      if (id === "weapon_mode") art = weaponFace() ?? button;
+      if (id === "toggle_weapon") {
         art = data.stance_faces?.[hero.stance === "combat" ? "combat" : "peace"] ?? button;
       }
-      nodes.push(cell({
-        ...geometry,
-        title: button ? `${button.title}${button.key ? ` (${button.key})` : ""}` : "",
-        art, className: action?.active?.() ? "active" : "",
+      //: У «заговорить» картинки в игровых ресурсах нет — как и у кнопки
+      //: меню, она наша и лежит рядом с клиентом, а не в паке.
+      const ours = id === "talk_mode";
+      //: НАША КНОПКА УЖЕ ГНЕЗДА (TALK_TRIM). Гнездо паковое, 67 единиц
+      //: панели, а рисунок у неё свой, 92x83, и во всю ширину он вылезал за
+      //: соседей по столбцу. Левый край на месте, ужимается правый. Точки
+      //: экранные — их и видит игрок.
+      const box = ours
+        ? { ...geometry, width: Math.max(1, geometry.width - TALK_TRIM) }
+        : geometry;
+      const node = cell({
+        ...box,
+        title: ours ? "Заговорить: то же, что зажатый Ctrl"
+          : button ? `${button.title}${button.key ? ` (${button.key})` : ""}` : "",
+        art: ours ? null : art,
+        className: action?.active?.() ? "active" : "",
         onClick: action?.press ?? null,
-      }));
+      });
+      if (ours) {
+        node.style.backgroundImage = 'url("/speak-button.png")';
+        node.style.backgroundSize = "100% 100%";
+        node.style.backgroundRepeat = "no-repeat";
+        node.style.backgroundOrigin = "border-box";
+      }
+      nodes.push(node);
     } else if (rect.name === "portrait") {
       // Портрет игрока — такая же кнопка выбора, как у спутников: щелчок
       // по нему делает главного единственным выбранным (VA 0x421690 ведёт
@@ -912,18 +1136,31 @@ function renderPanel() {
                           // Порядок движковый: сперва прозвище, потом уровень
                           // и здоровье — и здоровье в той же шкале, что лист
                           // персонажа, то есть 100, а не 1600.
+                          // РЕПУТАЦИЯ — ТОЛЬКО У ИГРОКА, и это правило
+                          // донора, а не наше удобство: его панель
+                          // (VA 0x42DF7E) печатает её лишь тогда, когда
+                          // показанный юнит совпал с записью игрока.
                           title: [heroEpithet(), `уровень ${hero.level ?? 1}`,
+                                  `репутация ${reputationValue(hero)}`,
                                   `здоровье ${healthShown(hero.health, healthDivisor())}`
                                   + ` из ${healthShown(hero.maxHealth ?? 1600, healthDivisor())}`]
                             .filter(Boolean).join(", "),
                           // С ВЕЩЬЮ В РУКЕ портрет не выбирает, а применяет
                           // (VA 0x421690:292 -> 0x41F55C): для того, чья
                           // панель открыта, это «использовать на нём».
+                          // CTRL ПО СВОЕМУ ПОРТРЕТУ — РАЗГОВОР С САМИМ
+                          // СОБОЙ. Ветка портрета в движке (VA 0x421690:349)
+                          // игрока не отсекает: место 0 таблицы панели — он
+                          // сам, и Ctrl пишет ему приказ 0x22 со своим же
+                          // номером. Через этот разговор чинят снаряжение и
+                          // лечат отряд (HERO.QST, разговор 138).
                           onClick: () => {
                             if (carrying()) {
                               if (carryActor() === hero) carryApplyTo(hero);
                               else carryPlaceBag(-1, hero);
-                            } else selectUnit(hero, keyHeld.shift);
+                            } else if (!(ctrlHeld() && orderTalkTo(hero))) {
+                              selectUnit(hero, keyHeld.shift);
+                            }
                             refresh();
                           },
                           onDoubleClick: () => { centreOn(hero); render(); } });
@@ -945,8 +1182,14 @@ function renderPanel() {
       // ВАЖНО: в списке выбора должен лежать ЖИВОЙ юнит сцены, а не запись
       // из пака. Раньше сюда клали запись — она никогда не совпадала с тем,
       // что в списке, поэтому портрет не подсвечивался и не переключал.
+      //
+      // И ТОЛЬКО СВОЙ (`ally`): слоты юнитов уникальны лишь в пределах
+      // одной игры, а донорские карты несут свои номера — без фильтра
+      // портрет дружинника цеплялся к чужому жителю карты с тем же слотом,
+      // и клик/передача вещи уходили не тому.
       const mate = member
-        ? (world.units ?? []).find((unit) => unit.slot === member.index) ?? null
+        ? (world.units ?? []).find((unit) =>
+            unit.ally && unit.slot === member.index) ?? null
         : null;
       const node = cell({
         ...geometry, art: data.cell,
@@ -967,7 +1210,7 @@ function renderPanel() {
           if (carrying()) {
             if (carryActor() === mate) carryApplyTo(mate);
             else carryPlaceBag(-1, mate);
-          } else if (!(keyHeld.ctrl && orderTalkTo(mate))) {
+          } else if (!(ctrlHeld() && orderTalkTo(mate))) {
             selectUnit(mate, keyHeld.shift);
           }
           refresh();
@@ -978,8 +1221,13 @@ function renderPanel() {
         onDoubleClick: mate ? () => { centreOn(mate); render(); } : null,
       });
       if (member) {
+        //: ИГРА СПУТНИКА — ТОЖЕ В ПОРТРЕТ. Здесь собирался объект из одного
+        //: здоровья, и метка игры до `portraitFace` не доходила: спутник
+        //: донора получал канонное лицо под своим номером, как это было у
+        //: героя (лицо 2 показывалось Эйнаром).
         const face = portraitFace(data, { health: mate?.health ?? member.health,
-                                          maxHealth: member.health },
+                                          maxHealth: member.health,
+                                          game: mate?.game ?? member.game ?? null },
                                   member.face);
         if (face) {
           node.style.backgroundImage = `url("${face}")`;
@@ -1144,7 +1392,7 @@ function renderBelt() {
       x: Math.round(origin + slot * geometry.pitch * k),
       y: Math.round((height - size) / 2),
       width: size, height: size, art: data?.cell ?? null,
-      name, title: `ячейка ${index + 1}`,
+      name, title: `ячейка ${index + 1}`, iconScale: k,
       // Щелчок по ячейке: пустая рука берёт вещь, занятая — кладёт.
       onClick: () => {
         if (carrying()) carryPlaceBag(index);
@@ -1199,6 +1447,7 @@ function renderWindow() {
       width: Math.round(rect.width * k), height: Math.round(rect.height * k),
       name, title: rect.slot === "ammo" && name
         ? `${hint} — ${panelUnit().ammoCount ?? 0} шт.` : hint,
+      iconScale: k,
       className: rect.wearable || isMixing ? "" : "disabled",
       onClick: isMixing
         ? () => { carryMixing(); refresh(); onChange(); }
@@ -1302,7 +1551,7 @@ function renderTrade() {
         width: Math.round(cellSize.width * k),
         height: Math.round(cellSize.height * k),
         art: info()?.cell ?? null,
-        name, title: name ?? `ряд ${column}`,
+        name, title: name ?? `ряд ${column}`, iconScale: k,
         onClick: () => { if (name) tradeMove(column, index); },
       }));
     }
@@ -1363,18 +1612,91 @@ function characterText(k) {
     node.textContent = text;
     node.style.left = `${Math.round((x - (screen().panel_width ?? 140)) * k)}px`;
     node.style.top = `${Math.round(y * k)}px`;
-    node.style.transform = align === "right" ? "translateX(-100%)" : "none";
-    node.style.fontSize = `${Math.max(9, Math.round(15 * k))}px`;
+    node.style.transform = align === "right" ? "translateX(-100%)"
+      : align === "center" ? "translateX(-50%)" : "none";
+    // ШРИФТ МАСШТАБИРУЕТСЯ ВМЕСТЕ С ОКНОМ, без нижнего пола. Пол в девять
+    // точек ломал пропорцию: координаты сжимались с k, а буквы — нет, и на
+    // узком окне соседние числа и подписи налезали друг на друга. Движок
+    // растровый и не масштабируется вовсе, поэтому «доля текста в экране»
+    // и есть канон — как у экрана создания (styles.css, cqw-шрифт).
+    node.style.fontSize = `${15 * k}px`;
     nodes.push(node);
     return node;
   };
 
-  for (const label of data.labels ?? []) put(label.text, label.x, label.y);
+  // ПЕРВЫЕ ПЯТЬ ПОДПИСЕЙ — ЛЕВЫМ КРАЕМ, остальные правым. Это не свойство
+  // данных, а правило рендера движка: цикл 0x42AD0E рисует пять записей
+  // таблицы 0x46140C без вычета ширины строки, и лишь со следующей записи
+  // (0x42AD43) x уменьшается на ширину (0x441EB7). Пятёрка — «Уровень»,
+  // «Опыт», «Свободный опыт», «Следующий уровень» и шапка «базовая сейчас
+  // поднять»; ровнять их правым краем значит уложить «Опыт» на цифру
+  // уровня, а шапку — под рамку фона.
+  //
+  // ШАПКА — СЛОВАМИ ПО СТОЛБЦАМ. В движке это одна растровая строка, чьи
+  // пробелы подогнаны так, что слова ложатся над своими столбцами. Наш
+  // шрифт другой ширины, и целой строкой «поднять» повисало над столбцом
+  // «сейчас». Раскладываем сами: «базовая» и «сейчас» правым краем по
+  // столбцам чисел, «поднять» — серединой над столбцом «+» (полширины
+  // плюса — четыре точки движка).
+  const columns = (data.numbers ?? [])
+    .find((number) => number.field === "characteristic");
+  (data.labels ?? []).forEach((label, index) => {
+    const words = label.text.trim().split(/\s+/);
+    if (index === 4 && columns && words.length === 3) {
+      put(words[0], columns.x, label.y);
+      put(words[1], columns.current_x, label.y);
+      put(words[2], columns.raise_x + 4, label.y, { align: "center" });
+      return;
+    }
+    put(label.text, label.x, label.y, { align: index < 5 ? "left" : "right" });
+  });
 
   // ВЕСЬ экран — про одного юнита: первого выбранного (0x849514). Ему же
   // уходят и щелчки «поднять»: движок зовёт 0x4131FC/0x413268 с тем же
   // указателем, и свободный опыт у каждого юнита свой (+0x48).
   const who = panelUnit();
+
+  // ТРИ СТРОКИ-ТУМБЛЕРА (VA 0x42A8F4:126-180, щелчки — зоны 0x39…0x3F в
+  // 0x421690). Живут на битах байта состояния +0x19 показанного юнита:
+  //
+  //     «Выбор оружия»   Запрещен/Разрешен      бит 0x20 (взведён = запрещён:
+  //                      юнит сам не переключается между рукой и метательным —
+  //                      0x410A08:67 и 0x411F28 пробуют выстрел только при
+  //                      +0xEE == 1 ИЛИ снятом бите)
+  //     «Защищать героя» Да/Нет                 бит 0x10 (0x410010:46 — цель
+  //                      выбирается среди бьющих ВОЖАКА отряда)
+  //     «Лечебные смеси» Никогда/Здр<50/Здр<75  биты 0x01/0x02 — тумблер
+  //                      автопитья бальзама (0x414DF0, пороги 800/1200 сырых)
+  //
+  // Активное значение движок печатает второй палитрой (0x60054C); тексты и
+  // координаты значений — таблица указателей 0x45D3F4…0x45D40C. Подписи
+  // строк уже пришли в общем списке labels; здесь — значения и щелчки.
+  const toggles = data.toggles ?? [
+    { y: 380, field: "weaponLock", values: [
+      { text: "Запрещен", x: 0x145, value: true },
+      { text: "Разрешен", x: 0x1C7, value: false }] },
+    { y: 400, field: "defendLeader", values: [
+      { text: "Да", x: 0x145, value: true },
+      { text: "Нет", x: 0x1C7, value: false }] },
+    { y: 420, field: "healTrigger", values: [
+      { text: "Никогда", x: 0x145, value: 0 },
+      { text: "Здр<50", x: 0x1A4, value: 1 },
+      { text: "Здр<75", x: 0x1F9, value: 2 }] },
+  ];
+  for (const row of toggles) {
+    for (const option of row.values ?? []) {
+      const current = row.field === "healTrigger"
+        ? (who.healTrigger ?? 0) : Boolean(who[row.field]);
+      const active = current === option.value;
+      const mark = put(option.text, option.x, row.y,
+                       { align: "left", className: active ? "toggle on" : "toggle" });
+      mark.title = "переключить";
+      mark.addEventListener("click", () => {
+        who[row.field] = option.value;
+        refresh(); onChange();
+      });
+    }
+  }
   const values = {
     level: who.level ?? 1,
     experience: who.experience ?? 0,
@@ -1436,11 +1758,6 @@ function characterText(k) {
   }
   return nodes;
 }
-
-//: Сдвиг знака «−» от знака «+» на экране СОЗДАНИЯ героя (0x430DF4:
-//: 0x3CA − 0x3B6 = 20). На игровом экране персонажа «−» нет вовсе, поэтому
-//: здесь число лежит для будущего экрана создания.
-export const LOWER_DX = 20;
 
 // Семь итоговых полей экрана — продолжение той же таблицы 0x4612E4 (их
 // печатает та же ветка VA 0x42A8F4 следом за навыками): здоровье в
@@ -1516,20 +1833,27 @@ function characterExtras(who, data) {
 // иначе ближний (0x41A7D0) — оружие основной руки плюс, если в щитовом
 // гнезде оружие (вид записи 0), удар второй руки. Чара удара (+0x44)
 // прибавляется в КАЖДОМ вызове 0x41A7D0, поэтому при двух руках она
-// входит дважды. Удар пустой руки в движке считается из Силы FP-выражением,
-// съеденным Ghidra (SKILLS_AUDIT, В3) — пока, как и в бою, ноль.
+// входит дважды.
+//
+// ЭКРАН ЗОВЁТ ПОЛНЫЙ РАСЧЁТ СИЛЫ, а не поле класса: 0x41A7D0 — это
+// power оружия ПЛЮС член от текущей Силы и здоровья, ТРУНК(Сила × 0.04 ×
+// здоровье × 0.0625), а пустой рукой — тот же член с 0.02 (ветки сняты
+// дизасмом, см. COMBAT_SPEC §9в — «съеденное Ghidra FP-выражение» из
+// SKILLS_AUDIT В3 закрыто). Здесь стояло голое power: прокачка Силы
+// МЕНЯЛА урон в бою, но цифра «Удар» на экране не двигалась — оттого и
+// казалось, что Сила не работает; а кулак показывал ноль. Теперь экран
+// считает тем же strengthOf, что и бой.
 function strikeDisplay(who) {
   const ranged = Boolean(who.rangedMode) && Boolean(who.equipment?.ranged) &&
     Boolean(who.equipment?.ammo);
-  if (ranged) {
-    const ammo = actorItem(who.equipment?.ammo);
-    const bow = actorItem(who.equipment?.ranged);
-    return Math.max(0, (ammo?.power ?? 0) * (bow?.power ?? 0) + bonusStrike(who));
-  }
-  const weapon = actorItem(who.equipment?.hand);
-  let strike = (weapon?.power ?? 0) + bonusStrike(who);
+  if (ranged) return Math.max(0, strengthOf(who, "main"));
+  // Ближний удар считаем с погашенным режимом стрельбы: strengthOf при
+  // взведённом +0xEE ушёл бы в стрелковую ветку, а движок здесь зовёт
+  // именно ближний расчёт (нет боеприпаса — нет стрелкового удара).
+  const melee = who.rangedMode ? { ...who, rangedMode: false } : who;
+  let strike = strengthOf(melee, "main");
   const off = actorItem(who.equipment?.off_hand);
-  if (off && off.kind === 0) strike += (off.power ?? 0) + bonusStrike(who);
+  if (off && off.kind === 0) strike += strengthOf(melee, "off");
   return Math.max(0, strike);
 }
 

@@ -46,13 +46,13 @@ async function enter() {
 // не получилось — снялись тоже, чтобы не дёргать отказ на каждое касание.
 export function fullscreenArm() {
   if (!fullscreenWanted()) return false;
-  const события = ["pointerdown", "keydown"];
-  const попытка = () => {
-    for (const имя of события) window.removeEventListener(имя, попытка);
+  const events = ["pointerdown", "keydown"];
+  const attempt = () => {
+    for (const name of events) window.removeEventListener(name, attempt);
     if (!fullscreenNow()) enter();
   };
-  for (const имя of события) {
-    window.addEventListener(имя, попытка, { once: true, passive: true });
+  for (const name of events) {
+    window.addEventListener(name, attempt, { once: true, passive: true });
   }
   return true;
 }

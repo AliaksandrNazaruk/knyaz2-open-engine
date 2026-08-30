@@ -1,0 +1,4797 @@
+{
+ "canvas": 320,
+ "anchor": [
+  160,
+  250
+ ],
+ "dirs": [
+  "W",
+  "NW",
+  "N",
+  "NE",
+  "E",
+  "SE",
+  "S",
+  "SW"
+ ],
+ "direction_steps": [
+  [
+   -58,
+   0
+  ],
+  [
+   -29,
+   -16
+  ],
+  [
+   0,
+   -32
+  ],
+  [
+   29,
+   -16
+  ],
+  [
+   58,
+   0
+  ],
+  [
+   29,
+   16
+  ],
+  [
+   0,
+   32
+  ],
+  [
+   -29,
+   16
+  ]
+ ],
+ "blocks": {
+  "stand": {
+   "W": {
+    "count": 6,
+    "frames": [
+     {
+      "file": "stand_W_00.png",
+      "rec": 0,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -76,
+       23,
+       9
+      ]
+     },
+     {
+      "file": "stand_W_01.png",
+      "rec": 0,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -76,
+       23,
+       9
+      ]
+     },
+     {
+      "file": "stand_W_02.png",
+      "rec": 0,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -76,
+       23,
+       9
+      ]
+     },
+     {
+      "file": "stand_W_03.png",
+      "rec": 0,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -76,
+       23,
+       9
+      ]
+     },
+     {
+      "file": "stand_W_04.png",
+      "rec": 0,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -76,
+       23,
+       9
+      ]
+     },
+     {
+      "file": "stand_W_05.png",
+      "rec": 0,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -76,
+       23,
+       9
+      ]
+     }
+    ]
+   },
+   "NW": {
+    "count": 6,
+    "frames": [
+     {
+      "file": "stand_NW_00.png",
+      "rec": 1,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -78,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "stand_NW_01.png",
+      "rec": 1,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -78,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "stand_NW_02.png",
+      "rec": 1,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -78,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "stand_NW_03.png",
+      "rec": 1,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -78,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "stand_NW_04.png",
+      "rec": 1,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -78,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "stand_NW_05.png",
+      "rec": 1,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -78,
+       30,
+       6
+      ]
+     }
+    ]
+   },
+   "N": {
+    "count": 6,
+    "frames": [
+     {
+      "file": "stand_N_00.png",
+      "rec": 2,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       27,
+       12
+      ]
+     },
+     {
+      "file": "stand_N_01.png",
+      "rec": 2,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       27,
+       12
+      ]
+     },
+     {
+      "file": "stand_N_02.png",
+      "rec": 2,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       27,
+       12
+      ]
+     },
+     {
+      "file": "stand_N_03.png",
+      "rec": 2,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       27,
+       12
+      ]
+     },
+     {
+      "file": "stand_N_04.png",
+      "rec": 2,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       27,
+       12
+      ]
+     },
+     {
+      "file": "stand_N_05.png",
+      "rec": 2,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       27,
+       12
+      ]
+     }
+    ]
+   },
+   "NE": {
+    "count": 6,
+    "frames": [
+     {
+      "file": "stand_NE_00.png",
+      "rec": 3,
+      "layers": 1,
+      "bbox": [
+       -11,
+       -76,
+       23,
+       13
+      ]
+     },
+     {
+      "file": "stand_NE_01.png",
+      "rec": 3,
+      "layers": 1,
+      "bbox": [
+       -11,
+       -76,
+       23,
+       13
+      ]
+     },
+     {
+      "file": "stand_NE_02.png",
+      "rec": 3,
+      "layers": 1,
+      "bbox": [
+       -11,
+       -76,
+       23,
+       13
+      ]
+     },
+     {
+      "file": "stand_NE_03.png",
+      "rec": 3,
+      "layers": 1,
+      "bbox": [
+       -11,
+       -76,
+       23,
+       13
+      ]
+     },
+     {
+      "file": "stand_NE_04.png",
+      "rec": 3,
+      "layers": 1,
+      "bbox": [
+       -11,
+       -76,
+       23,
+       13
+      ]
+     },
+     {
+      "file": "stand_NE_05.png",
+      "rec": 3,
+      "layers": 1,
+      "bbox": [
+       -11,
+       -76,
+       23,
+       13
+      ]
+     }
+    ]
+   },
+   "E": {
+    "count": 6,
+    "frames": [
+     {
+      "file": "stand_E_00.png",
+      "rec": 4,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       27,
+       10
+      ]
+     },
+     {
+      "file": "stand_E_01.png",
+      "rec": 4,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       27,
+       10
+      ]
+     },
+     {
+      "file": "stand_E_02.png",
+      "rec": 4,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       27,
+       10
+      ]
+     },
+     {
+      "file": "stand_E_03.png",
+      "rec": 4,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       27,
+       10
+      ]
+     },
+     {
+      "file": "stand_E_04.png",
+      "rec": 4,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       27,
+       10
+      ]
+     },
+     {
+      "file": "stand_E_05.png",
+      "rec": 4,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       27,
+       10
+      ]
+     }
+    ]
+   },
+   "SE": {
+    "count": 6,
+    "frames": [
+     {
+      "file": "stand_SE_00.png",
+      "rec": 5,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -72,
+       28,
+       7
+      ]
+     },
+     {
+      "file": "stand_SE_01.png",
+      "rec": 5,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -72,
+       28,
+       7
+      ]
+     },
+     {
+      "file": "stand_SE_02.png",
+      "rec": 5,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -72,
+       28,
+       7
+      ]
+     },
+     {
+      "file": "stand_SE_03.png",
+      "rec": 5,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -72,
+       28,
+       7
+      ]
+     },
+     {
+      "file": "stand_SE_04.png",
+      "rec": 5,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -72,
+       28,
+       7
+      ]
+     },
+     {
+      "file": "stand_SE_05.png",
+      "rec": 5,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -72,
+       28,
+       7
+      ]
+     }
+    ]
+   },
+   "S": {
+    "count": 6,
+    "frames": [
+     {
+      "file": "stand_S_00.png",
+      "rec": 6,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -72,
+       16,
+       14
+      ]
+     },
+     {
+      "file": "stand_S_01.png",
+      "rec": 6,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -72,
+       16,
+       14
+      ]
+     },
+     {
+      "file": "stand_S_02.png",
+      "rec": 6,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -72,
+       16,
+       14
+      ]
+     },
+     {
+      "file": "stand_S_03.png",
+      "rec": 6,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -72,
+       16,
+       14
+      ]
+     },
+     {
+      "file": "stand_S_04.png",
+      "rec": 6,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -72,
+       16,
+       14
+      ]
+     },
+     {
+      "file": "stand_S_05.png",
+      "rec": 6,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -72,
+       16,
+       14
+      ]
+     }
+    ]
+   },
+   "SW": {
+    "count": 6,
+    "frames": [
+     {
+      "file": "stand_SW_00.png",
+      "rec": 7,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       13,
+       15
+      ]
+     },
+     {
+      "file": "stand_SW_01.png",
+      "rec": 7,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       13,
+       15
+      ]
+     },
+     {
+      "file": "stand_SW_02.png",
+      "rec": 7,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       13,
+       15
+      ]
+     },
+     {
+      "file": "stand_SW_03.png",
+      "rec": 7,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       13,
+       15
+      ]
+     },
+     {
+      "file": "stand_SW_04.png",
+      "rec": 7,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       13,
+       15
+      ]
+     },
+     {
+      "file": "stand_SW_05.png",
+      "rec": 7,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       13,
+       15
+      ]
+     }
+    ]
+   }
+  },
+  "walk": {
+   "W": {
+    "count": 14,
+    "frames": [
+     {
+      "file": "walk_W_00.png",
+      "rec": 8,
+      "layers": 1,
+      "bbox": [
+       -27,
+       -76,
+       19,
+       4
+      ]
+     },
+     {
+      "file": "walk_W_01.png",
+      "rec": 9,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -76,
+       20,
+       4
+      ]
+     },
+     {
+      "file": "walk_W_02.png",
+      "rec": 10,
+      "layers": 1,
+      "bbox": [
+       -24,
+       -75,
+       20,
+       4
+      ]
+     },
+     {
+      "file": "walk_W_03.png",
+      "rec": 11,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -75,
+       21,
+       5
+      ]
+     },
+     {
+      "file": "walk_W_04.png",
+      "rec": 12,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -75,
+       21,
+       5
+      ]
+     },
+     {
+      "file": "walk_W_05.png",
+      "rec": 13,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -76,
+       16,
+       5
+      ]
+     },
+     {
+      "file": "walk_W_06.png",
+      "rec": 14,
+      "layers": 1,
+      "bbox": [
+       -24,
+       -77,
+       12,
+       4
+      ]
+     },
+     {
+      "file": "walk_W_07.png",
+      "rec": 15,
+      "layers": 1,
+      "bbox": [
+       -22,
+       -78,
+       14,
+       3
+      ]
+     },
+     {
+      "file": "walk_W_08.png",
+      "rec": 16,
+      "layers": 1,
+      "bbox": [
+       -27,
+       -77,
+       15,
+       2
+      ]
+     },
+     {
+      "file": "walk_W_09.png",
+      "rec": 17,
+      "layers": 1,
+      "bbox": [
+       -32,
+       -76,
+       18,
+       2
+      ]
+     },
+     {
+      "file": "walk_W_10.png",
+      "rec": 18,
+      "layers": 1,
+      "bbox": [
+       -27,
+       -75,
+       23,
+       4
+      ]
+     },
+     {
+      "file": "walk_W_11.png",
+      "rec": 19,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -75,
+       25,
+       5
+      ]
+     },
+     {
+      "file": "walk_W_12.png",
+      "rec": 20,
+      "layers": 1,
+      "bbox": [
+       -27,
+       -76,
+       21,
+       4
+      ]
+     },
+     {
+      "file": "walk_W_13.png",
+      "rec": 21,
+      "layers": 1,
+      "bbox": [
+       -27,
+       -76,
+       17,
+       4
+      ]
+     }
+    ]
+   },
+   "NW": {
+    "count": 14,
+    "frames": [
+     {
+      "file": "walk_NW_00.png",
+      "rec": 22,
+      "layers": 1,
+      "bbox": [
+       -23,
+       -80,
+       31,
+       4
+      ]
+     },
+     {
+      "file": "walk_NW_01.png",
+      "rec": 23,
+      "layers": 1,
+      "bbox": [
+       -22,
+       -79,
+       32,
+       6
+      ]
+     },
+     {
+      "file": "walk_NW_02.png",
+      "rec": 24,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -78,
+       32,
+       7
+      ]
+     },
+     {
+      "file": "walk_NW_03.png",
+      "rec": 25,
+      "layers": 1,
+      "bbox": [
+       -22,
+       -78,
+       30,
+       7
+      ]
+     },
+     {
+      "file": "walk_NW_04.png",
+      "rec": 26,
+      "layers": 1,
+      "bbox": [
+       -24,
+       -79,
+       28,
+       8
+      ]
+     },
+     {
+      "file": "walk_NW_05.png",
+      "rec": 27,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -80,
+       27,
+       7
+      ]
+     },
+     {
+      "file": "walk_NW_06.png",
+      "rec": 28,
+      "layers": 1,
+      "bbox": [
+       -24,
+       -81,
+       27,
+       3
+      ]
+     },
+     {
+      "file": "walk_NW_07.png",
+      "rec": 29,
+      "layers": 1,
+      "bbox": [
+       -23,
+       -80,
+       29,
+       3
+      ]
+     },
+     {
+      "file": "walk_NW_08.png",
+      "rec": 30,
+      "layers": 1,
+      "bbox": [
+       -22,
+       -79,
+       30,
+       5
+      ]
+     },
+     {
+      "file": "walk_NW_09.png",
+      "rec": 31,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -78,
+       31,
+       6
+      ]
+     },
+     {
+      "file": "walk_NW_10.png",
+      "rec": 32,
+      "layers": 1,
+      "bbox": [
+       -23,
+       -78,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "walk_NW_11.png",
+      "rec": 33,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -79,
+       29,
+       6
+      ]
+     },
+     {
+      "file": "walk_NW_12.png",
+      "rec": 34,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -80,
+       29,
+       5
+      ]
+     },
+     {
+      "file": "walk_NW_13.png",
+      "rec": 35,
+      "layers": 1,
+      "bbox": [
+       -24,
+       -80,
+       30,
+       2
+      ]
+     }
+    ]
+   },
+   "N": {
+    "count": 14,
+    "frames": [
+     {
+      "file": "walk_N_00.png",
+      "rec": 36,
+      "layers": 1,
+      "bbox": [
+       -12,
+       -79,
+       30,
+       4
+      ]
+     },
+     {
+      "file": "walk_N_01.png",
+      "rec": 37,
+      "layers": 1,
+      "bbox": [
+       -13,
+       -78,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "walk_N_02.png",
+      "rec": 38,
+      "layers": 1,
+      "bbox": [
+       -13,
+       -77,
+       29,
+       8
+      ]
+     },
+     {
+      "file": "walk_N_03.png",
+      "rec": 39,
+      "layers": 1,
+      "bbox": [
+       -13,
+       -77,
+       29,
+       8
+      ]
+     },
+     {
+      "file": "walk_N_04.png",
+      "rec": 40,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       30,
+       7
+      ]
+     },
+     {
+      "file": "walk_N_05.png",
+      "rec": 41,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -79,
+       31,
+       7
+      ]
+     },
+     {
+      "file": "walk_N_06.png",
+      "rec": 42,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -80,
+       32,
+       2
+      ]
+     },
+     {
+      "file": "walk_N_07.png",
+      "rec": 43,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -79,
+       32,
+       5
+      ]
+     },
+     {
+      "file": "walk_N_08.png",
+      "rec": 44,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       33,
+       7
+      ]
+     },
+     {
+      "file": "walk_N_09.png",
+      "rec": 45,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -77,
+       33,
+       9
+      ]
+     },
+     {
+      "file": "walk_N_10.png",
+      "rec": 46,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -77,
+       32,
+       10
+      ]
+     },
+     {
+      "file": "walk_N_11.png",
+      "rec": 47,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       31,
+       10
+      ]
+     },
+     {
+      "file": "walk_N_12.png",
+      "rec": 48,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -80,
+       30,
+       9
+      ]
+     },
+     {
+      "file": "walk_N_13.png",
+      "rec": 49,
+      "layers": 1,
+      "bbox": [
+       -13,
+       -80,
+       30,
+       5
+      ]
+     }
+    ]
+   },
+   "NE": {
+    "count": 14,
+    "frames": [
+     {
+      "file": "walk_NE_00.png",
+      "rec": 50,
+      "layers": 1,
+      "bbox": [
+       -10,
+       -75,
+       20,
+       3
+      ]
+     },
+     {
+      "file": "walk_NE_01.png",
+      "rec": 51,
+      "layers": 1,
+      "bbox": [
+       -12,
+       -74,
+       20,
+       4
+      ]
+     },
+     {
+      "file": "walk_NE_02.png",
+      "rec": 52,
+      "layers": 1,
+      "bbox": [
+       -13,
+       -73,
+       25,
+       5
+      ]
+     },
+     {
+      "file": "walk_NE_03.png",
+      "rec": 53,
+      "layers": 1,
+      "bbox": [
+       -16,
+       -73,
+       26,
+       5
+      ]
+     },
+     {
+      "file": "walk_NE_04.png",
+      "rec": 54,
+      "layers": 1,
+      "bbox": [
+       -17,
+       -74,
+       23,
+       5
+      ]
+     },
+     {
+      "file": "walk_NE_05.png",
+      "rec": 55,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -75,
+       22,
+       4
+      ]
+     },
+     {
+      "file": "walk_NE_06.png",
+      "rec": 56,
+      "layers": 1,
+      "bbox": [
+       -9,
+       -76,
+       21,
+       4
+      ]
+     },
+     {
+      "file": "walk_NE_07.png",
+      "rec": 57,
+      "layers": 1,
+      "bbox": [
+       -7,
+       -75,
+       20,
+       6
+      ]
+     },
+     {
+      "file": "walk_NE_08.png",
+      "rec": 58,
+      "layers": 1,
+      "bbox": [
+       -8,
+       -74,
+       20,
+       8
+      ]
+     },
+     {
+      "file": "walk_NE_09.png",
+      "rec": 59,
+      "layers": 1,
+      "bbox": [
+       -10,
+       -73,
+       23,
+       8
+      ]
+     },
+     {
+      "file": "walk_NE_10.png",
+      "rec": 60,
+      "layers": 1,
+      "bbox": [
+       -13,
+       -73,
+       20,
+       9
+      ]
+     },
+     {
+      "file": "walk_NE_11.png",
+      "rec": 61,
+      "layers": 1,
+      "bbox": [
+       -15,
+       -74,
+       19,
+       10
+      ]
+     },
+     {
+      "file": "walk_NE_12.png",
+      "rec": 62,
+      "layers": 1,
+      "bbox": [
+       -12,
+       -76,
+       19,
+       9
+      ]
+     },
+     {
+      "file": "walk_NE_13.png",
+      "rec": 63,
+      "layers": 1,
+      "bbox": [
+       -8,
+       -76,
+       20,
+       7
+      ]
+     }
+    ]
+   },
+   "E": {
+    "count": 14,
+    "frames": [
+     {
+      "file": "walk_E_00.png",
+      "rec": 64,
+      "layers": 1,
+      "bbox": [
+       -17,
+       -70,
+       29,
+       6
+      ]
+     },
+     {
+      "file": "walk_E_01.png",
+      "rec": 65,
+      "layers": 1,
+      "bbox": [
+       -18,
+       -70,
+       27,
+       5
+      ]
+     },
+     {
+      "file": "walk_E_02.png",
+      "rec": 66,
+      "layers": 1,
+      "bbox": [
+       -18,
+       -70,
+       26,
+       4
+      ]
+     },
+     {
+      "file": "walk_E_03.png",
+      "rec": 67,
+      "layers": 1,
+      "bbox": [
+       -19,
+       -69,
+       28,
+       5
+      ]
+     },
+     {
+      "file": "walk_E_04.png",
+      "rec": 68,
+      "layers": 1,
+      "bbox": [
+       -19,
+       -70,
+       27,
+       5
+      ]
+     },
+     {
+      "file": "walk_E_05.png",
+      "rec": 69,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -70,
+       27,
+       6
+      ]
+     },
+     {
+      "file": "walk_E_06.png",
+      "rec": 70,
+      "layers": 1,
+      "bbox": [
+       -10,
+       -71,
+       26,
+       6
+      ]
+     },
+     {
+      "file": "walk_E_07.png",
+      "rec": 71,
+      "layers": 1,
+      "bbox": [
+       -12,
+       -71,
+       24,
+       6
+      ]
+     },
+     {
+      "file": "walk_E_08.png",
+      "rec": 72,
+      "layers": 1,
+      "bbox": [
+       -13,
+       -70,
+       29,
+       6
+      ]
+     },
+     {
+      "file": "walk_E_09.png",
+      "rec": 73,
+      "layers": 1,
+      "bbox": [
+       -16,
+       -69,
+       34,
+       5
+      ]
+     },
+     {
+      "file": "walk_E_10.png",
+      "rec": 74,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -68,
+       29,
+       6
+      ]
+     },
+     {
+      "file": "walk_E_11.png",
+      "rec": 75,
+      "layers": 1,
+      "bbox": [
+       -24,
+       -69,
+       28,
+       6
+      ]
+     },
+     {
+      "file": "walk_E_12.png",
+      "rec": 76,
+      "layers": 1,
+      "bbox": [
+       -19,
+       -70,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "walk_E_13.png",
+      "rec": 77,
+      "layers": 1,
+      "bbox": [
+       -15,
+       -71,
+       29,
+       5
+      ]
+     }
+    ]
+   },
+   "SE": {
+    "count": 14,
+    "frames": [
+     {
+      "file": "walk_SE_00.png",
+      "rec": 78,
+      "layers": 1,
+      "bbox": [
+       -29,
+       -68,
+       25,
+       7
+      ]
+     },
+     {
+      "file": "walk_SE_01.png",
+      "rec": 79,
+      "layers": 1,
+      "bbox": [
+       -30,
+       -68,
+       24,
+       9
+      ]
+     },
+     {
+      "file": "walk_SE_02.png",
+      "rec": 80,
+      "layers": 1,
+      "bbox": [
+       -30,
+       -68,
+       23,
+       10
+      ]
+     },
+     {
+      "file": "walk_SE_03.png",
+      "rec": 81,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -67,
+       24,
+       9
+      ]
+     },
+     {
+      "file": "walk_SE_04.png",
+      "rec": 82,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -67,
+       26,
+       10
+      ]
+     },
+     {
+      "file": "walk_SE_05.png",
+      "rec": 83,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -67,
+       27,
+       11
+      ]
+     },
+     {
+      "file": "walk_SE_06.png",
+      "rec": 84,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -68,
+       26,
+       9
+      ]
+     },
+     {
+      "file": "walk_SE_07.png",
+      "rec": 85,
+      "layers": 1,
+      "bbox": [
+       -27,
+       -69,
+       25,
+       7
+      ]
+     },
+     {
+      "file": "walk_SE_08.png",
+      "rec": 86,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -68,
+       24,
+       8
+      ]
+     },
+     {
+      "file": "walk_SE_09.png",
+      "rec": 87,
+      "layers": 1,
+      "bbox": [
+       -29,
+       -67,
+       27,
+       8
+      ]
+     },
+     {
+      "file": "walk_SE_10.png",
+      "rec": 88,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -66,
+       25,
+       8
+      ]
+     },
+     {
+      "file": "walk_SE_11.png",
+      "rec": 89,
+      "layers": 1,
+      "bbox": [
+       -27,
+       -66,
+       27,
+       9
+      ]
+     },
+     {
+      "file": "walk_SE_12.png",
+      "rec": 90,
+      "layers": 1,
+      "bbox": [
+       -27,
+       -67,
+       27,
+       8
+      ]
+     },
+     {
+      "file": "walk_SE_13.png",
+      "rec": 91,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -68,
+       26,
+       6
+      ]
+     }
+    ]
+   },
+   "S": {
+    "count": 14,
+    "frames": [
+     {
+      "file": "walk_S_00.png",
+      "rec": 92,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -68,
+       15,
+       6
+      ]
+     },
+     {
+      "file": "walk_S_01.png",
+      "rec": 93,
+      "layers": 1,
+      "bbox": [
+       -27,
+       -69,
+       15,
+       8
+      ]
+     },
+     {
+      "file": "walk_S_02.png",
+      "rec": 94,
+      "layers": 1,
+      "bbox": [
+       -27,
+       -68,
+       15,
+       10
+      ]
+     },
+     {
+      "file": "walk_S_03.png",
+      "rec": 95,
+      "layers": 1,
+      "bbox": [
+       -27,
+       -68,
+       15,
+       10
+      ]
+     },
+     {
+      "file": "walk_S_04.png",
+      "rec": 96,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -67,
+       16,
+       11
+      ]
+     },
+     {
+      "file": "walk_S_05.png",
+      "rec": 97,
+      "layers": 1,
+      "bbox": [
+       -29,
+       -68,
+       16,
+       11
+      ]
+     },
+     {
+      "file": "walk_S_06.png",
+      "rec": 98,
+      "layers": 1,
+      "bbox": [
+       -30,
+       -69,
+       16,
+       8
+      ]
+     },
+     {
+      "file": "walk_S_07.png",
+      "rec": 99,
+      "layers": 1,
+      "bbox": [
+       -30,
+       -70,
+       16,
+       6
+      ]
+     },
+     {
+      "file": "walk_S_08.png",
+      "rec": 100,
+      "layers": 1,
+      "bbox": [
+       -30,
+       -69,
+       16,
+       12
+      ]
+     },
+     {
+      "file": "walk_S_09.png",
+      "rec": 101,
+      "layers": 1,
+      "bbox": [
+       -30,
+       -68,
+       16,
+       13
+      ]
+     },
+     {
+      "file": "walk_S_10.png",
+      "rec": 102,
+      "layers": 1,
+      "bbox": [
+       -30,
+       -67,
+       17,
+       13
+      ]
+     },
+     {
+      "file": "walk_S_11.png",
+      "rec": 103,
+      "layers": 1,
+      "bbox": [
+       -29,
+       -66,
+       16,
+       12
+      ]
+     },
+     {
+      "file": "walk_S_12.png",
+      "rec": 104,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -67,
+       16,
+       11
+      ]
+     },
+     {
+      "file": "walk_S_13.png",
+      "rec": 105,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -68,
+       15,
+       8
+      ]
+     }
+    ]
+   },
+   "SW": {
+    "count": 14,
+    "frames": [
+     {
+      "file": "walk_SW_00.png",
+      "rec": 106,
+      "layers": 1,
+      "bbox": [
+       -18,
+       -72,
+       12,
+       6
+      ]
+     },
+     {
+      "file": "walk_SW_01.png",
+      "rec": 107,
+      "layers": 1,
+      "bbox": [
+       -18,
+       -72,
+       14,
+       4
+      ]
+     },
+     {
+      "file": "walk_SW_02.png",
+      "rec": 108,
+      "layers": 1,
+      "bbox": [
+       -23,
+       -71,
+       15,
+       4
+      ]
+     },
+     {
+      "file": "walk_SW_03.png",
+      "rec": 109,
+      "layers": 1,
+      "bbox": [
+       -24,
+       -71,
+       18,
+       5
+      ]
+     },
+     {
+      "file": "walk_SW_04.png",
+      "rec": 110,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -70,
+       19,
+       6
+      ]
+     },
+     {
+      "file": "walk_SW_05.png",
+      "rec": 111,
+      "layers": 1,
+      "bbox": [
+       -20,
+       -71,
+       16,
+       7
+      ]
+     },
+     {
+      "file": "walk_SW_06.png",
+      "rec": 112,
+      "layers": 1,
+      "bbox": [
+       -19,
+       -73,
+       11,
+       5
+      ]
+     },
+     {
+      "file": "walk_SW_07.png",
+      "rec": 113,
+      "layers": 1,
+      "bbox": [
+       -18,
+       -73,
+       9,
+       6
+      ]
+     },
+     {
+      "file": "walk_SW_08.png",
+      "rec": 114,
+      "layers": 1,
+      "bbox": [
+       -18,
+       -73,
+       10,
+       10
+      ]
+     },
+     {
+      "file": "walk_SW_09.png",
+      "rec": 115,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -72,
+       11,
+       10
+      ]
+     },
+     {
+      "file": "walk_SW_10.png",
+      "rec": 116,
+      "layers": 1,
+      "bbox": [
+       -18,
+       -70,
+       15,
+       11
+      ]
+     },
+     {
+      "file": "walk_SW_11.png",
+      "rec": 117,
+      "layers": 1,
+      "bbox": [
+       -16,
+       -70,
+       17,
+       10
+      ]
+     },
+     {
+      "file": "walk_SW_12.png",
+      "rec": 118,
+      "layers": 1,
+      "bbox": [
+       -17,
+       -70,
+       14,
+       9
+      ]
+     },
+     {
+      "file": "walk_SW_13.png",
+      "rec": 119,
+      "layers": 1,
+      "bbox": [
+       -18,
+       -71,
+       10,
+       7
+      ]
+     }
+    ]
+   }
+  },
+  "idle": {
+   "W": {
+    "count": 23,
+    "frames": [
+     {
+      "file": "idle_W_00.png",
+      "rec": 495,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -76,
+       23,
+       9
+      ]
+     },
+     {
+      "file": "idle_W_01.png",
+      "rec": 495,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -76,
+       23,
+       9
+      ]
+     },
+     {
+      "file": "idle_W_02.png",
+      "rec": 496,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -76,
+       23,
+       9
+      ]
+     },
+     {
+      "file": "idle_W_03.png",
+      "rec": 496,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -76,
+       23,
+       9
+      ]
+     },
+     {
+      "file": "idle_W_04.png",
+      "rec": 497,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -76,
+       23,
+       9
+      ]
+     },
+     {
+      "file": "idle_W_05.png",
+      "rec": 497,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -76,
+       23,
+       9
+      ]
+     },
+     {
+      "file": "idle_W_06.png",
+      "rec": 497,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -76,
+       23,
+       9
+      ]
+     },
+     {
+      "file": "idle_W_07.png",
+      "rec": 497,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -76,
+       23,
+       9
+      ]
+     },
+     {
+      "file": "idle_W_08.png",
+      "rec": 497,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -76,
+       23,
+       9
+      ]
+     },
+     {
+      "file": "idle_W_09.png",
+      "rec": 497,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -76,
+       23,
+       9
+      ]
+     },
+     {
+      "file": "idle_W_10.png",
+      "rec": 497,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -76,
+       23,
+       9
+      ]
+     },
+     {
+      "file": "idle_W_11.png",
+      "rec": 496,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -76,
+       23,
+       9
+      ]
+     },
+     {
+      "file": "idle_W_12.png",
+      "rec": 496,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -76,
+       23,
+       9
+      ]
+     },
+     {
+      "file": "idle_W_13.png",
+      "rec": 495,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -76,
+       23,
+       9
+      ]
+     },
+     {
+      "file": "idle_W_14.png",
+      "rec": 495,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -76,
+       23,
+       9
+      ]
+     },
+     {
+      "file": "idle_W_15.png",
+      "rec": 0,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -76,
+       23,
+       9
+      ]
+     },
+     {
+      "file": "idle_W_16.png",
+      "rec": 0,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -76,
+       23,
+       9
+      ]
+     },
+     {
+      "file": "idle_W_17.png",
+      "rec": 498,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -77,
+       23,
+       9
+      ]
+     },
+     {
+      "file": "idle_W_18.png",
+      "rec": 498,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -77,
+       23,
+       9
+      ]
+     },
+     {
+      "file": "idle_W_19.png",
+      "rec": 499,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -77,
+       23,
+       9
+      ]
+     },
+     {
+      "file": "idle_W_20.png",
+      "rec": 499,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -77,
+       23,
+       9
+      ]
+     },
+     {
+      "file": "idle_W_21.png",
+      "rec": 499,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -77,
+       23,
+       9
+      ]
+     },
+     {
+      "file": "idle_W_22.png",
+      "rec": 499,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -77,
+       23,
+       9
+      ]
+     }
+    ]
+   },
+   "NW": {
+    "count": 23,
+    "frames": [
+     {
+      "file": "idle_NW_00.png",
+      "rec": 500,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -78,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "idle_NW_01.png",
+      "rec": 500,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -78,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "idle_NW_02.png",
+      "rec": 501,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -78,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "idle_NW_03.png",
+      "rec": 501,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -78,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "idle_NW_04.png",
+      "rec": 502,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -78,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "idle_NW_05.png",
+      "rec": 502,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -78,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "idle_NW_06.png",
+      "rec": 502,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -78,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "idle_NW_07.png",
+      "rec": 502,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -78,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "idle_NW_08.png",
+      "rec": 502,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -78,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "idle_NW_09.png",
+      "rec": 502,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -78,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "idle_NW_10.png",
+      "rec": 502,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -78,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "idle_NW_11.png",
+      "rec": 501,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -78,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "idle_NW_12.png",
+      "rec": 501,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -78,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "idle_NW_13.png",
+      "rec": 500,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -78,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "idle_NW_14.png",
+      "rec": 500,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -78,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "idle_NW_15.png",
+      "rec": 1,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -78,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "idle_NW_16.png",
+      "rec": 1,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -78,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "idle_NW_17.png",
+      "rec": 503,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -79,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "idle_NW_18.png",
+      "rec": 503,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -79,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "idle_NW_19.png",
+      "rec": 504,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -79,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "idle_NW_20.png",
+      "rec": 504,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -79,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "idle_NW_21.png",
+      "rec": 504,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -79,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "idle_NW_22.png",
+      "rec": 504,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -79,
+       30,
+       6
+      ]
+     }
+    ]
+   },
+   "N": {
+    "count": 23,
+    "frames": [
+     {
+      "file": "idle_N_00.png",
+      "rec": 505,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       27,
+       12
+      ]
+     },
+     {
+      "file": "idle_N_01.png",
+      "rec": 505,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       27,
+       12
+      ]
+     },
+     {
+      "file": "idle_N_02.png",
+      "rec": 506,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       27,
+       12
+      ]
+     },
+     {
+      "file": "idle_N_03.png",
+      "rec": 506,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       27,
+       12
+      ]
+     },
+     {
+      "file": "idle_N_04.png",
+      "rec": 507,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       27,
+       12
+      ]
+     },
+     {
+      "file": "idle_N_05.png",
+      "rec": 507,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       27,
+       12
+      ]
+     },
+     {
+      "file": "idle_N_06.png",
+      "rec": 507,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       27,
+       12
+      ]
+     },
+     {
+      "file": "idle_N_07.png",
+      "rec": 507,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       27,
+       12
+      ]
+     },
+     {
+      "file": "idle_N_08.png",
+      "rec": 507,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       27,
+       12
+      ]
+     },
+     {
+      "file": "idle_N_09.png",
+      "rec": 507,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       27,
+       12
+      ]
+     },
+     {
+      "file": "idle_N_10.png",
+      "rec": 507,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       27,
+       12
+      ]
+     },
+     {
+      "file": "idle_N_11.png",
+      "rec": 506,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       27,
+       12
+      ]
+     },
+     {
+      "file": "idle_N_12.png",
+      "rec": 506,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       27,
+       12
+      ]
+     },
+     {
+      "file": "idle_N_13.png",
+      "rec": 505,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       27,
+       12
+      ]
+     },
+     {
+      "file": "idle_N_14.png",
+      "rec": 505,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       27,
+       12
+      ]
+     },
+     {
+      "file": "idle_N_15.png",
+      "rec": 2,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       27,
+       12
+      ]
+     },
+     {
+      "file": "idle_N_16.png",
+      "rec": 2,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       27,
+       12
+      ]
+     },
+     {
+      "file": "idle_N_17.png",
+      "rec": 508,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       27,
+       12
+      ]
+     },
+     {
+      "file": "idle_N_18.png",
+      "rec": 508,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       27,
+       12
+      ]
+     },
+     {
+      "file": "idle_N_19.png",
+      "rec": 509,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       28,
+       12
+      ]
+     },
+     {
+      "file": "idle_N_20.png",
+      "rec": 509,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       28,
+       12
+      ]
+     },
+     {
+      "file": "idle_N_21.png",
+      "rec": 509,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       28,
+       12
+      ]
+     },
+     {
+      "file": "idle_N_22.png",
+      "rec": 509,
+      "layers": 1,
+      "bbox": [
+       -14,
+       -78,
+       28,
+       12
+      ]
+     }
+    ]
+   },
+   "NE": {
+    "count": 23,
+    "frames": [
+     {
+      "file": "idle_NE_00.png",
+      "rec": 510,
+      "layers": 1,
+      "bbox": [
+       -12,
+       -76,
+       23,
+       13
+      ]
+     },
+     {
+      "file": "idle_NE_01.png",
+      "rec": 510,
+      "layers": 1,
+      "bbox": [
+       -12,
+       -76,
+       23,
+       13
+      ]
+     },
+     {
+      "file": "idle_NE_02.png",
+      "rec": 511,
+      "layers": 1,
+      "bbox": [
+       -12,
+       -76,
+       23,
+       13
+      ]
+     },
+     {
+      "file": "idle_NE_03.png",
+      "rec": 511,
+      "layers": 1,
+      "bbox": [
+       -12,
+       -76,
+       23,
+       13
+      ]
+     },
+     {
+      "file": "idle_NE_04.png",
+      "rec": 512,
+      "layers": 1,
+      "bbox": [
+       -12,
+       -77,
+       23,
+       13
+      ]
+     },
+     {
+      "file": "idle_NE_05.png",
+      "rec": 512,
+      "layers": 1,
+      "bbox": [
+       -12,
+       -77,
+       23,
+       13
+      ]
+     },
+     {
+      "file": "idle_NE_06.png",
+      "rec": 512,
+      "layers": 1,
+      "bbox": [
+       -12,
+       -77,
+       23,
+       13
+      ]
+     },
+     {
+      "file": "idle_NE_07.png",
+      "rec": 512,
+      "layers": 1,
+      "bbox": [
+       -12,
+       -77,
+       23,
+       13
+      ]
+     },
+     {
+      "file": "idle_NE_08.png",
+      "rec": 512,
+      "layers": 1,
+      "bbox": [
+       -12,
+       -77,
+       23,
+       13
+      ]
+     },
+     {
+      "file": "idle_NE_09.png",
+      "rec": 512,
+      "layers": 1,
+      "bbox": [
+       -12,
+       -77,
+       23,
+       13
+      ]
+     },
+     {
+      "file": "idle_NE_10.png",
+      "rec": 512,
+      "layers": 1,
+      "bbox": [
+       -12,
+       -77,
+       23,
+       13
+      ]
+     },
+     {
+      "file": "idle_NE_11.png",
+      "rec": 511,
+      "layers": 1,
+      "bbox": [
+       -12,
+       -76,
+       23,
+       13
+      ]
+     },
+     {
+      "file": "idle_NE_12.png",
+      "rec": 511,
+      "layers": 1,
+      "bbox": [
+       -12,
+       -76,
+       23,
+       13
+      ]
+     },
+     {
+      "file": "idle_NE_13.png",
+      "rec": 510,
+      "layers": 1,
+      "bbox": [
+       -12,
+       -76,
+       23,
+       13
+      ]
+     },
+     {
+      "file": "idle_NE_14.png",
+      "rec": 510,
+      "layers": 1,
+      "bbox": [
+       -12,
+       -76,
+       23,
+       13
+      ]
+     },
+     {
+      "file": "idle_NE_15.png",
+      "rec": 3,
+      "layers": 1,
+      "bbox": [
+       -11,
+       -76,
+       23,
+       13
+      ]
+     },
+     {
+      "file": "idle_NE_16.png",
+      "rec": 3,
+      "layers": 1,
+      "bbox": [
+       -11,
+       -76,
+       23,
+       13
+      ]
+     },
+     {
+      "file": "idle_NE_17.png",
+      "rec": 513,
+      "layers": 1,
+      "bbox": [
+       -11,
+       -76,
+       23,
+       13
+      ]
+     },
+     {
+      "file": "idle_NE_18.png",
+      "rec": 513,
+      "layers": 1,
+      "bbox": [
+       -11,
+       -76,
+       23,
+       13
+      ]
+     },
+     {
+      "file": "idle_NE_19.png",
+      "rec": 514,
+      "layers": 1,
+      "bbox": [
+       -11,
+       -75,
+       23,
+       13
+      ]
+     },
+     {
+      "file": "idle_NE_20.png",
+      "rec": 514,
+      "layers": 1,
+      "bbox": [
+       -11,
+       -75,
+       23,
+       13
+      ]
+     },
+     {
+      "file": "idle_NE_21.png",
+      "rec": 514,
+      "layers": 1,
+      "bbox": [
+       -11,
+       -75,
+       23,
+       13
+      ]
+     },
+     {
+      "file": "idle_NE_22.png",
+      "rec": 514,
+      "layers": 1,
+      "bbox": [
+       -11,
+       -75,
+       23,
+       13
+      ]
+     }
+    ]
+   },
+   "E": {
+    "count": 23,
+    "frames": [
+     {
+      "file": "idle_E_00.png",
+      "rec": 515,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       27,
+       10
+      ]
+     },
+     {
+      "file": "idle_E_01.png",
+      "rec": 515,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       27,
+       10
+      ]
+     },
+     {
+      "file": "idle_E_02.png",
+      "rec": 516,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       27,
+       10
+      ]
+     },
+     {
+      "file": "idle_E_03.png",
+      "rec": 516,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       27,
+       10
+      ]
+     },
+     {
+      "file": "idle_E_04.png",
+      "rec": 517,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       27,
+       10
+      ]
+     },
+     {
+      "file": "idle_E_05.png",
+      "rec": 517,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       27,
+       10
+      ]
+     },
+     {
+      "file": "idle_E_06.png",
+      "rec": 517,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       27,
+       10
+      ]
+     },
+     {
+      "file": "idle_E_07.png",
+      "rec": 517,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       27,
+       10
+      ]
+     },
+     {
+      "file": "idle_E_08.png",
+      "rec": 517,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       27,
+       10
+      ]
+     },
+     {
+      "file": "idle_E_09.png",
+      "rec": 517,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       27,
+       10
+      ]
+     },
+     {
+      "file": "idle_E_10.png",
+      "rec": 517,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       27,
+       10
+      ]
+     },
+     {
+      "file": "idle_E_11.png",
+      "rec": 516,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       27,
+       10
+      ]
+     },
+     {
+      "file": "idle_E_12.png",
+      "rec": 516,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       27,
+       10
+      ]
+     },
+     {
+      "file": "idle_E_13.png",
+      "rec": 515,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       27,
+       10
+      ]
+     },
+     {
+      "file": "idle_E_14.png",
+      "rec": 515,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       27,
+       10
+      ]
+     },
+     {
+      "file": "idle_E_15.png",
+      "rec": 4,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       27,
+       10
+      ]
+     },
+     {
+      "file": "idle_E_16.png",
+      "rec": 4,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       27,
+       10
+      ]
+     },
+     {
+      "file": "idle_E_17.png",
+      "rec": 518,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -73,
+       27,
+       10
+      ]
+     },
+     {
+      "file": "idle_E_18.png",
+      "rec": 518,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -73,
+       27,
+       10
+      ]
+     },
+     {
+      "file": "idle_E_19.png",
+      "rec": 519,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -73,
+       27,
+       10
+      ]
+     },
+     {
+      "file": "idle_E_20.png",
+      "rec": 519,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -73,
+       27,
+       10
+      ]
+     },
+     {
+      "file": "idle_E_21.png",
+      "rec": 519,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -73,
+       27,
+       10
+      ]
+     },
+     {
+      "file": "idle_E_22.png",
+      "rec": 519,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -73,
+       27,
+       10
+      ]
+     }
+    ]
+   },
+   "SE": {
+    "count": 23,
+    "frames": [
+     {
+      "file": "idle_SE_00.png",
+      "rec": 520,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -72,
+       28,
+       7
+      ]
+     },
+     {
+      "file": "idle_SE_01.png",
+      "rec": 520,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -72,
+       28,
+       7
+      ]
+     },
+     {
+      "file": "idle_SE_02.png",
+      "rec": 521,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -72,
+       28,
+       7
+      ]
+     },
+     {
+      "file": "idle_SE_03.png",
+      "rec": 521,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -72,
+       28,
+       7
+      ]
+     },
+     {
+      "file": "idle_SE_04.png",
+      "rec": 522,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -73,
+       28,
+       7
+      ]
+     },
+     {
+      "file": "idle_SE_05.png",
+      "rec": 522,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -73,
+       28,
+       7
+      ]
+     },
+     {
+      "file": "idle_SE_06.png",
+      "rec": 522,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -73,
+       28,
+       7
+      ]
+     },
+     {
+      "file": "idle_SE_07.png",
+      "rec": 522,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -73,
+       28,
+       7
+      ]
+     },
+     {
+      "file": "idle_SE_08.png",
+      "rec": 522,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -73,
+       28,
+       7
+      ]
+     },
+     {
+      "file": "idle_SE_09.png",
+      "rec": 522,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -73,
+       28,
+       7
+      ]
+     },
+     {
+      "file": "idle_SE_10.png",
+      "rec": 522,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -73,
+       28,
+       7
+      ]
+     },
+     {
+      "file": "idle_SE_11.png",
+      "rec": 521,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -72,
+       28,
+       7
+      ]
+     },
+     {
+      "file": "idle_SE_12.png",
+      "rec": 521,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -72,
+       28,
+       7
+      ]
+     },
+     {
+      "file": "idle_SE_13.png",
+      "rec": 520,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -72,
+       28,
+       7
+      ]
+     },
+     {
+      "file": "idle_SE_14.png",
+      "rec": 520,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -72,
+       28,
+       7
+      ]
+     },
+     {
+      "file": "idle_SE_15.png",
+      "rec": 5,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -72,
+       28,
+       7
+      ]
+     },
+     {
+      "file": "idle_SE_16.png",
+      "rec": 5,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -72,
+       28,
+       7
+      ]
+     },
+     {
+      "file": "idle_SE_17.png",
+      "rec": 523,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -72,
+       28,
+       7
+      ]
+     },
+     {
+      "file": "idle_SE_18.png",
+      "rec": 523,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -72,
+       28,
+       7
+      ]
+     },
+     {
+      "file": "idle_SE_19.png",
+      "rec": 524,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -72,
+       28,
+       7
+      ]
+     },
+     {
+      "file": "idle_SE_20.png",
+      "rec": 524,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -72,
+       28,
+       7
+      ]
+     },
+     {
+      "file": "idle_SE_21.png",
+      "rec": 524,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -72,
+       28,
+       7
+      ]
+     },
+     {
+      "file": "idle_SE_22.png",
+      "rec": 524,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -72,
+       28,
+       7
+      ]
+     }
+    ]
+   },
+   "S": {
+    "count": 23,
+    "frames": [
+     {
+      "file": "idle_S_00.png",
+      "rec": 525,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -72,
+       16,
+       14
+      ]
+     },
+     {
+      "file": "idle_S_01.png",
+      "rec": 525,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -72,
+       16,
+       14
+      ]
+     },
+     {
+      "file": "idle_S_02.png",
+      "rec": 526,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -72,
+       16,
+       14
+      ]
+     },
+     {
+      "file": "idle_S_03.png",
+      "rec": 526,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -72,
+       16,
+       14
+      ]
+     },
+     {
+      "file": "idle_S_04.png",
+      "rec": 527,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -73,
+       16,
+       14
+      ]
+     },
+     {
+      "file": "idle_S_05.png",
+      "rec": 527,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -73,
+       16,
+       14
+      ]
+     },
+     {
+      "file": "idle_S_06.png",
+      "rec": 527,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -73,
+       16,
+       14
+      ]
+     },
+     {
+      "file": "idle_S_07.png",
+      "rec": 527,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -73,
+       16,
+       14
+      ]
+     },
+     {
+      "file": "idle_S_08.png",
+      "rec": 527,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -73,
+       16,
+       14
+      ]
+     },
+     {
+      "file": "idle_S_09.png",
+      "rec": 527,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -73,
+       16,
+       14
+      ]
+     },
+     {
+      "file": "idle_S_10.png",
+      "rec": 527,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -73,
+       16,
+       14
+      ]
+     },
+     {
+      "file": "idle_S_11.png",
+      "rec": 526,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -72,
+       16,
+       14
+      ]
+     },
+     {
+      "file": "idle_S_12.png",
+      "rec": 526,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -72,
+       16,
+       14
+      ]
+     },
+     {
+      "file": "idle_S_13.png",
+      "rec": 525,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -72,
+       16,
+       14
+      ]
+     },
+     {
+      "file": "idle_S_14.png",
+      "rec": 525,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -72,
+       16,
+       14
+      ]
+     },
+     {
+      "file": "idle_S_15.png",
+      "rec": 6,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -72,
+       16,
+       14
+      ]
+     },
+     {
+      "file": "idle_S_16.png",
+      "rec": 6,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -72,
+       16,
+       14
+      ]
+     },
+     {
+      "file": "idle_S_17.png",
+      "rec": 528,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -73,
+       16,
+       14
+      ]
+     },
+     {
+      "file": "idle_S_18.png",
+      "rec": 528,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -73,
+       16,
+       14
+      ]
+     },
+     {
+      "file": "idle_S_19.png",
+      "rec": 529,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -72,
+       16,
+       14
+      ]
+     },
+     {
+      "file": "idle_S_20.png",
+      "rec": 529,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -72,
+       16,
+       14
+      ]
+     },
+     {
+      "file": "idle_S_21.png",
+      "rec": 529,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -72,
+       16,
+       14
+      ]
+     },
+     {
+      "file": "idle_S_22.png",
+      "rec": 529,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -72,
+       16,
+       14
+      ]
+     }
+    ]
+   },
+   "SW": {
+    "count": 23,
+    "frames": [
+     {
+      "file": "idle_SW_00.png",
+      "rec": 530,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       13,
+       15
+      ]
+     },
+     {
+      "file": "idle_SW_01.png",
+      "rec": 530,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       13,
+       15
+      ]
+     },
+     {
+      "file": "idle_SW_02.png",
+      "rec": 531,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       14,
+       15
+      ]
+     },
+     {
+      "file": "idle_SW_03.png",
+      "rec": 531,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       14,
+       15
+      ]
+     },
+     {
+      "file": "idle_SW_04.png",
+      "rec": 532,
+      "layers": 1,
+      "bbox": [
+       -20,
+       -74,
+       14,
+       15
+      ]
+     },
+     {
+      "file": "idle_SW_05.png",
+      "rec": 532,
+      "layers": 1,
+      "bbox": [
+       -20,
+       -74,
+       14,
+       15
+      ]
+     },
+     {
+      "file": "idle_SW_06.png",
+      "rec": 532,
+      "layers": 1,
+      "bbox": [
+       -20,
+       -74,
+       14,
+       15
+      ]
+     },
+     {
+      "file": "idle_SW_07.png",
+      "rec": 532,
+      "layers": 1,
+      "bbox": [
+       -20,
+       -74,
+       14,
+       15
+      ]
+     },
+     {
+      "file": "idle_SW_08.png",
+      "rec": 532,
+      "layers": 1,
+      "bbox": [
+       -20,
+       -74,
+       14,
+       15
+      ]
+     },
+     {
+      "file": "idle_SW_09.png",
+      "rec": 532,
+      "layers": 1,
+      "bbox": [
+       -20,
+       -74,
+       14,
+       15
+      ]
+     },
+     {
+      "file": "idle_SW_10.png",
+      "rec": 532,
+      "layers": 1,
+      "bbox": [
+       -20,
+       -74,
+       14,
+       15
+      ]
+     },
+     {
+      "file": "idle_SW_11.png",
+      "rec": 531,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       14,
+       15
+      ]
+     },
+     {
+      "file": "idle_SW_12.png",
+      "rec": 531,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       14,
+       15
+      ]
+     },
+     {
+      "file": "idle_SW_13.png",
+      "rec": 530,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       13,
+       15
+      ]
+     },
+     {
+      "file": "idle_SW_14.png",
+      "rec": 530,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       13,
+       15
+      ]
+     },
+     {
+      "file": "idle_SW_15.png",
+      "rec": 7,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       13,
+       15
+      ]
+     },
+     {
+      "file": "idle_SW_16.png",
+      "rec": 7,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       13,
+       15
+      ]
+     },
+     {
+      "file": "idle_SW_17.png",
+      "rec": 533,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       13,
+       15
+      ]
+     },
+     {
+      "file": "idle_SW_18.png",
+      "rec": 533,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       13,
+       15
+      ]
+     },
+     {
+      "file": "idle_SW_19.png",
+      "rec": 534,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       13,
+       15
+      ]
+     },
+     {
+      "file": "idle_SW_20.png",
+      "rec": 534,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       13,
+       15
+      ]
+     },
+     {
+      "file": "idle_SW_21.png",
+      "rec": 534,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       13,
+       15
+      ]
+     },
+     {
+      "file": "idle_SW_22.png",
+      "rec": 534,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -74,
+       13,
+       15
+      ]
+     }
+    ]
+   }
+  },
+  "run": {
+   "W": {
+    "count": 9,
+    "frames": [
+     {
+      "file": "run_W_00.png",
+      "rec": 535,
+      "layers": 1,
+      "bbox": [
+       -24,
+       -80,
+       35,
+       1
+      ]
+     },
+     {
+      "file": "run_W_01.png",
+      "rec": 536,
+      "layers": 1,
+      "bbox": [
+       -23,
+       -76,
+       32,
+       4
+      ]
+     },
+     {
+      "file": "run_W_02.png",
+      "rec": 537,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -75,
+       19,
+       4
+      ]
+     },
+     {
+      "file": "run_W_03.png",
+      "rec": 538,
+      "layers": 1,
+      "bbox": [
+       -31,
+       -78,
+       25,
+       2
+      ]
+     },
+     {
+      "file": "run_W_04.png",
+      "rec": 539,
+      "layers": 1,
+      "bbox": [
+       -33,
+       -81,
+       33,
+       -3
+      ]
+     },
+     {
+      "file": "run_W_05.png",
+      "rec": 540,
+      "layers": 1,
+      "bbox": [
+       -33,
+       -79,
+       35,
+       1
+      ]
+     },
+     {
+      "file": "run_W_06.png",
+      "rec": 541,
+      "layers": 1,
+      "bbox": [
+       -30,
+       -76,
+       26,
+       1
+      ]
+     },
+     {
+      "file": "run_W_07.png",
+      "rec": 542,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -77,
+       19,
+       1
+      ]
+     },
+     {
+      "file": "run_W_08.png",
+      "rec": 543,
+      "layers": 1,
+      "bbox": [
+       -24,
+       -80,
+       29,
+       1
+      ]
+     }
+    ]
+   },
+   "NW": {
+    "count": 9,
+    "frames": [
+     {
+      "file": "run_NW_00.png",
+      "rec": 544,
+      "layers": 1,
+      "bbox": [
+       -27,
+       -84,
+       30,
+       0
+      ]
+     },
+     {
+      "file": "run_NW_01.png",
+      "rec": 545,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -80,
+       28,
+       1
+      ]
+     },
+     {
+      "file": "run_NW_02.png",
+      "rec": 546,
+      "layers": 1,
+      "bbox": [
+       -29,
+       -78,
+       24,
+       7
+      ]
+     },
+     {
+      "file": "run_NW_03.png",
+      "rec": 547,
+      "layers": 1,
+      "bbox": [
+       -32,
+       -82,
+       25,
+       6
+      ]
+     },
+     {
+      "file": "run_NW_04.png",
+      "rec": 548,
+      "layers": 1,
+      "bbox": [
+       -34,
+       -85,
+       25,
+       6
+      ]
+     },
+     {
+      "file": "run_NW_05.png",
+      "rec": 549,
+      "layers": 1,
+      "bbox": [
+       -34,
+       -82,
+       25,
+       -3
+      ]
+     },
+     {
+      "file": "run_NW_06.png",
+      "rec": 550,
+      "layers": 1,
+      "bbox": [
+       -31,
+       -80,
+       22,
+       2
+      ]
+     },
+     {
+      "file": "run_NW_07.png",
+      "rec": 551,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -80,
+       20,
+       6
+      ]
+     },
+     {
+      "file": "run_NW_08.png",
+      "rec": 552,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -84,
+       25,
+       5
+      ]
+     }
+    ]
+   },
+   "N": {
+    "count": 9,
+    "frames": [
+     {
+      "file": "run_N_00.png",
+      "rec": 553,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -85,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "run_N_01.png",
+      "rec": 554,
+      "layers": 1,
+      "bbox": [
+       -22,
+       -82,
+       30,
+       1
+      ]
+     },
+     {
+      "file": "run_N_02.png",
+      "rec": 555,
+      "layers": 1,
+      "bbox": [
+       -22,
+       -80,
+       29,
+       8
+      ]
+     },
+     {
+      "file": "run_N_03.png",
+      "rec": 556,
+      "layers": 1,
+      "bbox": [
+       -19,
+       -84,
+       27,
+       7
+      ]
+     },
+     {
+      "file": "run_N_04.png",
+      "rec": 557,
+      "layers": 1,
+      "bbox": [
+       -20,
+       -86,
+       26,
+       9
+      ]
+     },
+     {
+      "file": "run_N_05.png",
+      "rec": 558,
+      "layers": 1,
+      "bbox": [
+       -19,
+       -83,
+       28,
+       1
+      ]
+     },
+     {
+      "file": "run_N_06.png",
+      "rec": 559,
+      "layers": 1,
+      "bbox": [
+       -19,
+       -80,
+       28,
+       3
+      ]
+     },
+     {
+      "file": "run_N_07.png",
+      "rec": 560,
+      "layers": 1,
+      "bbox": [
+       -19,
+       -81,
+       29,
+       9
+      ]
+     },
+     {
+      "file": "run_N_08.png",
+      "rec": 561,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -85,
+       29,
+       9
+      ]
+     }
+    ]
+   },
+   "NE": {
+    "count": 9,
+    "frames": [
+     {
+      "file": "run_NE_00.png",
+      "rec": 562,
+      "layers": 1,
+      "bbox": [
+       -22,
+       -83,
+       26,
+       2
+      ]
+     },
+     {
+      "file": "run_NE_01.png",
+      "rec": 563,
+      "layers": 1,
+      "bbox": [
+       -20,
+       -81,
+       24,
+       1
+      ]
+     },
+     {
+      "file": "run_NE_02.png",
+      "rec": 564,
+      "layers": 1,
+      "bbox": [
+       -10,
+       -79,
+       21,
+       6
+      ]
+     },
+     {
+      "file": "run_NE_03.png",
+      "rec": 565,
+      "layers": 1,
+      "bbox": [
+       -17,
+       -83,
+       22,
+       4
+      ]
+     },
+     {
+      "file": "run_NE_04.png",
+      "rec": 566,
+      "layers": 1,
+      "bbox": [
+       -24,
+       -83,
+       23,
+       5
+      ]
+     },
+     {
+      "file": "run_NE_05.png",
+      "rec": 567,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -80,
+       21,
+       -1
+      ]
+     },
+     {
+      "file": "run_NE_06.png",
+      "rec": 568,
+      "layers": 1,
+      "bbox": [
+       -20,
+       -77,
+       24,
+       4
+      ]
+     },
+     {
+      "file": "run_NE_07.png",
+      "rec": 569,
+      "layers": 1,
+      "bbox": [
+       -13,
+       -79,
+       27,
+       8
+      ]
+     },
+     {
+      "file": "run_NE_08.png",
+      "rec": 570,
+      "layers": 1,
+      "bbox": [
+       -17,
+       -83,
+       27,
+       8
+      ]
+     }
+    ]
+   },
+   "E": {
+    "count": 9,
+    "frames": [
+     {
+      "file": "run_E_00.png",
+      "rec": 571,
+      "layers": 1,
+      "bbox": [
+       -33,
+       -79,
+       26,
+       -1
+      ]
+     },
+     {
+      "file": "run_E_01.png",
+      "rec": 572,
+      "layers": 1,
+      "bbox": [
+       -30,
+       -78,
+       25,
+       2
+      ]
+     },
+     {
+      "file": "run_E_02.png",
+      "rec": 573,
+      "layers": 1,
+      "bbox": [
+       -17,
+       -77,
+       28,
+       2
+      ]
+     },
+     {
+      "file": "run_E_03.png",
+      "rec": 574,
+      "layers": 1,
+      "bbox": [
+       -24,
+       -79,
+       33,
+       0
+      ]
+     },
+     {
+      "file": "run_E_04.png",
+      "rec": 575,
+      "layers": 1,
+      "bbox": [
+       -31,
+       -80,
+       35,
+       1
+      ]
+     },
+     {
+      "file": "run_E_05.png",
+      "rec": 576,
+      "layers": 1,
+      "bbox": [
+       -33,
+       -76,
+       36,
+       4
+      ]
+     },
+     {
+      "file": "run_E_06.png",
+      "rec": 577,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -73,
+       32,
+       4
+      ]
+     },
+     {
+      "file": "run_E_07.png",
+      "rec": 578,
+      "layers": 1,
+      "bbox": [
+       -17,
+       -75,
+       28,
+       4
+      ]
+     },
+     {
+      "file": "run_E_08.png",
+      "rec": 579,
+      "layers": 1,
+      "bbox": [
+       -27,
+       -79,
+       26,
+       2
+      ]
+     }
+    ]
+   },
+   "SE": {
+    "count": 9,
+    "frames": [
+     {
+      "file": "run_SE_00.png",
+      "rec": 580,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -76,
+       29,
+       3
+      ]
+     },
+     {
+      "file": "run_SE_01.png",
+      "rec": 581,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -74,
+       30,
+       6
+      ]
+     },
+     {
+      "file": "run_SE_02.png",
+      "rec": 582,
+      "layers": 1,
+      "bbox": [
+       -22,
+       -74,
+       31,
+       2
+      ]
+     },
+     {
+      "file": "run_SE_03.png",
+      "rec": 583,
+      "layers": 1,
+      "bbox": [
+       -23,
+       -76,
+       34,
+       0
+      ]
+     },
+     {
+      "file": "run_SE_04.png",
+      "rec": 584,
+      "layers": 1,
+      "bbox": [
+       -23,
+       -76,
+       36,
+       6
+      ]
+     },
+     {
+      "file": "run_SE_05.png",
+      "rec": 585,
+      "layers": 1,
+      "bbox": [
+       -23,
+       -73,
+       36,
+       10
+      ]
+     },
+     {
+      "file": "run_SE_06.png",
+      "rec": 586,
+      "layers": 1,
+      "bbox": [
+       -19,
+       -70,
+       33,
+       6
+      ]
+     },
+     {
+      "file": "run_SE_07.png",
+      "rec": 587,
+      "layers": 1,
+      "bbox": [
+       -18,
+       -72,
+       30,
+       1
+      ]
+     },
+     {
+      "file": "run_SE_08.png",
+      "rec": 588,
+      "layers": 1,
+      "bbox": [
+       -23,
+       -75,
+       30,
+       1
+      ]
+     }
+    ]
+   },
+   "S": {
+    "count": 9,
+    "frames": [
+     {
+      "file": "run_S_00.png",
+      "rec": 589,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -75,
+       23,
+       7
+      ]
+     },
+     {
+      "file": "run_S_01.png",
+      "rec": 590,
+      "layers": 1,
+      "bbox": [
+       -28,
+       -73,
+       24,
+       9
+      ]
+     },
+     {
+      "file": "run_S_02.png",
+      "rec": 591,
+      "layers": 1,
+      "bbox": [
+       -27,
+       -72,
+       24,
+       2
+      ]
+     },
+     {
+      "file": "run_S_03.png",
+      "rec": 592,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -74,
+       21,
+       -2
+      ]
+     },
+     {
+      "file": "run_S_04.png",
+      "rec": 593,
+      "layers": 1,
+      "bbox": [
+       -24,
+       -75,
+       22,
+       7
+      ]
+     },
+     {
+      "file": "run_S_05.png",
+      "rec": 594,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -73,
+       21,
+       12
+      ]
+     },
+     {
+      "file": "run_S_06.png",
+      "rec": 595,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -70,
+       21,
+       6
+      ]
+     },
+     {
+      "file": "run_S_07.png",
+      "rec": 596,
+      "layers": 1,
+      "bbox": [
+       -26,
+       -71,
+       21,
+       0
+      ]
+     },
+     {
+      "file": "run_S_08.png",
+      "rec": 597,
+      "layers": 1,
+      "bbox": [
+       -27,
+       -74,
+       23,
+       5
+      ]
+     }
+    ]
+   },
+   "SW": {
+    "count": 9,
+    "frames": [
+     {
+      "file": "run_SW_00.png",
+      "rec": 598,
+      "layers": 1,
+      "bbox": [
+       -24,
+       -76,
+       24,
+       6
+      ]
+     },
+     {
+      "file": "run_SW_01.png",
+      "rec": 599,
+      "layers": 1,
+      "bbox": [
+       -22,
+       -73,
+       22,
+       8
+      ]
+     },
+     {
+      "file": "run_SW_02.png",
+      "rec": 600,
+      "layers": 1,
+      "bbox": [
+       -19,
+       -72,
+       12,
+       3
+      ]
+     },
+     {
+      "file": "run_SW_03.png",
+      "rec": 601,
+      "layers": 1,
+      "bbox": [
+       -20,
+       -75,
+       19,
+       -3
+      ]
+     },
+     {
+      "file": "run_SW_04.png",
+      "rec": 602,
+      "layers": 1,
+      "bbox": [
+       -21,
+       -77,
+       26,
+       3
+      ]
+     },
+     {
+      "file": "run_SW_05.png",
+      "rec": 603,
+      "layers": 1,
+      "bbox": [
+       -19,
+       -75,
+       28,
+       7
+      ]
+     },
+     {
+      "file": "run_SW_06.png",
+      "rec": 604,
+      "layers": 1,
+      "bbox": [
+       -22,
+       -73,
+       22,
+       4
+      ]
+     },
+     {
+      "file": "run_SW_07.png",
+      "rec": 605,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -73,
+       15,
+       0
+      ]
+     },
+     {
+      "file": "run_SW_08.png",
+      "rec": 606,
+      "layers": 1,
+      "bbox": [
+       -25,
+       -76,
+       19,
+       5
+      ]
+     }
+    ]
+   }
+  }
+ }
+}

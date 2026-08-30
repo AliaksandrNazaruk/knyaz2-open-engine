@@ -59,11 +59,6 @@ function normalizeBag(actor = hero) {
   actor.bag = compact;
 }
 
-export function bagFreeIndex(actor = hero) {
-  normalizeBag(actor);
-  return actor.bag.indexOf(null);
-}
-
 // Положить в мешок. Возвращает номер ячейки или -1, если места нет.
 export function bagPut(name, index = -1, actor = hero) {
   normalizeBag(actor);
@@ -173,16 +168,23 @@ export function fitsSlot(name, slot) {
 // Хватает ли характеристик, чтобы взять предмет: движок сравнивает
 // характеристику юнита с требованием предмета и не даёт надеть, если она
 // меньше (VA 0x418648, поля класса +0x0C и +0x0E).
+//
+// ПРАВИЛА — ИЗ НАБОРА ГЕРОЯ, а не из `actor.data`: поле `data` есть только
+// у самого героя, у спутников и юнитов его нет. Пока имена характеристик
+// читались из `actor.data`, для любого НЕ-героя список выходил пустым,
+// `indexOf` давал −1 — и проверка ПРОХОДИЛА ВСЕГДА: спутнику через панель
+// надевалось что угодно, требования не работали в принципе. В движке
+// проверка 0x418648 одна на всех и читает те же таблицы классов.
 export function requirementMet(name, actor = hero, enchantWord = 0) {
   const item = actorItem(name);
   // Самая первая проверка движка — НЕ характеристика, а опознание:
   // у неопознанной вещи поднят старший бит слова чар (+0x0F & 0x80), и
   // надеть её нельзя вовсе (VA 0x418654).
-  const dormant = actor.data?.rules?.enchant?.dormant ?? 0x8000;
+  const dormant = hero.data?.rules?.enchant?.dormant ?? 0x8000;
   const word = enchantWord || actor.bagEnchant?.[name] || 0;
   if (word & dormant) return false;
   if (!item?.requires || !item.requirement) return true;
-  const names = actor.data?.rules?.progression?.characteristics?.names ?? [];
+  const names = hero.data?.rules?.progression?.characteristics?.names ?? [];
   const index = names.indexOf(item.requires);
   if (index < 0) return true;
   // Сравнивается ТЕКУЩАЯ характеристика: украшения её поднимают, и с
@@ -339,11 +341,27 @@ function refitSlot(actor, slot, kind) {
 // доснаряжения не было вовсе. Из-за этого юнит с луком В МЕШКЕ лучником не
 // становился никогда: выбор цели для выстрела (VA 0x411F28) требует
 // ЗАНЯТОГО метательного гнезда и боеприпаса, а заполнить их было некому.
+//
+// ДОСНАРЯЖАЮТСЯ ТОЛЬКО ЧУЖИЕ. Вызывающие 0x412FF4 в движке — это рассудок
+// ЧУЖОГО отряда, входящего в войну (0x4111E8:54, ветка `param_1 !=
+// _DAT_0084950C`), житель на рабочем месте (0x4115AC, случай 4) и особые
+// породы (0x410010:168). В ветке рассудка ОТРЯДА ИГРОКА вызова нет: своих
+// бойцов одевает игрок руками, движок им из мешка ничего не достаёт.
+// Пока порт доснаряжал всех, спутники сами надевали вещи, сложенные в
+// мешок на продажу, — отсюда «отряд одевает что попало».
 export function weaponModeRefresh(actor = hero) {
-  refitSlot(actor, "ammo", AMMO_KIND);
-  for (const [slot, kind] of REFIT_SLOTS) refitSlot(actor, slot, kind);
-  actor.rangedMode = Boolean(actor.equipment?.ammo) &&
-    Boolean(actor.equipment?.ranged);
+  if (actor !== hero && !actor.ally) {
+    refitSlot(actor, "ammo", AMMO_KIND);
+    for (const [slot, kind] of REFIT_SLOTS) refitSlot(actor, slot, kind);
+  }
+  const auto = Boolean(actor.equipment?.ammo) && Boolean(actor.equipment?.ranged);
+  // «ВЫБОР ОРУЖИЯ: ЗАПРЕЩЕН» — тумблер окна персонажа (бит +0x19 & 0x20):
+  // юнит сам между рукой и метательным не переключается (0x410A08:67 и
+  // 0x411F28 пробуют выстрел только при взведённом режиме ИЛИ снятом
+  // бите). С запретом пересчёт не ВКЛЮЧАЕТ стрельбу сам — выбранный
+  // игроком режим держится; потерять несуществующее гнездо он всё же
+  // может: без лука или стрел режим стрельбы невозможен физически.
+  actor.rangedMode = actor.weaponLock ? Boolean(actor.rangedMode) && auto : auto;
   return actor.rangedMode;
 }
 

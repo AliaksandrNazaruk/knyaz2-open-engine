@@ -7,14 +7,23 @@ import { daylight, daylightCurve, sunProgress } from "./daylight.js";
 import { hero, heroBodyFrame } from "./hero.js";
 import { sheetsFor, actorFrame } from "./actor.js";
 import { units } from "./units.js";
+import { drawPlane, drawPlanePart, perspective } from "./perspective.js";
 
 // Тени: маски объектов регистрируются спанами (VA 0x43F260), затем один
 // проход VA 0x440788 делит яркость фона под ними пополам, не затемняя
 // перекрытия дважды. Здесь маски копятся в offscreen-слое и накладываются
 // на кадр один раз с альфой 0.5 — арифметика та же: bg/2.
-export const shadows = { canvas: document.createElement("canvas"), context: null };
+//: Два холста, а не один. В `canvas` тени копятся КАЖДАЯ ПО ОДНОМУ РАЗУ, а
+//: `smear` собирает из него вытянутую тень сдвинутыми копиями. Раньше копии
+//: рисовались на каждую тень отдельно, и цена кадра росла как «объекты ×
+//: шаги»: на Кирингхольме ночью это 10 829 отрисовок только на тени.
+export const shadows = {
+  canvas: document.createElement("canvas"), context: null,
+  smear: document.createElement("canvas"), smearContext: null,
+};
 
 shadows.context = shadows.canvas.getContext("2d");
+shadows.smearContext = shadows.smear.getContext("2d");
 
 // Настройки прохода: одни и те же для теней сцены и для теней внутри
 // постройки, поэтому считаются в одном месте.
@@ -39,16 +48,47 @@ function paintActorShadow(target, actor, frame, set) {
   if (!spriteReady(world.images, sheetsFor(actor), shadow)) return false;
   const x = Math.round(actor.x) + shadow.offset_x;
   const y = Math.round(actor.y) + shadow.offset_y;
+  //: Тень кладётся ОДИН РАЗ. Вытягивание при низком солнце делает `finishMask`
+  //: над собранной маской — см. там, почему это то же самое и почему дешевле.
   drawSprite(world.images, sheetsFor(actor), shadow, x, y, target);
-  if (set.dynamic && set.smear > 0) {
-    const steps = Math.max(1, Math.round(set.smear / set.smearStep));
-    for (let i = 1; i <= steps; i += 1) {
-      const shift = set.smear * i / steps;
-      drawSprite(world.images, sheetsFor(actor), shadow,
-                 x + set.lightX * shift, y + set.lightY * shift, target);
-    }
-  }
   return true;
+}
+
+//: СМАЗ ДЕЛАЕТСЯ НАД СОБРАННОЙ МАСКОЙ, А НЕ НАД КАЖДОЙ ТЕНЬЮ.
+//
+// Сдвиг у всех теней один и тот же — направление света, — поэтому
+// объединение N сдвинутых копий каждой тени и N сдвинутых копий всей маски
+// это одно и то же множество точек. А цена разная: было `(1 + N)` отрисовок
+// НА КАЖДЫЙ объект, стало `(1 + N)` полноэкранных блитов на весь кадр. Ночью
+// N = 12, и на Кирингхольме это 10 829 отрисовок против 13.
+//
+// КОПИИ БЕРУТСЯ С БАЗЫ, А НЕ С НАКОПЛЕННОГО. Рисовать маску саму в себя
+// нельзя: каждый следующий шаг размазывал бы уже размазанное, и тень уползла
+// бы много дальше положенного. Поэтому холста два.
+//
+// Мировой сдвиг переводится в пиксели холста масштабом самого кадра
+// (`getTransform`), а не пересчётом zoom×dpr вручную: так он не разъедется с
+// тем, чем нарисована сама маска.
+function finishMask(set) {
+  if (!set.dynamic || set.smear <= 0) return shadows.canvas;
+  const steps = Math.max(1, Math.round(set.smear / set.smearStep));
+  const { a, d } = context.getTransform();
+  if (shadows.smear.width !== shadows.canvas.width ||
+      shadows.smear.height !== shadows.canvas.height) {
+    shadows.smear.width = shadows.canvas.width;
+    shadows.smear.height = shadows.canvas.height;
+  }
+  const target = shadows.smearContext;
+  target.setTransform(1, 0, 0, 1, 0, 0);
+  target.clearRect(0, 0, shadows.smear.width, shadows.smear.height);
+  target.imageSmoothingEnabled = false;
+  target.drawImage(shadows.canvas, 0, 0);
+  for (let i = 1; i <= steps; i += 1) {
+    const shift = set.smear * i / steps;
+    target.drawImage(shadows.canvas,
+                     set.lightX * shift * a, set.lightY * shift * d);
+  }
+  return shadows.smear;
 }
 
 function prepareMask() {
@@ -79,13 +119,13 @@ function prepareMask() {
 // рисуется светлым кадром мимо слоя (VA 0x425B0C — исходная палитра, без
 // пересчёта под сутки). Слой объектов ляжет сверху и накроет тень стенами и
 // фигурами, а порядок «после пола, до людей» сохранится.
-function stampMask(alpha, onMain = false) {
+function stampMask(alpha, onMain = false, source = shadows.canvas) {
   const put = () => {
     context.save();
     context.setTransform(1, 0, 0, 1, 0, 0);
     context.globalCompositeOperation = "source-over";
     context.globalAlpha = alpha;
-    context.drawImage(shadows.canvas, 0, 0);
+    context.drawImage(source, 0, 0);
     context.restore();
   };
   if (onMain) withMainContext(put);
@@ -113,7 +153,7 @@ export function renderInsideShadows(actors, onMain = false) {
   }
   //: Пол интерьера лежит на кадре мимо слоя — значит и тень туда же, иначе
   //: заливка фильтра поднимет её до серого пятна (см. stampMask).
-  if (any) stampMask(set.alpha, onMain);
+  if (any) stampMask(set.alpha, onMain, finishMask(set));
 }
 
 export function renderShadows(visible) {
@@ -124,18 +164,11 @@ export function renderShadows(visible) {
   // объединение копий и есть вытянутая тень. Ночью остаётся статичная
   // маска, как в оригинале (спановое затемнение фона не зависит от
   // времени суток) — исчезает только солнечное удлинение.
-  const dynamic = dynamicShadowsNode.checked && daylightCurve().length > 0;
-  const sun = dynamic ? sunProgress(daylight.time) : null;
-  // Ночью солнце под горизонтом: удлинение не сбрасывается, а замирает на
-  // закатной длине — тень остаётся такой, какой её оставил закат.
-  const night = dynamic && sun === null;
-  const altitude = night ? 0 : (sun === null ? 1 : Math.sin(sun * Math.PI));
-  // Общее направление теней игры: влево-вниз (по данным масок).
-  const lightX = -0.95, lightY = 0.32;
-  const smear = dynamic ? Math.round(130 * Math.max(0, 1 - altitude * 1.15)) : 0;
-  const smearStep = 11;
-  const alpha = dynamic ? 0.35 + 0.15 * altitude : 0.5;
-  const reach = smear + 64;                    // запас клипа под смаз
+  //: Настройки прохода считает `shadowSettings` — одна на тени сцены и на
+  //: тени внутри постройки. Здесь они пересчитывались вторым экземпляром, и
+  //: две копии одной формулы уже расходились бы молча.
+  const set = shadowSettings();
+  const reach = set.reach;                     // запас клипа под смаз
 
   let any = false;
   const debug = { drawn: 0, noLayer: 0, offscreen: 0, noImage: 0 };
@@ -154,29 +187,20 @@ export function renderShadows(visible) {
     const image = world.images.get(layer.asset);
     if (!image) { debug.noImage += 1; continue; }
     debug.drawn += 1;
-    if (!any) {
-      if (shadows.canvas.width !== canvas.width ||
-          shadows.canvas.height !== canvas.height) {
-        shadows.canvas.width = canvas.width;
-        shadows.canvas.height = canvas.height;
-      }
-      shadows.context.setTransform(1, 0, 0, 1, 0, 0);
-      shadows.context.clearRect(0, 0, shadows.canvas.width, shadows.canvas.height);
-      shadows.context.setTransform(context.getTransform());
-      shadows.context.imageSmoothingEnabled = false;
-      any = true;
-    }
-    const maskX = object.position.x + layer.offset_x;
-    const maskY = object.position.y + layer.offset_y;
-    shadows.context.drawImage(image, maskX, maskY);
-    if (dynamic && smear > 0) {
-      const steps = Math.max(1, Math.round(smear / smearStep));
-      for (let i = 1; i <= steps; i += 1) {
-        const shift = smear * i / steps;
-        shadows.context.drawImage(image,
-          maskX + lightX * shift, maskY + lightY * shift);
-      }
-    }
+    if (!any) { prepareMask(); any = true; }
+    //: Тень объекта — ОДИН раз; вытягивание делает `finishMask` над всей
+    //: собранной маской.
+    //: ТЕНЬ ЛЕЖИТ НА ЗЕМЛЕ — и корёжится по закону ЗЕМЛИ, полосами по своим
+    //: строкам, как вода и пятна света. Спрайтовое правило (один масштаб по
+    //: якорю хозяина) держит её у ног, но при движении камеры она ползёт
+    //: относительно грунта: у плоскости и у спрайта законы разные.
+    //:
+    //: Полосуем КАЖДУЮ ТЕНЬ, а не всю маску разом: маска размером с экран, и
+    //: её укладка полосами стоила сотни блитов на кадр — кадр рвался на
+    //: глазах. Здесь цена идёт по площади теней и укладывается в бюджет.
+    drawPlane(shadows.context, image,
+              object.position.x + layer.offset_x,
+              object.position.y + layer.offset_y, layer.width, layer.height);
   }
   // Тень юнита движок регистрирует теми же спанами, что тени построек
   // (VA 0x426047 -> 0x43F260), поэтому кладём её в ту же маску: иначе
@@ -191,24 +215,13 @@ export function renderShadows(visible) {
   const actors = hero.data ? [{ actor: hero, frame: heroBodyFrame() },
                               ...units.map((unit) => ({ actor: unit,
                                 frame: actorFrame(hero.data, unit) }))]
-    .filter(({ actor }) => actor.insideSlot == null) : [];
+    .filter(({ actor }) => actor.insideBuilding == null) : [];
   for (const { actor, frame } of actors) {
     const shadow = frame?.shadow;
     // Тень кадра лежит на тех же листах, что и тело: у неё прямоугольник
     // на листе, а не свой файл.
     if (!spriteReady(world.images, sheetsFor(actor), shadow)) continue;
-    if (!any) {
-      if (shadows.canvas.width !== canvas.width ||
-          shadows.canvas.height !== canvas.height) {
-        shadows.canvas.width = canvas.width;
-        shadows.canvas.height = canvas.height;
-      }
-      shadows.context.setTransform(1, 0, 0, 1, 0, 0);
-      shadows.context.clearRect(0, 0, shadows.canvas.width, shadows.canvas.height);
-      shadows.context.setTransform(context.getTransform());
-      shadows.context.imageSmoothingEnabled = false;
-      any = true;
-    }
+    if (!any) { prepareMask(); any = true; }
     // Живая тень юнита — то же расширение, что у построек, и тем же
     // способом: исходная маска на своём месте, а удлинение при низком
     // солнце — копии, сдвинутые вдоль света. Иначе выходит несуразица:
@@ -218,18 +231,21 @@ export function renderShadows(visible) {
     // В движке тень юнита СТАТИЧНА: это готовый спрайт из записи кадра
     // (VA 0x426047 кладёт её теми же спанами, что и тени построек). Так
     // что удлинение — наше, и живёт оно под тем же переключателем.
-    const shadowX = Math.round(actor.x) + shadow.offset_x;
-    const shadowY = Math.round(actor.y) + shadow.offset_y;
-    drawSprite(world.images, sheetsFor(actor), shadow, shadowX, shadowY,
-               shadows.context);
-    if (dynamic && smear > 0) {
-      const steps = Math.max(1, Math.round(smear / smearStep));
-      for (let i = 1; i <= steps; i += 1) {
-        const shift = smear * i / steps;
-        drawSprite(world.images, sheetsFor(actor), shadow,
-                   shadowX + lightX * shift, shadowY + lightY * shift,
-                   shadows.context);
-      }
+    const sheets = sheetsFor(actor);
+    const sheet = shadow.sheet !== undefined ? sheets?.[shadow.sheet] : null;
+    const image = sheet ? world.images.get(sheet.path)
+                        : world.images.get(shadow.path);
+    const atX = Math.round(actor.x) + shadow.offset_x;
+    const atY = Math.round(actor.y) + shadow.offset_y;
+    //: Плоскостью — только когда у кадра есть и картинка, и размеры. У
+    //: кадра-файла (без листа) их могло бы не быть; тогда обычная укладка.
+    if (perspective.on && image && shadow.width > 0 && shadow.height > 0) {
+      drawPlanePart(shadows.context, image,
+                    sheet ? shadow.x : 0, sheet ? shadow.y : 0,
+                    shadow.width, shadow.height,
+                    atX, atY, shadow.width, shadow.height);
+    } else {
+      drawSprite(world.images, sheets, shadow, atX, atY, shadows.context);
     }
   }
 
@@ -239,10 +255,5 @@ export function renderShadows(visible) {
   // и на освещённые клетки. Поэтому маски накладываются на СОБРАННЫЙ кадр
   // (земля + аура), а не внутрь слоя сцены: полупрозрачная тень над
   // прозрачным местом слоя ловила заливку фильтра и светлела.
-  context.save();
-  context.setTransform(1, 0, 0, 1, 0, 0);
-  context.globalCompositeOperation = "source-over";
-  context.globalAlpha = alpha;
-  context.drawImage(shadows.canvas, 0, 0);
-  context.restore();
+  stampMask(set.alpha, false, finishMask(set));
 }

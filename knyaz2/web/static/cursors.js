@@ -17,6 +17,7 @@ import { unitAt } from "./units.js";
 import { lootNear } from "./loot.js";
 import { furnitureAt } from "./furniture.js";
 import { exitAt } from "./exits.js";
+import { worldMap } from "./worldmap.js";
 import { buildingAtCell } from "./buildings.js";
 import { carrying } from "./carry.js";
 import { hasTalk } from "./dialog.js";
@@ -79,8 +80,13 @@ export function cursorAt(x, y) {
       const number = unit.dialogNumber ?? (hasTalk(unit) ? 0 : 0xFF);
       return (number < 8 && !drawnWeapon(hero)) ? kind.talk : kind.take;
     }
-    // СВОЙ — обычный курсор.
-    if (unit.ally || (unit.side ?? 0) === (hero.side ?? 0)) return kind.normal;
+    // СВОЙ — обычный курсор. А со взведённым Ctrl — «заговорить»: щелчок
+    // по своему в этом режиме шлёт игроку приказ 0x22, а не выбирает
+    // (VA 0x421690:279). Флаг держит либо сама клавиша, либо кнопка панели
+    // (ui.js, ACTIONS.talk_mode) — на телефоне зажать Ctrl нечем.
+    if (unit.ally || (unit.side ?? 0) === (hero.side ?? 0)) {
+      return world.talkMode === true && hasTalk(unit) ? kind.talk : kind.normal;
+    }
     // ЧУЖОЙ. Меч показывается, только когда в выборе есть кто-то с вынутым
     // оружием — «идёт ли бой» тут ни при чём.
     if (selectionHasWeaponOut()) return kind.attack;
@@ -154,8 +160,16 @@ const HEALTH_SCALE = 16;
 //: называет его верно, хоть и длинно.
 function heroName() {
   const starts = world.map?.hero?.starts ?? [];
-  const own = world.map?.hero?.template?.world ?? 0;
-  return starts.find((start) => start.world === Number(own))?.name ?? null;
+  const template = world.map?.hero?.template;
+  //: СВОЙ ГЕРОЙ ЗАНИМАЕТ ЧУЖОЙ МИР. Содержимое мира ему взять неоткуда, и
+  //: он играет мир канонного (builder._custom_hero_choices), поэтому по
+  //: `world` нашлась бы чужая строка с чужим именем. Свой слот в шаблоне
+  //: несут только свои персонажи — у канонных этого поля нет.
+  const own = starts.find((start) => template?.slot != null &&
+                          start.slot === template.slot);
+  if (own) return own.name ?? null;
+  return starts.find((start) =>
+    start.world === Number(template?.world ?? 0))?.name ?? null;
 }
 
 // ПОДПИСЬ ПОД КУРСОРОМ — перенос FUN_00432A44, ветка в ветку:
@@ -200,16 +214,16 @@ function unitCaption(unit) {
     unit.health ? 1 : 0,
     Math.trunc((unit.health ?? 0) / HEALTH_SCALE));
   parts.push(`Уров:${unit.level ?? 1}`, `Здор:${health}`);
-  const свой = unit === hero || unit.ally || (unit.side ?? 0) === (hero.side ?? 0);
-  if (свой) {
+  const own = unit === hero || unit.ally || (unit.side ?? 0) === (hero.side ?? 0);
+  if (own) {
     //: Отрава — только у своих: у чужого движок на этом месте печатает «враг».
     if (unit.poison) parts.push("отравлен");
     return parts.join(", ");
   }
   //: Бит 0x01 байта +0x1E записи отряда — «этот отряд воюет с игроком».
   const band = warbandOf(unit);
-  const враг = Boolean(band?.fighting) || Boolean((band?.warFlags ?? 0) & 1);
-  return parts.join(", ") + (враг ? " враг" : "");
+  const foe = Boolean(band?.fighting) || Boolean((band?.warFlags ?? 0) & 1);
+  return parts.join(", ") + (foe ? " враг" : "");
 }
 
 export function hintAt(x, y) {
@@ -221,7 +235,12 @@ export function hintAt(x, y) {
   const door = exitAt(x, y);
   if (door) {
     if (door.to_map === -1) return texts?.world_map ?? "Выход на карту Лесной страны";
-    if (door.to_map === -2) return texts?.ship ?? "Посадка на корабль";
+    // Пока корабельное право ни разу не выписывалось (ноль движка), зона
+    // −2 прикидывается простой землёй (0x428B88: курсор по умолчанию).
+    if (door.to_map === -2) {
+      return worldMap.ship === 0 ? null
+        : texts?.ship ?? "Посадка на корабль";
+    }
     if (door.to_map < 0) return texts?.locked ?? "Порог у запертой двери";
     return texts?.transition ?? "Место перехода";
   }
@@ -261,8 +280,6 @@ export function cursorApply(node, x, y) {
   shown = index;
   return true;
 }
-
-export function cursorReset() { shown = null; }
 
 // НЕСОМАЯ ВЕЩЬ ВИДНА ПОВЕРХ ВСЕГО ЭКРАНА.
 //

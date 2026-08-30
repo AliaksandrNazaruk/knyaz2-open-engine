@@ -66,6 +66,26 @@ export function mapStateJoin(number, unit, member = null) {
   return entry;
 }
 
+//: Юнит снова взят в отряд (обработчик 36) — запись приёмыша карты больше
+//: не про него: его несёт запись отряда игрока. Оставленная запись
+//: поднималась вторым экземпляром — «два Белуна, клон ходит следом».
+//: В движке удалять нечего: запись юнита одна в общем массиве 0x7B3C08.
+export function mapStateUnjoin(number, slot) {
+  const entry = mapState.get(Number(number));
+  if (!entry?.joined?.length || slot == null) return false;
+  const before = entry.joined.length;
+  entry.joined = entry.joined.filter((row) => row.slot !== slot);
+  return entry.joined.length !== before;
+}
+
+//: Правок карты от скриптов квестов здесь больше НЕТ. Постоянство даёт
+//: канонный повтор: вход на карту прокручивает все взведённые квесты и
+//: заново исполняет их командные фразы (движок — цикл в загрузчике,
+//: донорский 0x4417E0; у нас — dialog.js::questEditsReplay). Отдельный
+//: сохранённый список правок удваивал бы XOR клетки и терял квесты,
+//: взведённые не на своей карте. Ключ questEdits в старых сейвах просто
+//: не читается.
+
 //: Кого карта помнит сверх пака. Ключ — слот юнита.
 export function mapStateJoined(number) {
   const joined = mapState.get(Number(number))?.joined ?? [];
@@ -81,9 +101,74 @@ function refreshJoined(entry, units) {
   entry.joined = entry.joined.map((row) => {
     const unit = live.get(row.slot);
     if (!unit || unit.alive === false) return row;
+    // От СОЮЗНИКА запись не освежается: он снова в отряде (наём должен был
+    // снять запись вовсе — mapStateUnjoin), и скопировать сюда его ally с
+    // битом следования значит поднять на входе клона, который «ходит за
+    // мной по деревне». Слот к тому же не глобален: под тем же номером
+    // здесь может стоять спутник с другой родной карты.
+    if (unit.ally) return row;
     return packJoined({ ...row, side: unit.side, ally: unit.ally,
                         cell: unit.cell, orderByte: unit.orderByte });
   });
+}
+
+// СНИМОК ЖИТЕЛЯ КАРТЫ — вся изменяемая часть его записи.
+//
+// В движке эти поля живут в глобальном массиве юнитов (0x7B3C08) и смену
+// карты переживают сами по себе: «карта» — лишь фильтр, а сохранение
+// пишет записи целиком. У нас житель пересоздаётся из пака на каждом
+// входе, поэтому изменяемое снимается при уходе и накладывается при
+// входе. Ровно потерянные здесь поля и давали «квест заново при каждом
+// входе»: бит юнита (действие 47), метка времени разговора (67), изъятая
+// квестовая вещь (48), снятое снаряжение (50), сменённый облик (59),
+// проданный товар и деньги торговца вне деревни. `removed` — «ушёл с
+// карты» (действия 44/46/70): такой не поднимается вовсе, но и трупом
+// не числится.
+function packResident(unit) {
+  return {
+    slot: unit.slot,
+    removed: Boolean(unit.removed),
+    alive: unit.alive !== false,
+    health: unit.health ?? null,
+    poison: unit.poison ?? 0,
+    cell: unit.cell ? { ...unit.cell } : null,
+    direction: unit.direction ?? 6,
+    side: unit.side ?? 0,
+    flags: unit.flags ?? 0,
+    talkStamp: unit.talkStamp ?? null,
+    money: unit.money ?? 0,
+    bag: [...(unit.bag ?? [])],
+    counter: [...(unit.counter ?? [])],
+    equipment: { ...(unit.equipment ?? {}) },
+    enchant: { ...(unit.enchant ?? {}) },
+    bagStrength: { ...(unit.bagStrength ?? {}) },
+    bagCount: { ...(unit.bagCount ?? {}) },
+    bagEnchant: { ...(unit.bagEnchant ?? {}) },
+    bagPoison: { ...(unit.bagPoison ?? {}) },
+    wear: { ...(unit.wear ?? {}) },
+    ammoCount: unit.ammoCount ?? null,
+    rangedMode: Boolean(unit.rangedMode),
+    body: unit.body ?? 0,
+    face: unit.face ?? null,
+    palette: unit.palette ?? 0,
+    level: unit.level ?? 1,
+    experience: unit.experience ?? 0,
+    freeExperience: unit.freeExperience ?? 0,
+    nextLevel: unit.nextLevel ?? 0,
+    skills: unit.skills ? [...unit.skills] : null,
+    characteristics: unit.characteristics ? [...unit.characteristics] : null,
+    baseCharacteristics: unit.baseCharacteristics
+      ? [...unit.baseCharacteristics] : null,
+    weaponLock: Boolean(unit.weaponLock),
+    defendLeader: Boolean(unit.defendLeader),
+    healTrigger: unit.healTrigger ?? 0,
+  };
+}
+
+//: Снимки жителей карты. Ключ — слот (в пределах одной карты он уникален).
+export function mapStateResidents(number) {
+  const rows = mapState.get(Number(number))?.residents ?? [];
+  return new Map(rows.map((row) => [row.slot, row]));
 }
 
 // Куча на память: копия, а не ссылка на живую запись — иначе следующая
@@ -105,6 +190,13 @@ export function packPile(pile) {
     //: Спрятанная куча (знак поля +0x0F записи) и уже откопанная.
     ...(pile.buried ? { buried: true } : {}),
     ...(pile.dug ? { dug: true } : {}),
+    //: Грядка: чем и когда отрастёт. Метка — движковая, с делением на
+    //: записи (0x4136A8: −1 − такт/360); такт сбора рядом — для старых
+    //: сейвов, где метки ещё не было.
+    ...(pile.regrowItem ? { regrowItem: pile.regrowItem,
+                            ...(pile.regrowStamp != null
+                                ? { regrowStamp: pile.regrowStamp } : {}),
+                            regrowAt: pile.regrowAt ?? 0 } : {}),
     //: Куча в гнезде обстановки помнит своё место: без пары «зона, гнездо»
     //: сундук после возвращения на карту стал бы обычной кучей на полу.
     ...(pile.zone != null ? { zone: pile.zone, nest: pile.nest } : {}),
@@ -124,7 +216,42 @@ export function mapStateCapture(number, units, piles = null) {
   // Кучи запоминаются ЦЕЛИКОМ и заменяют прежнее: список живой карты уже
   // включает и те, что приехали из пака, и брошенное игроком, и высыпавшееся
   // из мёртвых. Складывать его со старым нельзя — вышли бы двойники.
-  if (piles) entry.loot = piles.filter((pile) => !pile.taken).map(packPile);
+  //
+  // ПУСТОЙ КОНТЕЙНЕР ОСТАЁТСЯ. Движок удаляет опустевшую кучу только НА
+  // ЗЕМЛЕ (всё тело 0x4136A8 стоит под `+0x09 == 0xFF`), а куча в гнезде
+  // обстановки — сундук, бочка — переживает опустошение пустым
+  // контейнером и переписывается в архив. Прежний фильтр стирал и их —
+  // опустевший сундук навсегда переставал ловить курсор.
+  if (piles) {
+    entry.loot = piles
+      .filter((pile) => !pile.taken || pile.zone != null || pile.nest != null)
+      .map(packPile);
+  }
+  // СНИМКИ ЖИТЕЛЕЙ — вся изменяемая часть записей, как «запись целиком»
+  // движка: без них флаги веток, метки разговора, мешки торговцев и
+  // «ушедшие» возвращались к паку на каждом входе.
+  //
+  // СТАРОЕ НЕ ВЫБРАСЫВАЕМ, А НАКРЫВАЕМ. Здесь стояла перезапись целиком —
+  // `entry.residents = units.map(...)`, — и память теряла ровно тех, ради
+  // кого заводилась. Ушедший (действия 44/46/70) на СЛЕДУЮЩЕМ входе не
+  // поднимается вовсе, значит в списке `units` его нет; перезапись про него
+  // забывала, и третий заход поднимал его из пака.
+  //
+  // Отсюда семь жалоб тестера одним корнем: «квест со сломанным мечом
+  // повторяется, если сходить в другую деревню», покупка дома, купец
+  // Лесного лагеря, Белун в яме, охотник, братья в сгоревшем лагере,
+  // уведённый наёмник. Со ВТОРОГО круга, а не с первого — потому и
+  // выглядело загадочно.
+  //
+  // Соседний `dead` копился объединением и потому переживал; расхождение
+  // двух половин одной памяти и было ошибкой.
+  const previous = new Map((entry.residents ?? []).map((snap) => [snap.slot, snap]));
+  for (const snap of (units ?? [])
+    .filter((unit) => !unit.ally && unit.slot != null)
+    .map(packResident)) {
+    previous.set(snap.slot, snap);
+  }
+  entry.residents = [...previous.values()];
   entry.squads = mapSquads(units ?? []);
   refreshJoined(entry, units);
   mapState.set(Number(number), entry);
@@ -155,6 +282,7 @@ export function mapSquads(units) {
   const alive = new Map();
   for (const unit of units ?? []) {
     if (unit.ally) continue;          // отряд игрока движок пропускает
+    if (unit.removed || unit.hidden) continue;  // ушедшие с карты не в счёт
     const side = unit.side ?? 0;
     const isAlive = unit.alive !== false;
     alive.set(side, (alive.get(side) ?? false) || isAlive);
@@ -176,6 +304,11 @@ export function mapStatePack() {
     loot: entry.loot ? entry.loot.map((pile) => ({ ...pile })) : null,
     squads: entry.squads ? entry.squads.map((squad) => ({ ...squad })) : null,
     joined: entry.joined ? entry.joined.map(packJoined) : null,
+    residents: entry.residents
+      ? entry.residents.map((row) => JSON.parse(JSON.stringify(row))) : null,
+    questEdits: entry.questEdits
+      ? entry.questEdits.map((row) => ({ kind: row.kind, args: [...row.args] }))
+      : null,
   }));
 }
 
@@ -189,9 +322,13 @@ export function mapStateUnpack(list) {
       squads: Array.isArray(entry.squads)
         ? entry.squads.map((squad) => ({ ...squad })) : null,
       joined: Array.isArray(entry.joined) ? entry.joined.map(packJoined) : null,
+      residents: Array.isArray(entry.residents)
+        ? entry.residents.map((row) => JSON.parse(JSON.stringify(row))) : null,
+      questEdits: Array.isArray(entry.questEdits)
+        ? entry.questEdits.map((row) => ({ kind: row.kind, args: [...row.args] }))
+        : null,
     });
   }
   return mapState;
 }
 
-export function mapStateReset() { mapState.clear(); }

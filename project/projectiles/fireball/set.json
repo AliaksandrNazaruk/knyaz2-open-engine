@@ -1,0 +1,508 @@
+{
+ "name": "fireball",
+ "title": "Огненный шар",
+ "sheet": "sheet.png",
+ "sheet_size": [
+  2048,
+  114
+ ],
+ "source": {
+  "game": "Diablo II LoD 1.14d",
+  "missile": "FireBall",
+  "burst": "FireExplode",
+  "act_palette": "ACT1",
+  "tool": "d2extract/tools/to_konung_projectile.py"
+ },
+ "direction_order": "konung: 0=W 1=NW 2=N 3=NE 4=E 5=SE 6=S 7=SW",
+ "trans": "1",
+ "table": "Missiles.txt",
+ "blend": "additive",
+ "directions": [
+  [
+   {
+    "sheet": 0,
+    "x": 0,
+    "y": 0,
+    "width": 89,
+    "height": 38,
+    "offset_x": -19,
+    "offset_y": -64
+   },
+   {
+    "sheet": 0,
+    "x": 90,
+    "y": 0,
+    "width": 83,
+    "height": 38,
+    "offset_x": -18,
+    "offset_y": -64
+   },
+   {
+    "sheet": 0,
+    "x": 174,
+    "y": 0,
+    "width": 94,
+    "height": 38,
+    "offset_x": -20,
+    "offset_y": -63
+   },
+   {
+    "sheet": 0,
+    "x": 269,
+    "y": 0,
+    "width": 92,
+    "height": 38,
+    "offset_x": -19,
+    "offset_y": -65
+   },
+   {
+    "sheet": 0,
+    "x": 362,
+    "y": 0,
+    "width": 80,
+    "height": 36,
+    "offset_x": -18,
+    "offset_y": -61
+   }
+  ],
+  [
+   {
+    "sheet": 0,
+    "x": 443,
+    "y": 0,
+    "width": 77,
+    "height": 49,
+    "offset_x": -17,
+    "offset_y": -62
+   },
+   {
+    "sheet": 0,
+    "x": 521,
+    "y": 0,
+    "width": 68,
+    "height": 51,
+    "offset_x": -18,
+    "offset_y": -62
+   },
+   {
+    "sheet": 0,
+    "x": 590,
+    "y": 0,
+    "width": 74,
+    "height": 52,
+    "offset_x": -19,
+    "offset_y": -62
+   },
+   {
+    "sheet": 0,
+    "x": 665,
+    "y": 0,
+    "width": 77,
+    "height": 49,
+    "offset_x": -17,
+    "offset_y": -61
+   },
+   {
+    "sheet": 0,
+    "x": 743,
+    "y": 0,
+    "width": 64,
+    "height": 50,
+    "offset_x": -19,
+    "offset_y": -61
+   }
+  ],
+  [
+   {
+    "sheet": 0,
+    "x": 808,
+    "y": 0,
+    "width": 38,
+    "height": 58,
+    "offset_x": -18,
+    "offset_y": -63
+   },
+   {
+    "sheet": 0,
+    "x": 847,
+    "y": 0,
+    "width": 34,
+    "height": 57,
+    "offset_x": -17,
+    "offset_y": -62
+   },
+   {
+    "sheet": 0,
+    "x": 882,
+    "y": 0,
+    "width": 36,
+    "height": 58,
+    "offset_x": -18,
+    "offset_y": -62
+   },
+   {
+    "sheet": 0,
+    "x": 919,
+    "y": 0,
+    "width": 38,
+    "height": 58,
+    "offset_x": -20,
+    "offset_y": -60
+   },
+   {
+    "sheet": 0,
+    "x": 958,
+    "y": 0,
+    "width": 36,
+    "height": 53,
+    "offset_x": -19,
+    "offset_y": -61
+   }
+  ],
+  [
+   {
+    "sheet": 0,
+    "x": 995,
+    "y": 0,
+    "width": 75,
+    "height": 50,
+    "offset_x": -57,
+    "offset_y": -61
+   },
+   {
+    "sheet": 0,
+    "x": 1071,
+    "y": 0,
+    "width": 73,
+    "height": 48,
+    "offset_x": -56,
+    "offset_y": -61
+   },
+   {
+    "sheet": 0,
+    "x": 1145,
+    "y": 0,
+    "width": 79,
+    "height": 47,
+    "offset_x": -62,
+    "offset_y": -60
+   },
+   {
+    "sheet": 0,
+    "x": 1225,
+    "y": 0,
+    "width": 79,
+    "height": 52,
+    "offset_x": -63,
+    "offset_y": -61
+   },
+   {
+    "sheet": 0,
+    "x": 1305,
+    "y": 0,
+    "width": 69,
+    "height": 41,
+    "offset_x": -53,
+    "offset_y": -60
+   }
+  ],
+  [
+   {
+    "sheet": 0,
+    "x": 1375,
+    "y": 0,
+    "width": 89,
+    "height": 36,
+    "offset_x": -70,
+    "offset_y": -62
+   },
+   {
+    "sheet": 0,
+    "x": 1465,
+    "y": 0,
+    "width": 83,
+    "height": 37,
+    "offset_x": -64,
+    "offset_y": -63
+   },
+   {
+    "sheet": 0,
+    "x": 1549,
+    "y": 0,
+    "width": 90,
+    "height": 36,
+    "offset_x": -72,
+    "offset_y": -63
+   },
+   {
+    "sheet": 0,
+    "x": 1640,
+    "y": 0,
+    "width": 89,
+    "height": 36,
+    "offset_x": -71,
+    "offset_y": -63
+   },
+   {
+    "sheet": 0,
+    "x": 1730,
+    "y": 0,
+    "width": 77,
+    "height": 36,
+    "offset_x": -59,
+    "offset_y": -62
+   }
+  ],
+  [
+   {
+    "sheet": 0,
+    "x": 1808,
+    "y": 0,
+    "width": 70,
+    "height": 44,
+    "offset_x": -52,
+    "offset_y": -72
+   },
+   {
+    "sheet": 0,
+    "x": 1879,
+    "y": 0,
+    "width": 63,
+    "height": 44,
+    "offset_x": -45,
+    "offset_y": -71
+   },
+   {
+    "sheet": 0,
+    "x": 1943,
+    "y": 0,
+    "width": 65,
+    "height": 47,
+    "offset_x": -46,
+    "offset_y": -74
+   },
+   {
+    "sheet": 0,
+    "x": 0,
+    "y": 59,
+    "width": 72,
+    "height": 47,
+    "offset_x": -55,
+    "offset_y": -73
+   },
+   {
+    "sheet": 0,
+    "x": 73,
+    "y": 59,
+    "width": 58,
+    "height": 44,
+    "offset_x": -39,
+    "offset_y": -71
+   }
+  ],
+  [
+   {
+    "sheet": 0,
+    "x": 132,
+    "y": 59,
+    "width": 34,
+    "height": 50,
+    "offset_x": -17,
+    "offset_y": -77
+   },
+   {
+    "sheet": 0,
+    "x": 167,
+    "y": 59,
+    "width": 33,
+    "height": 49,
+    "offset_x": -16,
+    "offset_y": -75
+   },
+   {
+    "sheet": 0,
+    "x": 201,
+    "y": 59,
+    "width": 34,
+    "height": 55,
+    "offset_x": -17,
+    "offset_y": -81
+   },
+   {
+    "sheet": 0,
+    "x": 236,
+    "y": 59,
+    "width": 34,
+    "height": 50,
+    "offset_x": -17,
+    "offset_y": -77
+   },
+   {
+    "sheet": 0,
+    "x": 271,
+    "y": 59,
+    "width": 34,
+    "height": 48,
+    "offset_x": -17,
+    "offset_y": -75
+   }
+  ],
+  [
+   {
+    "sheet": 0,
+    "x": 306,
+    "y": 59,
+    "width": 66,
+    "height": 45,
+    "offset_x": -18,
+    "offset_y": -72
+   },
+   {
+    "sheet": 0,
+    "x": 373,
+    "y": 59,
+    "width": 67,
+    "height": 42,
+    "offset_x": -18,
+    "offset_y": -70
+   },
+   {
+    "sheet": 0,
+    "x": 441,
+    "y": 59,
+    "width": 72,
+    "height": 46,
+    "offset_x": -19,
+    "offset_y": -74
+   },
+   {
+    "sheet": 0,
+    "x": 514,
+    "y": 59,
+    "width": 73,
+    "height": 45,
+    "offset_x": -17,
+    "offset_y": -72
+   },
+   {
+    "sheet": 0,
+    "x": 588,
+    "y": 59,
+    "width": 63,
+    "height": 44,
+    "offset_x": -17,
+    "offset_y": -70
+   }
+  ]
+ ],
+ "burst": [
+  {
+   "sheet": 0,
+   "x": 652,
+   "y": 59,
+   "width": 5,
+   "height": 27,
+   "offset_x": -6,
+   "offset_y": -46
+  },
+  {
+   "sheet": 0,
+   "x": 658,
+   "y": 59,
+   "width": 15,
+   "height": 23,
+   "offset_x": -9,
+   "offset_y": -55
+  },
+  {
+   "sheet": 0,
+   "x": 674,
+   "y": 59,
+   "width": 28,
+   "height": 43,
+   "offset_x": -14,
+   "offset_y": -66
+  },
+  {
+   "sheet": 0,
+   "x": 703,
+   "y": 59,
+   "width": 41,
+   "height": 44,
+   "offset_x": -28,
+   "offset_y": -71
+  },
+  {
+   "sheet": 0,
+   "x": 745,
+   "y": 59,
+   "width": 35,
+   "height": 42,
+   "offset_x": -19,
+   "offset_y": -71
+  },
+  {
+   "sheet": 0,
+   "x": 781,
+   "y": 59,
+   "width": 48,
+   "height": 46,
+   "offset_x": -21,
+   "offset_y": -72
+  },
+  {
+   "sheet": 0,
+   "x": 830,
+   "y": 59,
+   "width": 42,
+   "height": 45,
+   "offset_x": -24,
+   "offset_y": -72
+  },
+  {
+   "sheet": 0,
+   "x": 873,
+   "y": 59,
+   "width": 48,
+   "height": 55,
+   "offset_x": -29,
+   "offset_y": -73
+  },
+  {
+   "sheet": 0,
+   "x": 922,
+   "y": 59,
+   "width": 48,
+   "height": 55,
+   "offset_x": -29,
+   "offset_y": -73
+  },
+  {
+   "sheet": 0,
+   "x": 971,
+   "y": 59,
+   "width": 45,
+   "height": 47,
+   "offset_x": -25,
+   "offset_y": -70
+  },
+  {
+   "sheet": 0,
+   "x": 1017,
+   "y": 59,
+   "width": 35,
+   "height": 47,
+   "offset_x": -15,
+   "offset_y": -70
+  },
+  {
+   "sheet": 0,
+   "x": 1053,
+   "y": 59,
+   "width": 49,
+   "height": 51,
+   "offset_x": -19,
+   "offset_y": -72
+  }
+ ]
+}

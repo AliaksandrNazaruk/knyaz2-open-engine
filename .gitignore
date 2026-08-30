@@ -33,6 +33,10 @@ mocap_*
 # адресов (engine/names.json) остаётся.
 engine/ghidra_project/
 engine/decompiled/
+# то же и для второй сборки: «Продолжение легенды» — такой же чужой бинарник,
+# и его декомпилят (1056 файлов) воспроизводится
+# `tools/ghidra_decompile.sh --game legend`
+engine/decompiled_legend/
 
 # Ретаргет женской походки — эксперименты в корне
 female_walk_*
@@ -49,9 +53,36 @@ trace-*.log
 proba.csv
 .publish-list
 
-# пробные сборки пака под тесты
-content_test_caches/
-content_test_castle/
+# пробные сборки пака под тесты и снятые с них слепки. Это ВЫХОД сборки, а
+# не исходник: каждая весит сотни мегабайт (canon_20260813 — 405 МБ), и
+# воспроизводится `python -m knyaz2.content.cli build`. Тесты, которым такой
+# пак нужен, пропускаются, если его нет.
+content_test_*/
+content_build_*/
 
 # настройки агента разработки
 .claude/
+engine/ghidra_import/
+
+# --- добавлено 30.08.2026, перед выкладкой ---
+# Декомпилят РЕДАКТОРА карт: то же производное от чужого бинарника, что и
+# engine/decompiled* выше, и по той же причине в репозиторий не идёт.
+engine/decompiled_editor/
+
+# Чужие исходники, лежащие рядом для сверки: открытый движок «Князя 1»
+# (slavik) и k2_tools. Это не наш код и не наша лицензия — держим локально.
+project/community/
+
+# Выпечка клиента (214 МБ) и выгрузки Figma (86 МБ): воспроизводятся
+# инструментами, а deploy_web.py подкаталоги static/ всё равно не берёт.
+knyaz2/web/static/gen/
+figrefs/
+
+# Рабочий стол сессии и замеры: дампы живой игры, логи сборки, архив доков.
+.inbox/
+.build-args
+.editor_build.log
+docs/docs.zip
+anastasia.json
+имена.json
+борье-0.bin

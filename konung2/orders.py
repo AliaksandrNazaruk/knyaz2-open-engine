@@ -94,7 +94,6 @@ KIND_NONE, KIND_TARGET, KIND_TALK, KIND_TAKE, KIND_GO = 0, 1, 2, 3, 6
 #: либо у игрока приказ 2 нацелен на этого юнита. Отпало — 0x416E24
 #: снимает приказ, и юнит идёт своей дорогой дальше.
 KIND_WAIT_TALK = 0x0C
-KIND_WAIT_TALK_COUNTER = 100
 KIND_NAMES = {
     KIND_NONE: "сам", KIND_TARGET: "к цели", KIND_TALK: "заговорить",
     KIND_TAKE: "обыскать", KIND_GO: "идти",
@@ -254,7 +253,6 @@ def rules() -> dict:
         "kind": {"none": KIND_NONE, "target": KIND_TARGET, "talk": KIND_TALK,
                  "take": KIND_TAKE, "go": KIND_GO,
                  "wait_talk": KIND_WAIT_TALK},
-        "wait_talk_counter": KIND_WAIT_TALK_COUNTER,
         "kind_names": {str(kind): name for kind, name in KIND_NAMES.items()},
         "mode": {"follow": MODE_FOLLOW, "player": MODE_PLAYER,
                  "special": MODE_SPECIAL},

@@ -17,6 +17,14 @@ export const world = {
   brightObjects: 0,          // постройки с исходной палитрой кадра main
 };
 
+// КЛЮЧ ГЛУБИНЫ САМОГО «ПОЗДНЕГО» ОБЪЕКТА НАД ТОЧКОЙ, или null, если её не
+// накрывает ничей кадр.
+//
+// Хозяин точки ищется ПО ПЕРЕКРЫТИЮ РАМКИ, а не по номеру: у объектов сцены
+// своего номера нет, и связать их с `hero.buildingCells` не через что.
+// Спрашивают об этом двое — куча на полу постройки (ей нужен ключ хозяина,
+// чтобы лечь сразу за ним, VA 0x00424514) и вырез окна к светлому юниту
+// (ему нужно знать, не закроет ли его тот, кто рисуется позже). Раньше
 export function mapBounds(map) {
   const xs = [];
   const ys = [];
@@ -49,11 +57,32 @@ export function mapBounds(map) {
 //: одинаковы на всех картах, поэтому лежат в одном shared.json и тянутся
 //: РАЗ ЗА СЕАНС. Раньше эти же девять мегабайт ехали в каждом map.json, и
 //: каждый переход между картами стоил игроку двадцати пяти мегабайт.
-export const shared = { hero: null, creatures: null };
+export const shared = { hero: null, creatures: null, settlements: null,
+                        reputation: null, effects: null, projectiles: null,
+                        weather: null };
 
 export function loadShared(document) {
   shared.hero = document?.hero ?? null;
   shared.creatures = document?.creatures ?? null;
+  //: Свои снаряды (project/projectiles): у канонной стрелы кадры лежат в
+  //: интерфейсе карты, а у этих — свой набор на весь пак, как у тварей.
+  shared.projectiles = document?.projectiles ?? null;
+  //: Погода (project/weather): у канона её нет вовсе, закон снят с
+  //: Diablo II — разбор в docs/RAIN.md.
+  shared.weather = document?.weather ?? null;
+  //: СОСТОЯНИЕ ВСЕХ ПОСЕЛЕНИЙ, а не только тех, где игрок побывал. Движок
+  //: держит блок записей целиком и читает его один раз, поэтому разговор
+  //: может спросить про дальнюю деревню: обработчик 35 «Продолжения
+  //: легенды» ищет поселение по номеру карты и смотрит его флаги. У нас
+  //: запись приезжала вместе со своей картой, и ответить было нечем.
+  shared.settlements = document?.settlements ?? null;
+  //: ЦЕНЫ УБИЙСТВА ДЛЯ РЕПУТАЦИИ. Одна таблица на всю игру, как и всё
+  //: прочее из exe: держать её у карты незачем, а искать в двух местах
+  //: вредно (konung2/reputation.py).
+  shared.reputation = document?.reputation ?? null;
+  //: Кадры огней на объектах (konung2/objectanim.py): семь анимаций,
+  //: общих для обеих игр.
+  shared.effects = document?.effects ?? null;
   return shared;
 }
 
@@ -61,6 +90,8 @@ export function loadMap(map) {
   // Подмешиваем общее: карта несёт только своё место прихода героя.
   if (shared.hero) map.hero = { ...shared.hero, ...(map.hero ?? {}) };
   if (shared.creatures && !map.creatures) map.creatures = shared.creatures;
+  if (shared.projectiles && !map.projectiles) map.projectiles = shared.projectiles;
+  if (shared.weather && !map.weather) map.weather = shared.weather;
   // ПОСЕЛЕНИЕ — ЗАПИСЬ СВОЕГО МИРА, как и отряды (см. warband.js). Пятёрка
   // должностных лиц деревни в каждом GAME.N своя, а на ней держится
   // маршрутизация разговора: корневая ветвь спрашивает обработчиком 30, кто
@@ -70,6 +101,10 @@ export function loadMap(map) {
   const worldId = String(map.hero?.template?.world ?? 0);
   const own = map.village_by_world?.[worldId];
   if (own) map.village = own;
+  //: Слоты событий — той же подменой и по той же причине: таблицы у GAME.N
+  //: разные (в нулевом семь занятых, в первом пять, дальше четыре).
+  const ourEvents = map.events_by_world?.[worldId];
+  if (ourEvents) map.events = ourEvents;
   world.map = map;
   const terrain = map.terrain ?? {};
   world.ground = [...(terrain.ground ?? [])].sort((a, b) => a.row - b.row || a.col - b.col);
@@ -127,6 +162,12 @@ export function mapAssets(heroAssets = []) {
       .map((circle) => circle?.path),
     // дымка свечения Факела и Чистой слезы (В11)
     world.map?.interface?.glow?.path,
+    // Кадры огней — только тех анимаций, что есть на этой карте: у костра
+    // и большого пожара наборы разные, и тянуть все 74 кадра незачем.
+    ...[...new Set(world.objects.flatMap((object) =>
+        (object.fire ?? []).map((point) => point.anim)))]
+      .flatMap((anim) =>
+        shared.effects?.object_anims?.[anim]?.frames ?? []),
   ];
 }
 

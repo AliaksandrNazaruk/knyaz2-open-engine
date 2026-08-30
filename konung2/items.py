@@ -113,6 +113,40 @@ REQUIREMENT_STATS = {
     5: "Сила", 6: "Выносливость", 7: "Броня", 8: "Удар",
     9: "Вера", 10: "Здоровье",
 }
+
+#: Печатник подсказки предмета (VA 0x4315A0) пишет короткие имена полей из
+#: таблицы указателей 0x462D74 — стрид 4, живые номера 1…10, каждое имя с
+#: ведущим пробелом (« Сил+2», «, требует:  Сил:12»). Нулевой указатель
+#: смотрит в чужую строку и печатником не используется.
+STAT_NAMES_TABLE = 0x462D74
+#: Вид отравы: «, зажигательные» и семь ядов «на тварь» — таблица 0x4624F4,
+#: стрид 0x20, указатель на строку в начале записи. Номер вида несёт байт
+#: +0x02 ЗАПИСИ предмета (масло кладёт 0, яды — 1…7).
+POISON_KINDS_TABLE = 0x4624F4
+POISON_KINDS_COUNT = 8
+
+
+def tooltip_strings(profile=None) -> dict:
+    """Строки подсказки предмета — дословно из exe, не перепечатка."""
+    from .exetables import va_to_foff
+    from .profile import CANON
+    chosen = profile or CANON
+    data = chosen.exe_bytes()
+
+    def cstr(va: int) -> str:
+        at = va_to_foff(va)
+        return data[at:data.index(0, at)].decode("cp866")
+
+    def ptr(va: int) -> int:
+        return struct.unpack_from("<I", data, va_to_foff(va))[0]
+
+    return {
+        "policy": "konung2_exe_0x4315A0_0x462D74_0x4624F4",
+        "stats": {str(index): cstr(ptr(STAT_NAMES_TABLE + index * 4))
+                  for index in range(1, 11)},
+        "poisons": [cstr(ptr(POISON_KINDS_TABLE + index * 0x20))
+                    for index in range(POISON_KINDS_COUNT)],
+    }
 BAG_FIELD, BAG_SLOTS = 0x62, 42
 #: Куча из нескольких предметов лежит мешочком (VA 0x43BBC4).
 GROUND_PILE_SPRITE = 163
@@ -260,22 +294,40 @@ class ItemClass:
         return None
 
 
-def read_items(data: bytes | None = None) -> list[ItemClass]:
-    """Все классы предметов из konung2.exe.
+def read_items(data: bytes | None = None, profile=None) -> list[ItemClass]:
+    """Все классы предметов игры.
 
     Конец таблицы виден по первой записи без названия: указатель +0x00
     перестаёт попадать в сегмент данных.
+
+    Профиль говорит, где таблица лежит и на сколько сдвинуты поля внутри
+    записи: у «Продолжения легенды» они на байт раньше наших, хотя шаг
+    записи тот же. Без профиля читается канон.
     """
-    if data is None:
-        with open(game_file("konung2.exe"), "rb") as handle:
-            data = handle.read()
-    offset = va_to_foff(TABLE_VA)
+    from .profile import CANON
+    profile = profile or CANON
+    # РАЗОБРАННАЯ ТАБЛИЦА ПОМНИТСЯ ПО ИГРЕ — как Dialogs._LOADED. Без этого
+    # полный парс (сотни записей со строками из exe) шёл на КАЖДЫЙ вызов, а
+    # сборщик пака зовёт item_class_of на каждый предмет каждого юнита всех
+    # карт: py-spy поймал сборку через 50 минут именно в этом стеке
+    # (map_units -> item_class_of -> read_items -> va_to_foff). С кэшем
+    # общие фазы сборки падают с десятков минут до секунд.
+    fresh = data is None
+    if fresh:
+        cached = _LOADED.get(profile.name)
+        if cached is not None:
+            return cached
+        data = profile.exe_bytes()
+    offset = profile.need("items_at")
+    shift = profile.items_field_shift
+    lo = 0x450000 if profile is CANON else 0x400000
     items: list[ItemClass] = []
     while True:
         index = len(items)
-        fields = struct.unpack_from("<8I", data, offset + index * STRIDE)
-        text = va_to_foff(fields[0])
-        if text is None or not 0x450000 <= fields[0] < 0x460000:
+        at = offset + index * STRIDE
+        fields = struct.unpack_from("<8I", data, at)
+        text = profile.va_to_foff(fields[0])
+        if text is None or not lo <= fields[0] < 0x460000:
             break
         end = data.index(b"\0", text)
         items.append(ItemClass(
@@ -288,7 +340,7 @@ def read_items(data: bytes | None = None) -> list[ItemClass]:
             range_cells=fields[4] & 0xFFFF,
             # Цена читается со знаком: у зелий она отрицательная, и это
             # не ошибка, а «столько за единицу крепости» (VA 0x41ABBC).
-            price=struct.unpack_from("<h", data, offset + index * STRIDE + 0x12)[0],
+            price=struct.unpack_from("<h", data, at + 0x12 - shift)[0],
             # ВЕС ЧИТАЕТСЯ СО ЗНАКОМ, как и цена выше. Движок складывает
             # ноши арифметическим сдвигом — `*(int *)(...) >> 0x10`
             # (VA 0x41B218), то есть старшее слово знаковое. Беззнаковое
@@ -296,13 +348,32 @@ def read_items(data: bytes | None = None) -> list[ItemClass]:
             # облегчения на 10: 55536 = 65536 − 10000. Такая вещь в таблице
             # одна, но она артефакт, и ошибка в ней заметна сразу.
             weight=struct.unpack_from("<h", data,
-                                      offset + index * STRIDE + 0x14)[0],
-            icon=fields[5] >> 16,
-            ground=fields[6] & 0xFFFF,
-            layer=fields[6] >> 16,
-            palette_offset=fields[7],
+                                      at + 0x14 - shift)[0],
+            # ПОЛЯ ОТ +0x12 У ДОНОРА НА БАЙТ РАНЬШЕ. Замерено по 193
+            # предметам с одинаковым именем: байты +0x04..+0x10 совпадают
+            # у всех без сдвига, а +0x13..+0x1A — у всех со сдвигом на
+            # единицу. Поэтому первые четыре поля читаются как были, а
+            # дальше со поправкой.
+            icon=struct.unpack_from("<H", data, at + 0x16 - shift)[0],
+            ground=struct.unpack_from("<H", data, at + 0x18 - shift)[0],
+            # СЛОЙ НЕ ПРОВЕРЕН для чужой сборки. Перебор всех смещений
+            # записи не дал победителя: лучшее 89 совпадений из 193 при
+            # уровне шума 85. Он сидит ровно в зоне +0x19..+0x1B, где
+            # запись донора расходится структурно, и его значения там,
+            # похоже, просто свои — у донора своя графика снаряжения.
+            layer=struct.unpack_from("<H", data, at + 0x1A - shift)[0],
+            # ПАЛИТРА, НАОБОРОТ, НА СВОЁМ МЕСТЕ И БЕЗ СДВИГА: +0x1C у обеих
+            # игр, 178 совпадений из 193. То есть байт, вставленный перед
+            # +0x12, к концу записи отыгрывается обратно.
+            palette_offset=struct.unpack_from("<I", data, at + 0x1C)[0],
         ))
+    if fresh:
+        _LOADED[profile.name] = items
     return items
+
+
+#: Разобранные таблицы классов по имени игры (см. `read_items`).
+_LOADED: dict[str, list[ItemClass]] = {}
 
 
 def find(name: str, items: list[ItemClass] | None = None) -> ItemClass:

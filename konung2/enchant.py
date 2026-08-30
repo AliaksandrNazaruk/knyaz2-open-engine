@@ -74,7 +74,22 @@ GROUPS = ((12, 0), (9, 6), (6, 12), (3, 18), (0, 24))
 GROUP_MASK, GROUP_LEVELS = 0x7, 6
 #: Таблица прибавок.
 TABLE_VA, TABLE_STRIDE = 0x45D530, 0x10
-#: Вторая таблица — по байту +0x01; в стартовых мирах не работает.
+#: Вторая таблица — по байту +0x01 записи предмета И ПО ФЛАГАМ ЮНИТА.
+#:
+#: Прежняя пометка «в стартовых мирах не работает» неверна и снята 19.08.2026:
+#: предметы с ненулевым байтом +0x01 там и правда не встречаются, но по этой
+#: же таблице считаются КВЕСТОВЫЕ ФЛАГИ. Пересчёт характеристик 0x41C494:72-74
+#: перед каждым расчётом делает `if (юнит[+0xF9] != 0) FUN_0041844C(+0xF9)` —
+#: то есть скармливает разборщику флаговый байт наравне с номером прибавки
+#: предмета. Отсюда и берётся благословение волхва, которого тестеры не
+#: дождались: разговор поднимает флаг 1 (обработчик 34), а прибавку даёт
+#: таблица.
+#:
+#: Разборщик 0x41844C: значение 1…15 — это МАСКА, и он проходит по битам
+#: 8, 4, 2, 1, беря строку по САМОМУ БИТУ (строка = база + бит * 16). Значение
+#: 0 или больше 15 — номер прибавки предмета, тогда строка берётся по нему
+#: целиком. Поэтому строки 3, 5…7, 9…15 не читает никто: до них не доводит ни
+#: один путь, и лежит там мусор от соседей.
 SECOND_TABLE_VA, SECOND_BYTE_AT = 0x45D430, 0x01
 
 #: Поля: 1…6 характеристики, дальше три поля юнита.
@@ -85,6 +100,8 @@ MODE_AT = 0xFA
 MODE_BIT = {FIELD_ARMOUR: 1, FIELD_STRIKE: 2, FIELD_ACCURACY: 4}
 #: Характеристики: база и текущие.
 BASE_AT, CURRENT_AT = 0xC0, 0xCC
+#: Квестовые флаги юнита: байт +0xF9 (обработчик 34 ставит, 42 снимает).
+FLAGS_AT = 0xF9
 #: Опознание: навык 15, бросок против него, потолок сотня.
 IDENTIFY_SKILL, IDENTIFY_SKILL_AT, IDENTIFY_CAP = 15, 0xE1, 100
 
@@ -103,6 +120,39 @@ def table(data: bytes | None = None) -> list[dict]:
             "<IBBH", data, start + index * TABLE_STRIDE)
         rows.append({"index": index, "price": price, "field": field,
                      "mask": mask, "value": value})
+    return rows
+
+
+#: Сколько строк второй таблицы печём. Флагам хватает первых шестнадцати:
+#: маска байта +0xF9 больше 15 быть не может, а номера прибавок предметов —
+#: отдельная работа, их в стартовых мирах нет.
+BONUS_ROWS = 16
+#: Тройки в строке: три штуки, по четыре байта — стат, режим, величина.
+BONUS_TRIPLES, BONUS_TRIPLE_AT = 3, 4
+
+
+def bonus_table(data: bytes | None = None) -> list[list[dict]]:
+    """Строки второй таблицы: строка -> список прибавок «стат, режим, величина».
+
+    Пустые тройки (стат 0) выброшены: разборщик их пропускает первой же
+    проверкой `if (стат != 0)`.
+    """
+    from .exetables import va_to_foff
+    from .paths import game_file
+    if data is None:
+        with open(game_file("konung2.exe"), "rb") as stream:
+            data = stream.read()
+    start = va_to_foff(SECOND_TABLE_VA)
+    rows = []
+    for index in range(BONUS_ROWS):
+        at = start + index * TABLE_STRIDE
+        triples = []
+        for k in range(BONUS_TRIPLES):
+            field, mode, value = struct.unpack_from(
+                "<BBh", data, at + BONUS_TRIPLE_AT + k * 4)
+            if field:
+                triples.append({"field": field, "mode": mode, "value": value})
+        rows.append(triples)
     return rows
 
 
@@ -170,6 +220,11 @@ def rules() -> dict:
         "at": ENCHANT_AT, "dormant": DORMANT, "levels": GROUP_LEVELS,
         "groups": [{"shift": shift, "section": section} for shift, section in GROUPS],
         "table": rows,
+        # Флаги юнита (+0xF9) считаются ПО ЭТОЙ ЖЕ таблице, что и номер
+        # прибавки предмета: разборщик у них один (0x41844C).
+        "flags_at": FLAGS_AT,
+        "bonus_table": bonus_table(),
+        "bonus_by_bit": True,
         "fields": {"armour": FIELD_ARMOUR, "strike": FIELD_STRIKE,
                    "accuracy": FIELD_ACCURACY,
                    "unit_at": FIELD_UNIT_AT,

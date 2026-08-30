@@ -34,17 +34,23 @@ class RecordTable:
         self.fields = fields
 
     # --- чтение ---------------------------------------------------------
-    def default_record(self, data):
+    #: ДЛИНА ТАБЛИЦЫ МОЖЕТ БЫТЬ НЕ ТА, ЧТО ОБЪЯВЛЕНА. У карт «Продолжения
+    #: легенды» блок обстановки построек длиннее нашего — 62 записи против
+    #: 30, — и число выводится из длины самого файла, а не задаётся здесь.
+    #: Без довода берётся объявленное, и всё работает как раньше.
+    def default_record(self, data, count=None):
         """Самое частое значение записи — считается «пустым слотом»."""
+        count = self.count if count is None else count
         c = Counter(bytes(data[self.offset + i*self.size: self.offset + (i+1)*self.size])
-                    for i in range(self.count))
+                    for i in range(count))
         rec, n = c.most_common(1)[0]
-        return rec if n > self.count // 3 else bytes(self.size)
+        return rec if n > count // 3 else bytes(self.size)
 
-    def unpack(self, data):
-        default = self.default_record(data)
-        out = {'_default': default.hex(), '_count': self.count, '_size': self.size, 'records': []}
-        for i in range(self.count):
+    def unpack(self, data, count=None):
+        count = self.count if count is None else count
+        default = self.default_record(data, count)
+        out = {'_default': default.hex(), '_count': count, '_size': self.size, 'records': []}
+        for i in range(count):
             raw = bytes(data[self.offset + i*self.size: self.offset + (i+1)*self.size])
             if raw == default:
                 continue
@@ -63,9 +69,16 @@ class RecordTable:
     # --- запись ---------------------------------------------------------
     def pack(self, table):
         default = bytes.fromhex(table['_default'])
-        buf = bytearray(default * self.count)
+        # Сколько записей — говорит САМА таблица: она могла приехать длиннее
+        # объявленного (см. default_record). Слот за пределами — это не
+        # «допишем в конец», а рассогласование, и молчать о нём нельзя.
+        count = int(table.get('_count', self.count))
+        buf = bytearray(default * count)
         for rec in table['records']:
             i = rec['slot']
+            if not 0 <= i < count:
+                raise ValueError(f"{self.name}: запись {i} вне таблицы "
+                                 f"из {count}")
             raw = bytearray(bytes.fromhex(rec['raw'])) if 'raw' in rec else bytearray(default)
             for fname, foff, ftype in self.fields:
                 if fname not in rec or rec[fname] is None:

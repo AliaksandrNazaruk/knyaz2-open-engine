@@ -29,14 +29,43 @@ export const sound = {
   buffers: new Map(),   // key -> AudioBuffer | Promise
   lineKeys: [],         // порядок реплик в кэше — держим только хвост
   active: new Set(),    // играющие источники (лимит из rules)
-  music: null,          // { source, gain, slot }
+  music: null,          // { source, gain, slot, path }
+  musicWanted: null,    // путь последней ЗАПРОШЕННОЙ дорожки — против гонки
   musicOverride: null,  // слот, выбранный панелью вручную (сильнее карты)
   unitVoice: null,      // синглтон голосового отклика
   dialogVoice: null,    // синглтон реплики диалога
   queue: [],            // догрузка карты по одному слоту за тик
   played: 0, misses: 0, // диагностика: сыграно / промахов кэша
+  //: ХВОСТ СЫГРАННОГО — для вопросов «что это сейчас прозвучало». Звук
+  //: живёт мгновение, и по счётчику `played` не понять, ЧТО именно играло:
+  //: «много одинаковых голосов при загрузке» на счётчике неотличимо от
+  //: «много разных». Держим последние RECENT_TAIL записей.
+  recent: [],
   ready: false,
 };
+
+//: Сколько последних звуков помнить. Хватает, чтобы разглядеть залп при
+//: входе на карту, и мало, чтобы не думать о памяти.
+const RECENT_TAIL = 64;
+
+//: ОТКУДА ЗВУК — только для залпа при загрузке. Стек берётся, пока хвост
+//: набирается в первый раз: именно там сидят вопросы вида «почему один и
+//: тот же отклик звучит десять раз подряд», а живой перехват из консоли их
+//: не ловит — он ставится уже после залпа. Дальше стек не снимается: он
+//: недёшев, а на устоявшейся игре и не нужен.
+let traced = 0;
+
+function remember(kind, slot, path) {
+  const record = { род: kind, слот: slot, файл: path ?? null };
+  if (traced < RECENT_TAIL) {
+    traced += 1;
+    record.откуда = new Error().stack.split("\n").slice(2, 6)
+      .map((line) => line.trim().replace(/^at\s+/, ""))
+      .filter((line) => !line.includes("/sound.js"));
+  }
+  sound.recent.push(record);
+  if (sound.recent.length > RECENT_TAIL) sound.recent.shift();
+}
 
 const TICK_SECONDS = 1 / 18;      // такт мира — как у догрузки движка
 const LINE_CACHE = 16;            // репликам хватает короткого хвоста
@@ -57,6 +86,19 @@ export const fixes = {
 
 // ---- инициализация ---------------------------------------------------------
 
+//: Запись слота: сперва набор своей игры, потом канонный. Канонный остаётся
+//: запасным осознанно — у донора 118 наших слотов нет вовсе, и без отката
+//: удар мечом на его карте стал бы немым.
+//:
+//: Набор берётся у карты, но не всегда: у карты мира он КАНОННЫЙ, потому что
+//: карта мира в мире одна на две игры. Отсюда явный довод — вызывающий может
+//: назвать банк сам, и по умолчанию это банк текущей карты.
+export function slotEntry(slot, game = sound.game) {
+  const key = String(slot);
+  return (game ? sound.slots?.[`${game}:${key}`] : null)
+    ?? sound.slots?.[key] ?? null;
+}
+
 export async function soundInit() {
   if (sound.ready) return sound;
   const [index, voices] = await Promise.all([
@@ -65,6 +107,11 @@ export async function soundInit() {
   ]);
   sound.rules = index.rules;
   sound.slots = index.slots;
+  //: ЧЕЙ НАБОР ЗВУКОВ. Номера общие, а звуки под ними у двух игр разные:
+  //: из 376 общих слотов не совпал НИ ОДИН, а у десяти совпала только
+  //: длительность. Приставку ставит карта (`map.audio.game`), и слот
+  //: ищется сперва под ней.
+  sound.game = null;
   sound.voices = voices;
   sound.ready = true;
   // Браузер не даёт звук до жеста — контекст заводится по первому же.
@@ -73,16 +120,7 @@ export async function soundInit() {
   document.addEventListener("keydown", wake, { once: true });
   // вечный набор оригинала: UI + отклики (0x43C228); четвёрка героя — при
   // входе на карту, когда известен его актёр
-  const streaming = sound.rules.streaming;
-  const eternal = [];
-  for (let slot = streaming.preload_ui[0]; slot < streaming.preload_ui[1]; slot += 1) {
-    eternal.push(slot);
-  }
-  for (let slot = streaming.preload_responses[0];
-       slot < streaming.preload_responses[1]; slot += 1) {
-    eternal.push(slot);
-  }
-  preloadSlots(eternal);
+  loadEternal();
   // Карта могла загрузиться раньше канона — повторяем вход с сохранённым.
   if (sound.entered) soundMapEnter(sound.entered.audioBlock, sound.entered.heroActor);
   return sound;
@@ -98,8 +136,15 @@ export function ensureContext() {
 
 // ---- буферы и уровни загрузки ----------------------------------------------
 
-function fetchBuffer(key, path) {
-  const cached = sound.buffers.get(key);
+//: КЛЮЧ КЭША — ПУТЬ К ФАЙЛУ, А НЕ НОМЕР СЛОТА. Номер уникален внутри одной
+//: игры, а у нас их две, и под одним номером лежат разные звуки: канонный
+//: слот 20 это тема карты мира на 39 секунд, донорский — обрывок на 0.37.
+//: Пока ключом был номер, звук из чужого банка садился в кэш и потом играл
+//: вместо своего; на карте мира это давало треть секунды по кругу. Путь
+//: уникален всегда, и вопрос закрыт целиком: чей звук — решает только тот,
+//: кто выбрал запись слота.
+function fetchBuffer(path) {
+  const cached = sound.buffers.get(path);
   if (cached) return cached;
   const promise = fetch(contentUrl(path))
     .then((response) => {
@@ -107,15 +152,16 @@ function fetchBuffer(key, path) {
       return response.arrayBuffer();
     })
     .then((raw) => ensureContext().decodeAudioData(raw))
-    .then((buffer) => { sound.buffers.set(key, buffer); return buffer; })
-    .catch((error) => { sound.buffers.delete(key); console.warn(error); return null; });
-  sound.buffers.set(key, promise);
+    .then((buffer) => { sound.buffers.set(path, buffer); return buffer; })
+    .catch((error) => { sound.buffers.delete(path); console.warn(error); return null; });
+  sound.buffers.set(path, promise);
   return promise;
 }
 
 function slotBuffer(slot) {
   // Кэш-промах молчит, как в движке; звук доедет с очередью карты.
-  const buffer = sound.buffers.get(`s${slot}`);
+  const entry = slotEntry(slot);
+  const buffer = entry ? sound.buffers.get(entry.path) : null;
   if (!buffer || buffer instanceof Promise) {
     sound.misses += 1;
     return null;
@@ -125,8 +171,48 @@ function slotBuffer(slot) {
 
 export function preloadSlots(slotNumbers) {
   for (const slot of slotNumbers) {
-    const entry = sound.slots?.[String(slot)];
-    if (entry) fetchBuffer(`s${slot}`, entry.path);
+    const entry = slotEntry(slot);
+    if (entry) fetchBuffer(entry.path);
+  }
+}
+
+//: ВЕЧНЫЙ НАБОР ОРИГИНАЛА: интерфейс и отклики (0x43C228). У движка арена
+//: поделена на две части: эта загружена всегда, а переиспользуемую он
+//: сбрасывает на каждой карте (курсор 0x849558). Держим так же — иначе
+//: одно из двух: либо чистка карты уносит вечный набор навсегда (очередь
+//: входа его не несёт, а промах кэша молчит и не догружает), либо мы не
+//: чистим вовсе и копим декодированный PCM со всех пройденных карт.
+const permanent = new Set();
+
+//: Слоты вечного набора для ТЕКУЩЕГО банка: у двух игр под ними разные
+//: звуки, поэтому при смене игры набор берётся заново.
+function eternalSlots() {
+  const streaming = sound.rules.streaming;
+  const slots = [];
+  for (let slot = streaming.preload_ui[0]; slot < streaming.preload_ui[1];
+       slot += 1) slots.push(slot);
+  for (let slot = streaming.preload_responses[0];
+       slot < streaming.preload_responses[1]; slot += 1) slots.push(slot);
+  return slots;
+}
+
+//: Взять вечный набор своего банка и запомнить, что он не выбрасывается.
+function loadEternal() {
+  permanent.clear();
+  for (const slot of eternalSlots()) {
+    const entry = slotEntry(slot);
+    if (!entry) continue;
+    permanent.add(entry.path);
+    fetchBuffer(entry.path);
+  }
+}
+
+//: Сброс переиспользуемой части арены: всё, кроме вечного набора и хвоста
+//: реплик (у него свой предел, LINE_CACHE).
+function releaseMapBuffers() {
+  const lines = new Set(sound.lineKeys);
+  for (const key of [...sound.buffers.keys()]) {
+    if (!permanent.has(key) && !lines.has(key)) sound.buffers.delete(key);
   }
 }
 
@@ -138,6 +224,16 @@ export function preloadSlots(slotNumbers) {
 export function soundMapEnter(audioBlock, heroActor = 0) {
   sound.entered = { audioBlock, heroActor };
   if (!sound.ready) return;
+  //: Чей набор звуков у этой карты. Ставится ДО очереди и до предзагрузки:
+  //: обе ищут слоты через slotEntry, то есть с приставкой.
+  const game = audioBlock?.game ?? null;
+  const switched = game !== sound.game;
+  sound.game = game;
+  //: Переиспользуемая часть арены сбрасывается на каждой карте, как курсор
+  //: 0x849558 у движка; вечный набор остаётся. А сменилась игра — вечный
+  //: набор берётся заново: под теми же номерами у неё другие звуки.
+  releaseMapBuffers();
+  if (switched) loadEternal();
   sound.queue = [...(audioBlock?.preload ?? [])];
   // Четвёрка «Эй, есть разговор!» героя (0x43D898): обе базы его актёра.
   // Пак может несёт канон прежней сборки без talk_request — тогда без неё:
@@ -155,7 +251,7 @@ export function soundMapEnter(audioBlock, heroActor = 0) {
       const breed = unit.breed ?? 0;
       if (!(breed & 0x40)) continue;
       const slot = (breed & 0x3F) * creatures.stride + creatures.special_offset;
-      if (sound.slots[String(slot)]) sound.queue.push(slot);
+      if (slotEntry(slot)) sound.queue.push(slot);
     }
   }
 }
@@ -167,9 +263,9 @@ export function soundTick(now) {
   if (!sound.ready) return false;            // канон ещё едет — очередь ждёт
   while (sound.queue.length) {
     const slot = sound.queue.shift();
-    const entry = sound.slots[String(slot)];
+    const entry = slotEntry(slot);
     if (!entry) continue;                    // пустой слот — как у движка
-    fetchBuffer(`s${slot}`, entry.path);     // ровно ОДИН слот за такт
+    fetchBuffer(entry.path);                 // ровно ОДИН слот за такт
     break;
   }
   return false;
@@ -264,6 +360,7 @@ export function playEffect(slot, { volume = 0, pan = 0, loop = false,
   source.start();
   sound.active.add(source);
   sound.played += 1;
+  remember("эффект", slot, slotEntry(slot)?.path);
   return source;
 }
 
@@ -280,12 +377,24 @@ export function stopEffect(source) {
 
 // Музыка (0x42D13C): один зацикленный буфер; повторный запуск того же трека
 // ничего не делает; громкость бинарная (0x42D0E8).
-export async function playMusic(slot) {
-  if (!sound.ready || sound.music?.slot === slot) return;
-  const entry = sound.slots?.[String(slot)];
-  if (!entry) return;
-  const buffer = await fetchBuffer(`s${slot}`, entry.path);
-  if (!buffer || sound.music?.slot === slot) return;
+//
+// «ТОТ ЖЕ ТРЕК» — ЭТО ТОТ ЖЕ ФАЙЛ, А НЕ ТОТ ЖЕ НОМЕР. У двух игр под одним
+// номером разная музыка, и сравнение по номеру оставляло играть канонную
+// тему на донорской карте (и наоборот). Банк можно назвать явно: у карты
+// мира он канонный, она в мире одна на две игры.
+export async function playMusic(slot, game = sound.game) {
+  if (!sound.ready) return;
+  const entry = slotEntry(slot, game);
+  if (!entry || sound.music?.path === entry.path) return;
+  // ПОСЛЕДНИЙ ПОПРОСИВШИЙ ВЫИГРЫВАЕТ, А НЕ ПОСЛЕДНИЙ ДОЖДАВШИЙСЯ. Буфер
+  // едет асинхронно, и на входе на карту вызовов бывает два подряд — с
+  // разными наборами под ОДНИМ номером. Чей буфер приедет первым, заранее
+  // не известно, и однажды выигрывал опоздавший: под номером 38 у канона
+  // звук на 0.34 с, и он крутился петлёй вместо дорожки донора на 32 с.
+  sound.musicWanted = entry.path;
+  const buffer = await fetchBuffer(entry.path);
+  if (!buffer || sound.musicWanted !== entry.path) return;
+  if (sound.music?.path === entry.path) return;
   stopMusic();
   const context = ensureContext();
   const source = context.createBufferSource();
@@ -295,7 +404,7 @@ export async function playMusic(slot) {
   gain.gain.value = sound.musicOn ? 1 : 0;
   source.connect(gain).connect(context.destination);
   source.start();
-  sound.music = { source, gain, slot };
+  sound.music = { source, gain, slot, path: entry.path };
 }
 
 export function stopMusic() {
@@ -324,8 +433,8 @@ export async function playVoiceLine(index, voiceNumber = null) {
   if (!sound.ready || !sound.enabled) return null;
   const entry = sound.voices?.lines?.[String(index)];
   if (!entry) return null;
-  const buffer = await fetchBuffer(`v${index}`, entry.path);
-  rememberLine(`v${index}`);
+  const buffer = await fetchBuffer(entry.path);
+  rememberLine(entry.path);
   if (!buffer || !sound.context) return null;
   stopEffect(sound.dialogVoice);
   const context = sound.context;
@@ -337,6 +446,7 @@ export async function playVoiceLine(index, voiceNumber = null) {
   source.start();
   sound.dialogVoice = source;
   sound.played += 1;
+  remember("реплика", index, entry.path);
   return source;
 }
 
@@ -370,5 +480,7 @@ export function soundStats() {
     вОчереди: sound.queue.length,
     буферов: sound.buffers.size,
     музыка: sound.music?.slot ?? null,
+    //: Что играло последним — с конца, как читают журнал.
+    последние: sound.recent.slice(-16).reverse(),
   };
 }

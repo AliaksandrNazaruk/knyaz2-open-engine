@@ -78,7 +78,7 @@ function apply(ident, state) {
     // (actor.js), и без неё поиск уходит в `animations[undefined]`, потом в
     // запасные «действия», где стояния и ходьбы нет вовсе. Кадра не находится,
     // и призрак числится рядом, но не рисуется — ровно это и было видно.
-    ghost = { ghost: true, alive: true, insideSlot: null, stance: "peace",
+    ghost = { ghost: true, alive: true, insideBuilding: null, stance: "peace",
               equipment: {}, bag: [], skills: [], pose: "stand", frame: 0,
               x: 0, y: 0, direction: 2, body: 0, palette: 0 };
     known.set(ident, ghost);

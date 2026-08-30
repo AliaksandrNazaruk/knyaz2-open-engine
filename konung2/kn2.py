@@ -76,10 +76,25 @@ ZONE_OBJECTS, ZONE_SLOTS = 30, 16
 ZONE_EMPTY = 0xFFFFFFFF
 
 
+def zone_count(data) -> int:
+    """Сколько записей обстановки в этой карте.
+
+    ЧИСЛО ВЫВОДИТСЯ ИЗ ДЛИНЫ ФАЙЛА, а не задаётся: блок обстановки идёт
+    последним и кончается вместе с картой. У нас 30 записей (0x3D384 +
+    30*192 = 0x3EA04 = MAP_SIZE), у карт «Продолжения легенды» — 62, и его
+    большие города эти лишние занимают: в Кирингхольме обставлено 26 домов
+    сверх наших тридцати, и в четырёх из них стоят сундуки.
+
+    Обрезка до тридцати делала такие дома пустыми внутри, а сундуки в них
+    теряли своё гнездо (номер постройки лежит в записи кучи, +0x09).
+    """
+    return max(0, (len(data) - T_ZONES.offset) // T_ZONES.size)
+
+
 def interior_slots(kn2) -> dict[tuple[int, int], dict]:
     """Занятые гнёзда обстановки: (объект, гнездо) -> спрайт и точка."""
     out = {}
-    for obj in range(ZONE_OBJECTS):
+    for obj in range(zone_count(kn2.data)):
         for slot in range(ZONE_SLOTS):
             at = T_ZONES.offset + obj * T_ZONES.size + slot * ZONE_SUB
             sprite, word = struct.unpack_from('<II', kn2.data, at)
@@ -95,7 +110,15 @@ class KN2Map:
     """Карта локации. Читает, редактирует и пишет .KN2 без потерь."""
 
     def __init__(self, number, data):
-        assert len(data) == MAP_SIZE, f"размер {len(data)} != {MAP_SIZE}"
+        # ДЛИННЕЕ — МОЖНО, КОРОЧЕ — НЕТ. Карта «Продолжения легенды» больше
+        # нашей ровно на хвост обстановки (62 записи вместо 30), а всё, что
+        # до него, лежит по тем же смещениям. Обрезать этот хвост значит
+        # опустошить дома внутри, поэтому карта держится как есть, а число
+        # записей считает `zone_count`.
+        assert len(data) >= MAP_SIZE, f"размер {len(data)} < {MAP_SIZE}"
+        extra = (len(data) - T_ZONES.offset) % T_ZONES.size
+        assert not extra, (f"размер {len(data)}: хвост обстановки не делится "
+                           f"на запись в {T_ZONES.size} байт")
         self.number = number
         self.data = bytearray(data)
 
@@ -175,7 +198,7 @@ class KN2Map:
         return doc
 
     def _unpack_zones(self):
-        table = T_ZONES.unpack(self.data)
+        table = T_ZONES.unpack(self.data, zone_count(self.data))
         # дополнительно раскладываем каждую зону на 16 подзаписей по 12 байт
         for rec in table['records']:
             raw = bytes.fromhex(rec['raw'])
@@ -196,7 +219,10 @@ class KN2Map:
             doc = json.load(f)
         if number is None:
             number = doc['map_number']
-        data = bytearray(MAP_SIZE)
+        # Длина буфера — по объявленному числу записей обстановки: у карт
+        # «Продолжения легенды» их 62, и файл на 6144 байта длиннее нашего.
+        zones = int(doc['zones'].get('_count', T_ZONES.count))
+        data = bytearray(T_ZONES.offset + zones * T_ZONES.size)
 
         for fname, (off, size, w, h) in (('layer1.png', SEC_LAYER1), ('layer2.png', SEC_LAYER2)):
             img = Image.open(os.path.join(srcdir, fname)).convert('L')

@@ -69,6 +69,104 @@ class ContentVerificationTest(unittest.TestCase):
                                 for error in verify_content_pack(root)))
 
 
+class ScenarioCacheTest(unittest.TestCase):
+    """Вклад карты в общие списки выпечки помнится и честно устаревает.
+
+    Формы тел, палитры, пары и наборы тварей собираются обходом жителей
+    КАЖДОЙ карты по всем мирам выбора, и обход этот стоил две трети
+    времени сборки (замер: 468 с из 694 на карту 63). Кэш снимает его
+    для карт, которых правка не касалась, — но обязан отпускать всё,
+    как только меняются миры, и саму карту, как только меняются её файлы.
+    """
+
+    def подготовить(self, корень: Path) -> tuple[Path, Path]:
+        проект = корень / "project"
+        for номер, имя in ((19, "19_proba"), (20, "20_proba")):
+            папка = проект / "maps" / имя
+            папка.mkdir(parents=True)
+            (папка / "map.json").write_text(
+                json.dumps({"map_number": номер}), encoding="utf-8")
+            (папка / "scenario.json").write_text("{}", encoding="utf-8")
+        пак = корень / "pack"
+        пак.mkdir()
+        return проект, пак
+
+    def test_cache_hits_and_invalidation(self) -> None:
+        from unittest import mock
+        from knyaz2.content import builder
+        with tempfile.TemporaryDirectory() as raw:
+            корень = Path(raw)
+            проект, пак = self.подготовить(корень)
+            счёт: list[int] = []
+
+            def вклад(project, number):
+                счёт.append(number)
+                return {"shapes": [number], "palettes": [], "pairs": [],
+                        "creatures": [], "equipment": [], "sourced": True}
+
+            with mock.patch.object(builder, "_map_contribution", вклад), \
+                    mock.patch.object(builder, "_shared_generation",
+                                      lambda: "поколение-1"):
+                builder._scenario_contributions(проект, (19, 20), пак)
+                self.assertEqual(sorted(счёт), [19, 20])
+                # второй заход не считает ничего: файлы карт целы
+                счёт.clear()
+                builder._scenario_contributions(проект, (19, 20), пак)
+                self.assertEqual(счёт, [])
+                # правка ОДНОЙ карты пересчитывает только её
+                (проект / "maps" / "19_proba" / "scenario.json").write_text(
+                    json.dumps({"units": [{"palette": 7}]}), encoding="utf-8")
+                builder._scenario_contributions(проект, (19, 20), пак)
+                self.assertEqual(счёт, [19])
+                счёт.clear()
+                # индекс живёт рядом с паком и читается человеком
+                документ = json.loads(
+                    (пак / builder.SCENARIO_INDEX).read_text(encoding="utf-8"))
+                self.assertEqual(документ["generation"], "поколение-1")
+                self.assertEqual(sorted(документ["maps"]), ["19", "20"])
+            # СМЕНА МИРОВ ОБЕСЦЕНИВАЕТ ВСЁ: правка GAME.x меняет жителей
+            # сразу всех карт, и вклад каждой обязан пересчитаться.
+            with mock.patch.object(builder, "_map_contribution", вклад), \
+                    mock.patch.object(builder, "_shared_generation",
+                                      lambda: "поколение-2"):
+                builder._scenario_contributions(проект, (19, 20), пак)
+            self.assertEqual(sorted(счёт), [19, 20])
+
+    def test_cached_and_fresh_inputs_match(self) -> None:
+        """С кэшем и без него списки одинаковы — иначе кэш врёт."""
+        from unittest import mock
+        from knyaz2.content import builder
+        with tempfile.TemporaryDirectory() as raw:
+            корень = Path(raw)
+            проект, пак = self.подготовить(корень)
+
+            def вклад(project, number):
+                return {"shapes": [number], "palettes": [number + 1],
+                        "pairs": [["", number, number + 1]],
+                        "creatures": [[number, 3]],
+                        "equipment": [], "sourced": True}
+
+            with mock.patch.object(builder, "_map_contribution", вклад), \
+                    mock.patch.object(builder, "_shared_generation",
+                                      lambda: "поколение"), \
+                    mock.patch.object(builder, "_hero_extra_shapes", set), \
+                    mock.patch.object(builder, "_hero_extra_palettes", set), \
+                    mock.patch.object(builder, "_hero_extra_pairs", set), \
+                    mock.patch.object(builder, "_hero_extra_equipment", list), \
+                    mock.patch.object(builder, "_encounter_units", list), \
+                    mock.patch.object(builder, "_layers_of",
+                                      lambda names: {}):
+                без_кэша = builder._shared_inputs(проект, (19, 20), (), None)
+                первый = builder._shared_inputs(проект, (19, 20), (), пак)
+                второй = builder._shared_inputs(проект, (19, 20), (), пак)
+            self.assertEqual(без_кэша, первый)
+            self.assertEqual(первый, второй)
+            _, palettes, shapes, pairs, creatures = второй
+            self.assertEqual(shapes, {19, 20})
+            self.assertEqual(palettes, {20, 21})
+            self.assertEqual(pairs, {("", 19, 20), ("", 20, 21)})
+            self.assertEqual(creatures, {(19, 3), (20, 3)})
+
+
 if __name__ == "__main__":
     unittest.main()
-

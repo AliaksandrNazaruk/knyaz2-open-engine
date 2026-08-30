@@ -54,7 +54,26 @@ class PackAudioTest(unittest.TestCase):
             index = json.loads((root / "assets" / "audio.json").read_text("utf-8"))
             self.assertEqual(index["encoder"]["codec"], "libopus")
             self.assertEqual(index["rules"]["mixer"]["max_buffers"], 45)
-            self.assertEqual(set(index["slots"]), {"6", "24"})
+            # ЗВУК ДВУХ ИГР ЕДЕТ РЯДОМ. Наборы под общими номерами разные:
+            # из 376 общих слотов не совпал байт в байт ни один, поэтому
+            # донорский лежит под ключом `legend:<слот>` и своими файлами.
+            from konung2 import donor
+            ждём = {"6", "24"}
+            if donor.available():
+                ждём |= {"legend:6", "legend:24"}
+                self.assertTrue((root / "assets" / "sfx"
+                                 / "legend_006.opus").is_file())
+                # У ДОНОРА МУЗЫКА В ДРУГИХ СЛОТАХ — 28…39, а не канонных
+                # 20…30. Формат задаёт место вызова в движке: его музыку
+                # заводит FUN_0042FED4 (обёртка FUN_0041FA40 зовёт её как
+                # `слот + 0x1C`), и там же стереоформат 44100. Пока набор
+                # брался канонный, его слот 24 ехал «дорожкой» в стерео и
+                # выходил обрывком на 0.23 с — закольцованным навсегда.
+                self.assertEqual(index["slots"]["legend:24"]["path"],
+                                 "assets/sfx/legend_024.opus")
+                self.assertNotEqual(index["slots"]["legend:6"]["pcm_sha"],
+                                    index["slots"]["6"]["pcm_sha"])
+            self.assertEqual(set(index["slots"]), ждём)
             self.assertEqual(index["slots"]["24"]["path"],
                              "assets/audio/track_024.opus")
 
@@ -127,6 +146,74 @@ class MapAudioBlockTest(unittest.TestCase):
             self.assertLessEqual(expected, preload, f"запись {record}")
         # все слоты предзагрузки реально существуют в SOUNDS.RES
         self.assertLessEqual(preload, self.occupied)
+
+    def test_donor_map_takes_the_donor_ambient_base(self) -> None:
+        """База восьмёрки амбиента у донора 300, а не канонные 256.
+
+        Очереди загрузки у двух игр одинаковы с точностью до одного числа:
+        канон `n + (карта−1)*8 + 0x100` (0x43DF48), донор `+ 300`
+        (0x4417E0). Пока применялась канонная база, его карты озвучивались
+        слотами на 44 раньше своих — чужими короткими вскриками помногу
+        подряд (жалоба 17.08.2026, поймана хвостом sound.recent).
+
+        Данные с дизасмом согласны независимо: с базой 300 полных восьмёрок
+        у его карт 39 против 35, пустых 12 против 15.
+        """
+        from konung2 import donor
+        if not donor.available():
+            self.skipTest("донор недоступен")
+        self.assertEqual(sounds.ambient_base(), 0x100)
+        self.assertEqual(sounds.ambient_base("legend"), 300)
+        # Его карта 14 «Военный лагерь Повелителя» — та самая, где слышали.
+        self.assertEqual(sounds.ambient_slots(14, "legend").start, 404)
+        self.assertEqual(sounds.ambient_slots(14).start, 360)
+
+        base = {**self.base, "legend_occupied": self.occupied,
+                "legend_tracks": []}
+        block = audio_assets.map_audio_block(164, base, "legend", 14, False)
+        eight = set(block["ambient"]["day"]) | set(block["ambient"]["night"])
+        self.assertTrue(eight <= set(range(404, 412)),
+                        f"амбиент взят не из его восьмёрки: {sorted(eight)}")
+        self.assertLessEqual(eight, set(block["preload"]),
+                             "восьмёрка не попала в предзагрузку")
+
+    def test_donor_map_takes_the_donor_track_rule(self) -> None:
+        """У донорской карты и правило выбора трека его, и слоты его.
+
+        Канонное правило (0x437F48) выдаёт номер из канонного музыкального
+        диапазона 20…30, а в донорском наборе под этими номерами лежат
+        звуковые эффекты: слот 24 у него — 0.23 секунды. Закольцованный, он и
+        давал «музыка зависает» на каждой перенесённой карте.
+
+        Правило донора — 0x43BC94: поселение звучит слотом 0x20 (+ культура),
+        дикая земля с битом 0 признаков локации — 0x23, прочее — 0x26,
+        и отдельно карты 1, 2, 5, 29.
+        """
+        from konung2 import donor
+        if not donor.available():
+            self.skipTest("донор недоступен")
+        base = {**self.base, "legend_occupied": self.occupied,
+                "legend_tracks": []}
+        # 169 = его 19 «Черный Бор», поселение
+        village = audio_assets.map_audio_block(169, base, "legend", 19, True)
+        self.assertEqual(village["map_track"], sounds.LEGEND_VILLAGE_TRACK_BASE)
+        # 209 = его 59 «Берег», не поселение и с флагом
+        self.assertTrue(donor.location_track_flag(59))
+        wild = audio_assets.map_audio_block(209, base, "legend", 59, False)
+        self.assertEqual(wild["map_track"], sounds.LEGEND_TRACK_FLAGGED)
+        # 153 = его 3, не поселение и без флага
+        self.assertFalse(donor.location_track_flag(3))
+        plain = audio_assets.map_audio_block(153, base, "legend", 3, False)
+        self.assertEqual(plain["map_track"], sounds.LEGEND_TRACK_PLAIN)
+        # особые карты — прямо из FUN_0043BC94
+        for native, track in sounds.LEGEND_TRACK_BY_MAP.items():
+            with self.subTest(native=native):
+                block = audio_assets.map_audio_block(
+                    150 + native, base, "legend", native, False)
+                self.assertEqual(block["map_track"], track)
+        # и все они — из ЕГО музыкального диапазона
+        for block in (village, wild, plain):
+            self.assertIn(block["map_track"], sounds.LEGEND_MUSIC_SLOTS)
 
     def test_underground_map_has_no_day_night_split(self) -> None:
         block = audio_assets.map_audio_block(1, self.base)

@@ -12,35 +12,54 @@
 // обработчик из таблицы 0x462E90. Первые два выполняются здесь, обработчики
 // (торговля, найм в отряд, стройка) пока только называются номером.
 import { world } from "./world.js";
-import { hero, heroDie } from "./hero.js";
+import { hero, heroCellToggle, heroDie } from "./hero.js";
 import { tradeOpen } from "./trade.js";
 import { isNight } from "./daylight.js";
 import { actorItem, actorNewItemRef } from "./actor.js";
 import { grantExperience } from "./progress.js";
 import { currentCharacteristics, identifyAll } from "./jewels.js";
-import { bagPut } from "./inventory.js";
+import { JEWEL_SLOTS, bagPut } from "./inventory.js";
 import { nameOfClassAny } from "./questitems.js";
-import { daylight } from "./daylight.js";
-import { officialRole, village } from "./village.js";
+import { eventFighterAlive, officialRole, village, villageState }
+  from "./village.js";
 import { partyHire, partyRelease, unitSendTo, units } from "./units.js";
 import { warbandAlarm, warbands } from "./warband.js";
 import { lootDrop } from "./loot.js";
 import { craftWhetstone } from "./craft.js";
-import { mapSquads, mapStateJoin, mapStateSquads } from "./mapstate.js";
-import { openLocation } from "./worldmap.js";
+import { mapSquads, mapStateJoin, mapStateSquads, mapStateUnjoin }
+  from "./mapstate.js";
+import { openLocation, worldMap } from "./worldmap.js";
 import { playVoiceLine } from "./sound.js";
 import { deselect, orderKinds, orderUnit } from "./orders.js";
-import { clockPhaseHits } from "./clock.js";
+import { clock, clockPhaseHits } from "./clock.js";
 
 export const dialog = {
   unit: null,          // с кем говорим
   line: null,          // текущая реплика
   quests: new Map(),   // состояния квестов: номер -> true/false (бит 0x80)
   approach: new Set(), // «подойди и заговори»: номера диалогов (бит 0x01)
+  //: ЧТО ИЗ ЭТОГО НАБОРА ИЗМЕНИЛ РАЗГОВОР — номер -> взведён ли. Сам набор
+  //: приходит из пака и в сохранении ему делать нечего: сохранённый плоский
+  //: список пережил бы правку данных и вернул отменённое. Так и вышло —
+  //: донорские квесты переехали со 128 на 152, у Фёдоры (разговор 136) бит
+  //: в паке снялся, а сейв приносил его обратно, и она по-прежнему сама
+  //: заговаривала. Хранить надо ПРАВКИ, а исходное брать из пака.
+  approachEdits: new Map(),
   flags: new Map(),    // биты состояния собеседников: "юнит:бит" -> true
   pending: [],         // обработчики действий, которых мы ещё не перенесли
   missing: new Map(),  // обработчики УСЛОВИЙ: номер -> сколько раз спросили
+  //: ПОСЕЛЕНИЕ, ВЫБРАННОЕ РАЗГОВОРОМ. «Продолжение легенды» умеет
+  //: переключать контекст на деревню другой карты (его обработчик 72,
+  //: VA 0x438DC4 пишет запись в свою глобальную ячейку), и дальше про
+  //: постройки и должности спрашивают уже про НЕЁ. Ноль возвращает
+  //: поселение своей карты.
+  villageOverride: null,
 };
+
+//: Поселение, о котором идёт речь: выбранное разговором или своей карты.
+export function dialogVillage() {
+  return dialog.villageOverride ?? world.map?.village ?? null;
+}
 
 // НАЧАЛЬНОЕ СОСТОЯНИЕ КВЕСТОВ — хвост QUESTS.RES (300 dword, 0x6A50E8).
 // Раньше порт не читал его вовсе и начинал с пустоты. Пустой ЖУРНАЛ в начале
@@ -50,6 +69,7 @@ export function questsReset() {
   const rules = world.map?.hero?.rules?.quests ?? null;
   dialog.quests.clear();
   dialog.approach.clear();
+  dialog.approachEdits.clear();
   const flags = rules?.flags ?? [];
   const known = rules?.known_bit ?? 0x80;
   const approach = rules?.approach_bit ?? 0x01;
@@ -107,6 +127,18 @@ export function dialogApproachTick() {
     if (!hero.cell || !unit.cell) continue;
     if (Math.abs(hero.cell.row - unit.cell.row) > APPROACH_ROWS) continue;
     if (Math.abs(hero.cell.col - unit.cell.col) > APPROACH_COLS) continue;
+    // ПРИКАЗ ВЫДАЁТСЯ ОДИН РАЗ НА СОБЕСЕДНИКА. Пока герой идёт, эта ветка
+    // срабатывает каждые шестнадцать тактов, и раньше она переписывала
+    // приказ заново — со всеми последствиями:
+    //   * `onOrder` на каждый повтор кричит оклик «Эй, есть разговор!»
+    //     (слоты 700…723). Игрок слышал пятнадцать «Э!» подряд за один
+    //     подход — жалоба 17.08.2026, поймана хвостом sound.recent;
+    //   * `orderUnit` при выдаче СБРАСЫВАЕТ маршрут (`path = []`), то есть
+    //     герой пересчитывал дорогу по два раза в секунду всю дорогу.
+    // Идём к нему же — значит приказ уже отдан, и делать нечего.
+    if (hero.orderTarget === unit && (hero.orderByte & 0x0F) === kinds.talk) {
+      return null;
+    }
     orderUnit(hero, unit.cell.row, unit.cell.col, kinds.talk, unit);
     // Движок пишет БАЙТ ЦЕЛИКОМ (0x22), а не только младшую половину:
     // старший разряд 0x20 «иду по приказу игрока» тоже выставляется.
@@ -138,6 +170,13 @@ function heroSkill(name) {
   const names = world.map?.hero?.rules?.progression?.skills?.names ?? [];
   const index = names.indexOf(name);
   return index >= 0 ? hero.skills?.[index] ?? 0 : 0;
+}
+
+//: Метка времени разговора (+0x4C): мировой такт, урезанный до слова, в
+//: пятнадцатых долях (VA 0x435A2C пишет, 0x434FFC читает). Слово, а не
+//: полный счётчик, — потому и круг у метки 65536 тактов.
+function talkStampNow() {
+  return Math.trunc((clock.ticks & 0xFFFF) / 15);
 }
 
 //: То же у любого юнита — лекари и кузнецы разговоров.
@@ -215,7 +254,7 @@ function conditionMet(unit, condition) {
     if (command.kind === "quest") {
       value = dialog.quests.get(command.quest) === true;
     } else if (command.kind === "unit_flag") {
-      value = dialog.flags.get(`${unit.id}:${command.bit}`) === true;
+      value = unitFlagGet(unit, command.bit) === true;
     } else if (command.kind === "handler") {
       const handler = HANDLERS[command.handler];
       if (!handler) {
@@ -245,12 +284,112 @@ function conditionMet(unit, condition) {
   return result;
 }
 
+// БИТ СОСТОЯНИЯ СОБЕСЕДНИКА — ПО УСТОЙЧИВОЙ ИДЕНТИЧНОСТИ. Ключ по
+// `unit.id` жил тремя жизнями у одного персонажа: `unit_N` жителем,
+// `mate_N` спутником и снова `unit_N` после «останься здесь» — биты
+// терялись на каждом переходе состояния; а между картами `unit_N`
+// ещё и коллидировал (донорские слоты). Пара «родная карта : слот»
+// одна на все три состояния. Старый ключ читается запасным — ради
+// прежних сейвов.
+function unitFlagKey(unit, bit) {
+  return `${unit.homeMap ?? "?"}:${unit.slot}:${bit}`;
+}
+
+function unitFlagGet(unit, bit) {
+  const value = dialog.flags.get(unitFlagKey(unit, bit));
+  if (value !== undefined) return value;
+  return dialog.flags.get(`${unit.id}:${bit}`);
+}
+
+//: ИСПОЛНИТЬ СКРИПТ КВЕСТА (его 0x439864; механика ОБЩАЯ — канонный квест
+//: 96 открывает клетку карты 14 тем же путём, и порт не делал этого
+//: никогда). «Взвести квест» у движка значит поставить бит 0x80 И исполнить
+//: строку фразы журнала:
+//:
+//:     MAP=карта,строка,столбец,значение   клетке XOR значение: пустота
+//:                                         0x4FFF^0x4FFF=0 — проход открылся
+//:     OBJECT=карта,запись,x,y             объекту карты новые экранные x,y;
+//:                                         в (-1000,-1000) — спрятать
+//:     LANDSCAPE=карта,запись,x,y          то же оверлею земли
+//:
+//: Все три исполняются ТОЛЬКО когда стоишь на названной карте (движок
+//: сверяет первый довод с текущей) — и правка живёт в памяти живой карты.
+//: Перезаход перечитывает пак, поэтому правка запоминается в mapstate;
+//: снятие квеста скрипт НЕ исполняет — как в движке.
+function questScriptRun(number) {
+  const script = world.map?.hero?.rules?.quests?.scripts?.[String(number)];
+  if (!script) return false;
+  // Запоминать правку отдельно не нужно: постоянство даёт повтор при
+  // входе на карту (questEditsReplay), как в движке. Запись в mapstate
+  // здесь удваивала бы применение — XOR клетки вернулся бы в исходное.
+  return questScriptApply(script);
+}
+
+//: ВЗВЕСТИ ТОКЕН СНАРУЖИ — через мир, а не импортом: квестовые вещи
+//: (questitems.js, «Берестяная грамота» ставит токен 0) не могут тянуть
+//: dialog.js — он сам берёт у них nameOfClassAny, вышло бы кольцо.
+world.questTokenSet = (number) => {
+  dialog.quests.set(number, true);
+  questScriptRun(number);
+};
+
+export function questScriptApply(script) {
+  const [map, slot, x, y] = script?.args ?? [];
+  if (!script || mapNumber() !== map) return false;
+  if (script.kind === "map") {
+    // слова довода: строка, столбец, сырое значение (клиенту не нужно —
+    // на уровне стен XOR пустоты это переключение клетки)
+    return heroCellToggle(slot, x);
+  }
+  const pool = script.kind === "object" ? world.objects
+    : script.kind === "landscape" ? world.terrainOverlays : null;
+  const entry = (pool ?? []).find((row) => row.record_slot === slot);
+  if (!entry) return false;
+  const dx = x - (entry.position?.x ?? 0);
+  const dy = y - (entry.position?.y ?? 0);
+  entry.position = { x, y };
+  if (entry.bounds) {
+    entry.bounds.draw_x += dx;
+    entry.bounds.draw_y += dy;
+    entry.bounds.sort_y += dy;
+  }
+  if (script.kind === "object") {
+    // порядок глубины пересчитывается: объект мог переехать по вертикали
+    world.objects.sort((a, b) => a.bounds.sort_y - b.bounds.sort_y ||
+      a.bounds.draw_x - b.bounds.draw_x || a.record_slot - b.record_slot);
+    world.objects.forEach((object, index) => { object.draw_order = index; });
+  }
+  return true;
+}
+
+//: ЗАГРУЗКА КАРТЫ ПЕРЕИГРЫВАЕТ ВСЕ ВЗВЕДЁННЫЕ ТОКЕНЫ — зовёт app.js после
+//: постройки сцены. В движке это цикл по всем тремстам записям состояний
+//: в загрузчике (донорский 0x4417E0): у кого стоит бит 0x80, тому заново
+//: исполняется командная фраза, и правка ложится на свежепрочитанную
+//: карту. Раньше здесь переигрывался сохранённый список правок mapstate —
+//: но квест, взведённый НЕ на своей карте, туда не попадал вовсе (сам
+//: questScriptRun на чужой карте отказывает), и брод на Переправе через
+//: реку не открывался никогда. Сохранённые правки старых сейвов теперь
+//: просто не читаются: состояние квестов — единственный источник.
+export function questEditsReplay(number) {
+  const scripts = world.map?.hero?.rules?.quests?.scripts ?? {};
+  let applied = 0;
+  for (const [key, script] of Object.entries(scripts)) {
+    if (dialog.quests.get(Number(key)) !== true) continue;
+    if (questScriptApply(script)) applied += 1;
+  }
+  return applied;
+}
+
 function runActions(unit, actions) {
   for (const command of actions ?? []) {
     if (command.kind === "quest") {
       dialog.quests.set(command.quest, command.set);
+      // Скрипт исполняется на ВЗВОДЕ, снятие его не трогает (0x4399C8:
+      // ветка без бита SET лишь гасит 0x80).
+      if (command.set) questScriptRun(command.quest);
     } else if (command.kind === "unit_flag") {
-      dialog.flags.set(`${unit.id}:${command.bit}`, command.set);
+      dialog.flags.set(unitFlagKey(unit, command.bit), command.set);
     } else if (command.kind === "handler") {
       if (!runHandler(command)) {
         dialog.pending.push({ handler: command.handler, argument: command.argument });
@@ -269,7 +408,7 @@ function runActions(unit, actions) {
 // в паке нет вовсе: ветка «аргумент больше шести» была мертва и всегда
 // давала ложь. Теперь оба байта приезжают полями slots_a и slots_b.
 function villagePlace(argument) {
-  const data = world.map?.village;
+  const data = dialogVillage();
   if (!data) return null;
   let slot = argument;
   if (argument >= 7) {
@@ -283,7 +422,7 @@ function villagePlace(argument) {
 // байта +0xE4 по юнитам отряда). Отряд — тот, чья сторона записана в байте
 // +0x02 поселения.
 function villageBuildSkill() {
-  const data = world.map?.village;
+  const data = dialogVillage();
   const set = world.map?.hero?.rules?.buildings;
   const index = set?.build_skill_index ?? 18;
   if (!data) return 0;
@@ -307,8 +446,12 @@ function squadLeaves(side) {
   let left = 0;
   for (const unit of [...units]) {
     if (unit.side !== side) continue;
-    const at = units.indexOf(unit);
-    if (at >= 0) units.splice(at, 1);
+    // ПОМЕТКА, А НЕ ВЫРЕЗАНИЕ. Снимок карты (mapStateCapture) идёт по
+    // массиву юнитов: вырезанный до ухода в память не попадал, и на
+    // следующем входе отряд возвращался из пака — «квесты сбросились».
+    // Ушедший остаётся в массиве до свёртки с полями removed/hidden.
+    unit.removed = true;
+    unit.hidden = true;
     unit.cell = null;
     left += 1;
   }
@@ -324,7 +467,167 @@ function squadLeaves(side) {
 // Обработчики команд разговора (таблица 0x462E90). Здесь только те, что
 // разобраны по коду; остальные копятся в dialog.pending, чтобы было видно,
 // чего ещё не хватает.
+//: ОБРАБОТЧИКИ «ПРОДОЛЖЕНИЯ ЛЕГЕНДЫ», КОТОРЫХ У КАНОНА НЕТ ВОВСЕ.
+//:
+//: Канон владеет номерами 0…75, и класть туда чужой обработчик нельзя — там
+//: он значит другое. Поэтому у проекта свой участок: его обработчик H живёт
+//: под номером 128 + H (konung2/donor.py: PROJECT_HANDLER_BASE). Правило то
+//: же, что у карт и локаций: канон владеет началом, проект продолжением.
+const PROJECT_HANDLER_BASE = 128;
+
 const HANDLERS = {
+  // 128+49: прибавить к репутации (его VA 0x436A14).
+  //
+  // РЕПУТАЦИЯ — механика донора, которой у нас нет. Он держит её глобальным
+  // числом (0x87F410), показывает в панели персонажа рядом с уровнем и
+  // свободным опытом (0x433C30) и пишет в сохранение (0x425158). Стартовое
+  // значение у каждого его героя своё: −30, 0, −100, 30. Нашим героям
+  // репутации не назначено, и придумывать её было бы враньём — берём ноль.
+  //
+  // Это вторая по величине дыра донорских разговоров после его 35-го:
+  // прибавление зовут 360 раз, проверку — 101.
+  [PROJECT_HANDLER_BASE + 49]: (argument) => {
+    hero.reputation = (hero.reputation ?? 0) + argument;
+    return true;
+  },
+  // 128+8: репутация не меньше довода (его VA 0x438120).
+  [PROJECT_HANDLER_BASE + 8]: (argument) => argument <= (hero.reputation ?? 0),
+
+  // ---- прочие обработчики «Продолжения легенды» ---------------------
+  // Все разобраны по его декомпиляту (engine/decompiled_legend); поля юнита
+  // и поселения — наши же, из konung2/gamefile.py.
+
+  // 128+12: ХВАТИТ ЛИ У ЛЕКАРЯ УМЕНИЯ НА МОИ РАНЫ (его VA 0x438210).
+  // `Знахарство собеседника * 16` должно превышать здоровье игрока; при
+  // ненулевом доводе сверх того требуется порог 0x5F0, то есть навык 95.
+  // Самое частое из его собственных: 74 вызова.
+  [PROJECT_HANDLER_BASE + 12]: (argument) => {
+    const power = unitSkill(dialog.unit, "Знахарство") * 16;
+    if (power <= (hero.health ?? 0)) return false;
+    return argument === 0 || power >= 0x5F0;
+  },
+
+  // 128+21: НАДЕТО ЛИ НА ИГРОКЕ УКРАШЕНИЕ ЭТОГО КЛАССА (его VA 0x4384B0).
+  // Пять слотов с +0xB6 записи юнита — это украшения: ожерелье, два
+  // браслета и два кольца (JEWEL_SLOTS). Всеми 26 вызовами он спрашивает
+  // про класс 3, «Волшебный фиал с кровью Титанов».
+  [PROJECT_HANDLER_BASE + 21]: (argument) => JEWEL_SLOTS.some((slot) => {
+    const name = hero.equipment?.[slot];
+    return Boolean(name) && actorItem(name)?.index === argument;
+  }),
+
+  // 128+26: ПОСТРОЙКА В ЗАДАННОМ СОСТОЯНИИ (его VA 0x4386E0). Довод несёт
+  // два байта: младший — номер объекта постройки, старший — состояние.
+  // Ищет место с таким номером объекта и сравнивает его ступень.
+  [PROJECT_HANDLER_BASE + 26]: (argument) => {
+    const object = argument & 0xFF;
+    const state = (argument >> 8) & 0xFF;
+    const found = (dialogVillage()?.buildings ?? []).find(
+      (building) => building.object === object);
+    return Boolean(found) && (found.state ?? 0) === state;
+  },
+
+  // 128+29 и 128+30: «Следопыт» не ниже довода — у игрока и у собеседника
+  // (его VA 0x43890C и 0x438948, байт +0xDF записи юнита).
+  [PROJECT_HANDLER_BASE + 29]: (argument) => argument <= heroSkill("Следопыт"),
+  [PROJECT_HANDLER_BASE + 30]: (argument) =>
+    argument <= unitSkill(dialog.unit, "Следопыт"),
+
+  // 128+33 и 128+38: «Сила» и «Выносливость» игрока не ниже довода
+  // (его VA 0x438A2C и 0x438C24, байты +0xD0 и +0xD1).
+  [PROJECT_HANDLER_BASE + 33]: (argument) =>
+    argument <= (hero.characteristics?.[4] ?? 0),
+  [PROJECT_HANDLER_BASE + 38]: (argument) =>
+    argument <= (hero.characteristics?.[5] ?? 0),
+
+  // 128+51: ПРИБАВИТЬ К НАВЫКУ «Смертельный удар» (его VA 0x436AA4, зовёт
+  // его VA 0x43A538: байт +0xD4 записи юнита, кламп 0…100).
+  [PROJECT_HANDLER_BASE + 51]: (argument) => {
+    const names = world.map?.hero?.rules?.progression?.skills?.names ?? [];
+    const index = names.indexOf("Смертельный удар");
+    if (index < 0) return false;
+    hero.skills = hero.skills ?? [];
+    hero.skills[index] = Math.max(0, Math.min(100,
+      (hero.skills[index] ?? 0) + argument));
+    return true;
+  },
+
+  // 128+62: ОБЪЯВИТЬ ВОЙНУ ОТРЯДОМ СОБЕСЕДНИКА (его VA 0x437804). Довод
+  // ИЛИ-ится в байт +0x1F записи отряда — тот самый, где у нас живут биты
+  // «на игрока» (0x01), «на отряды» (0x04), «только если дерутся» (0x08) и
+  // «особый» (0x80).
+  [PROJECT_HANDLER_BASE + 62]: (argument) => {
+    const unit = dialog.unit;
+    if (!unit) return false;
+    const band = warbands.get(unit.side ?? 0);
+    if (!band) return false;
+    band.war = (band.war ?? 0) | argument;
+    warbandAlarm(hero, unit, world.units ?? []);
+    return true;
+  },
+
+  // 128+61: ПОКАЗАТЬ СООБЩЕНИЕ (его VA 0x437754). Строку он собирает из
+  // своих кусков в exe; у нас окна для неё пока нет, поэтому действие
+  // считается выполненным и уходит в `pending` — молчать о нём нельзя.
+  [PROJECT_HANDLER_BASE + 61]: () => {
+    dialog.pending.push({ handler: PROJECT_HANDLER_BASE + 61 });
+    return true;
+  },
+
+  // 128+71: ПРИБАВИТЬ К «Интеллекту» ИГРОКА НАВСЕГДА (его VA 0x437BE0,
+  // зовёт его VA 0x43A498: базовый байт +0xC2 и скрытая копия +0xC8,
+  // кламп 0…150).
+  [PROJECT_HANDLER_BASE + 71]: (argument) => liftCharacteristic(2, argument),
+
+  // 128+72: СДЕЛАТЬ ТЕКУЩИМ ПОСЕЛЕНИЕ ЭТОЙ КАРТЫ (его VA 0x438DC4). Ноль
+  // возвращает поселение своей карты. Дальше на него смотрят обработчики
+  // построек и должностей — то есть это ПЕРЕКЛЮЧАТЕЛЬ КОНТЕКСТА, а не
+  // действие над миром.
+  [PROJECT_HANDLER_BASE + 72]: (argument) => {
+    const found = argument ? villageState(argument) : null;
+    dialog.villageOverride = argument ? (found ?? null) : null;
+    return Boolean(!argument || found);
+  },
+
+  // 128+75: ПОСТАВИТЬ ПОСТРОЙКУ (его VA 0x438ED0). Ищет место с таким
+  // номером объекта и пишет единицу в слово +6 записи — тот самый счётчик,
+  // по которому «постройка есть» отвечает да.
+  [PROJECT_HANDLER_BASE + 75]: (argument) => {
+    const found = (dialogVillage()?.buildings ?? []).find(
+      (building) => building.object === argument);
+    if (!found) return false;
+    found.timer = 1;
+    found.built = true;
+    return true;
+  },
+
+  // 128+91: НАЗНАЧИТЬ РАБОТУ ВСЕМУ ОТРЯДУ СОБЕСЕДНИКА (его VA 0x439714).
+  // То же, что наш 75 «назначить работу собеседнику», но по всем бойцам
+  // отряда, и номер места растёт на единицу с каждым.
+  [PROJECT_HANDLER_BASE + 91]: (argument) => {
+    const unit = dialog.unit;
+    if (!unit) return false;
+    let place = argument;
+    let touched = 0;
+    for (const other of world.units ?? []) {
+      if ((other.side ?? 0) !== (unit.side ?? 0)) continue;
+      other.workplaces = [place];
+      other.busy = false;
+      place += 1;
+      touched += 1;
+    }
+    return touched > 0;
+  },
+
+  // 128+80: ВЫБРАТЬ СОБЕСЕДНИКА ПО НОМЕРУ (его VA 0x4390B8). Дальше
+  // разговор говорит уже с ним. Нет такого юнита — ложь, и ветка не идёт.
+  [PROJECT_HANDLER_BASE + 80]: (argument) => {
+    if (!argument) return false;
+    const found = unitByNumber(argument);
+    if (!found) return false;
+    dialog.unit = found;
+    return true;
+  },
   // 45: забрать у игрока предмет заданного класса (VA 0x433D38)
   45: (argument) => {
     const bag = hero.bag ?? [];
@@ -362,32 +665,46 @@ const HANDLERS = {
     const map = argument || mapNumber();
     return (world.map?.events ?? []).some((event) => {
       if (!event.active || (event.map ?? map) !== map) return false;
-      return (event.members ?? []).some((member) =>
-        !(member.flags & 0x80) && ![3, 0x0B, 0x0C].includes(member.type ?? 0));
+      //: Бойцы лежат в `units`; мерка живого — общая с кузницей, чтобы две
+      //: копии одного правила движка (0x435214) не разошлись.
+      return (event.units ?? []).some(eventFighterAlive);
     });
   },
   // 27: чья деревня (VA 0x435438): -1 спрашивает «принадлежит ли кому-то»,
   // иначе сравнивает владельца (запись поселения +0x4A0) с аргументом.
   27: (argument) => {
-    const village = world.map?.village;
+    const village = dialogVillage();
     if (!village) return false;
     if (argument === -1) return Boolean(village.owned);
     return village.owner === argument;
   },
   // 28: разрешение по флагам деревни (VA 0x4354A8): ноль всегда «да»,
   // иначе смотрит биты 0x15 байта +0x49C.
+  //
+  // ДОВОД ДВУХБАЙТОВЫЙ, и старший байт — НОМЕР КАРТЫ поселения, ноль значит
+  // текущее. Так его читает «Продолжение легенды» (его обработчик 35,
+  // FUN_00438AD8: ищет запись по номеру карты через FUN_0043F670, дальше
+  // проверка та же буквально). Наша игра сюда шлёт только 0 и 1, то есть
+  // всегда «текущее поселение», и для неё ничего не меняется; донор же
+  // спрашивает про дальние деревни — карты 6, 8 и 15, девять раз.
   28: (argument) => {
-    const village = world.map?.village;
+    const where = (argument >> 8) & 0xFF;
+    const village = where ? villageState(where) : dialogVillage();
     if (!village) return false;
-    if (!argument) return true;
+    if (!(argument & 0xFF)) return true;
     return ((village.flags ?? 0) & 0x15) === 0;
   },
   // 30: занимает ли собеседник должность (VA 0x435550): пять мест по u16
   // с +0x3D0 записи поселения, номер юнита сравнивается напрямую.
+  //
+  // Сравниваем СЛОТ, а не разбор id: должность и пишется слотом (действие
+  // 74), а у поднятого из памяти экс-спутника id — `mate_N`, и разбор
+  // `replace("unit_")` давал NaN. NaN не равен ничему — воеводская ветка
+  // Путяты не открывалась никогда, «не могу его забрать».
   30: (argument) => {
-    const officials = world.map?.village?.officials ?? [];
-    const index = Number(String(dialog.unit?.id ?? "").replace("unit_", ""));
-    return officials[argument] === index;
+    const officials = dialogVillage()?.officials ?? [];
+    const slot = dialog.unit?.slot;
+    return slot != null && officials[argument] === slot;
   },
   // 38: торговля (VA 0x43346C). У должностей 2, 3 и 4 в правый ряд идёт
   // ПРИЛАВОК деревни своей длины на должность — 22, 32 и 39 мест — и цены
@@ -497,7 +814,7 @@ const HANDLERS = {
   },
   // 29: занята ли должность в деревне (VA 0x435500) — пять мест по слову
   // с +0x3D0 записи поселения.
-  29: (place) => Boolean((world.map?.village?.officials ?? [])[place]),
+  29: (place) => Boolean((dialogVillage()?.officials ?? [])[place]),
 
   // 36: ВЗЯТЬ СОБЕСЕДНИКА В ОТРЯД (VA 0x433070). Движок дописывает его
   // запись в КОНЕЦ отряда игрока и правит её:
@@ -514,6 +831,28 @@ const HANDLERS = {
   36: () => {
     const unit = dialog.unit;
     if (!unit || unit.alive === false) return false;
+    // ИЗ ПРЕЖНЕГО ОТРЯДА ОН ВЫЧЁРКИВАЕТСЯ — обе ветки 0x433070: должность в
+    // поселении обнуляется (слово +0x3D0), счётчик отряда деревни убавляется
+    // (+0x1C -= 1). Без первого Путята держал место воеводы навсегда и
+    // назначить другого было нельзя; без второго squad_people только рос,
+    // и после пары кругов «отпустил/забрал» деревня считалась полной.
+    // Сторону сверяем ДО того, как перепишем её на сторону игрока.
+    const settlement = dialogVillage();
+    if (settlement) {
+      const officials = settlement.officials;
+      if (Array.isArray(officials)) {
+        const place = officials.indexOf(unit.slot);
+        if (place >= 0) officials[place] = 0;
+      }
+      if (typeof settlement.side === "number" &&
+          unit.side === settlement.side &&
+          (settlement.squad_people ?? 0) > 0) {
+        settlement.squad_people -= 1;
+      }
+    }
+    // Запись приёмыша карты о нём больше не нужна: юнита теперь несёт
+    // запись отряда, а оставленная память поднимала клона («два Белуна»).
+    mapStateUnjoin(world.map?.legacy?.map_number, unit.slot);
     unit.ally = true;
     unit.side = hero.side ?? 0;
     unit.orderByte = 0x10;          // за вожаком
@@ -584,9 +923,9 @@ const HANDLERS = {
   // 2: стоит ли флаг игрока (байт +0xF9; ставит 34, снимает 42).
   2: (argument) => Boolean(argument & (hero.flags ?? 0)),
   // 3: статус деревни (байт +0x49D).
-  3: (argument) => (world.map?.village?.status ?? -1) === argument,
+  3: (argument) => (dialogVillage()?.status ?? -1) === argument,
   // 8: деревня заложена ростовщику (бит 0x20 байта +0x49C; ставит 41).
-  8: () => Boolean((world.map?.village?.flags ?? 0) & 0x20),
+  8: () => Boolean((dialogVillage()?.flags ?? 0) & 0x20),
   // 9/16: ТЕКУЩИЕ характеристики вожака (байты +0xCC и +0xCE).
   9: (argument) => argument <= (currentCharacteristics(hero)[0] ?? 0),
   16: (argument) => argument <= (currentCharacteristics(hero)[2] ?? 0),
@@ -596,11 +935,12 @@ const HANDLERS = {
   // 14: в отряде не меньше бойцов (счёт отряда +0x1C).
   14: (argument) => 1 + (world.units ?? []).filter((unit) => unit.ally &&
     unit.alive !== false).length >= argument,
-  // 18: прошло времени с метки собеседника (+0x4C, пятнадцатые доли
-  // тика суток; метку ставит действие 67).
+  // 18: прошло времени с метки собеседника (+0x4C; метку ставит действие
+  // 67). Мерка — МИРОВОЙ ТАКТ, УРЕЗАННЫЙ ДО СЛОВА, поделённый на 15
+  // (VA 0x434FFC): `abs(метка − (такт & 0xFFFF) / 15) >= довод`. Здесь
+  // стояло время СУТОК, и круг у него вчетверо короче движкового.
   18: (argument) => {
-    const now = Math.trunc((daylight.time ?? 0) / 15);
-    return Math.abs(now - (dialog.unit?.talkStamp ?? 0)) >= argument;
+    return Math.abs(talkStampNow() - (dialog.unit?.talkStamp ?? 0)) >= argument;
   },
   // 19: мы на карте с этим номером (глобал 0x8496C8).
   19: (argument) => mapNumber() === argument,
@@ -642,14 +982,21 @@ const HANDLERS = {
     return true;
   },
   // 35: дать игроку предмет класса аргумент (создать запись — 0x432F1C).
+  // Класс 4 «Грамота на владение кораблём» попутно выписывает корабельное
+  // право текущей карте (0x84960C = карта; у донора 0x4360E8 зовёт
+  // 0x435E00) — выход −2 оживает в самый миг получения бумаги.
   35: (argument) => {
     const classRef = nameOfClassAny(argument);
     if (!classRef) return false;
+    if (argument === 4) {
+      const here = world.map?.legacy?.map_number;
+      if (Number.isFinite(here)) worldMap.ship = here;
+    }
     return bagPut(actorNewItemRef(classRef, "dialog"), -1, hero) >= 0;
   },
   // 39: сменить статус деревни (байт +0x49D).
   39: (argument) => {
-    const data = world.map?.village;
+    const data = dialogVillage();
     if (!data) return false;
     data.status = argument;
     return true;
@@ -657,7 +1004,7 @@ const HANDLERS = {
   // 41: заложить (не ноль: бит 0x20, игроку +1000) или выкупить деревню
   // (ноль: бит долой, у игрока −1200). Возвращает НОЛЬ, как движок.
   41: (argument) => {
-    const data = world.map?.village;
+    const data = dialogVillage();
     if (!data) return false;
     if (argument) {
       data.flags = (data.flags ?? 0) | 0x20;
@@ -751,12 +1098,12 @@ const HANDLERS = {
   67: () => {
     const unit = dialog.unit;
     if (!unit) return false;
-    unit.talkStamp = Math.trunc((daylight.time ?? 0) / 15);
+    unit.talkStamp = talkStampNow();
     return true;
   },
   // 71: назначить владельца деревни; −1 — казна владения игроку.
   71: (argument) => {
-    const data = world.map?.village;
+    const data = dialogVillage();
     if (!data) return false;
     if (argument === -1) {
       hero.money = (hero.money ?? 0) + (data.owned ?? 0);
@@ -769,14 +1116,17 @@ const HANDLERS = {
   // 72: тревога деревни: −1 биты 0x15; 0 бит 0x10 (казна стоит);
   // 1 — снять всё, казну владения в ноль, метка времени свежая.
   72: (argument) => {
-    const data = world.map?.village;
+    const data = dialogVillage();
     if (!data) return false;
     if (argument === -1) data.flags = (data.flags ?? 0) | 0x15;
     else if (argument === 0) data.flags = (data.flags ?? 0) | 0x10;
     else if (argument === 1) {
       data.flags = (data.flags ?? 0) & ~0x15;
       data.owned = 0;
-      village.incomeStamp = daylight.time ?? 0;
+      //: Метка выплаты живёт в мировых тактах (village.js, treasuryTick) —
+      //: суточные часы здесь остались от прежней мерки и обнуляли срок в
+      //: чужих единицах.
+      village.incomeStamp = clock.ticks;
     }
     return true;
   },
@@ -814,10 +1164,22 @@ const HANDLERS = {
   //
   // Номер адресует ВЕСЬ граф, а не переходы текущей карты, поэтому пак
   // несёт таблицу целиком (`rules.transitions`, 250 записей).
+  //
+  // ГРАФ БЕРЁТСЯ ПО ИГРЕ РАЗГОВОРА. У «Продолжения легенды» таблица своя —
+  // 350 записей вместо наших 250, — и номер в ней значит другой переход.
+  // Один общий граф уносил бы героя из донорского разговора в случайное
+  // место, и молча: номер законный, запись есть, ошибки нет. Имя игры
+  // несёт само дерево (konung2/quests.py: tree).
   69: (argument) => {
-    const graph = world.map?.hero?.rules?.transitions ?? [];
+    const rules = world.map?.hero?.rules ?? {};
+    const game = dialog.unit?.dialog?.game;
+    const graph = (game && rules.transitions_by_game?.[game])
+      ?? rules.transitions ?? [];
     const door = graph[argument];
     if (!door) return false;
+    // Цель, которой у нас нет: карта чужой игры ещё не перенесена. Открыть
+    // её нельзя — номер значил бы у нас другое место.
+    if (door.foreign_map) return false;
     // ИМЕННО onTransition, а не onExit: движок переносит отряд безусловно, и
     // карта назначения бывает текущей. У выхода в дверь стоит гейт «уже на
     // этой карте», и через него приказ разговора пропадал молча.
@@ -849,14 +1211,36 @@ const HANDLERS = {
   46: (argument) => {
     const unit = argument ? unitByNumber(argument) : dialog.unit;
     if (!unit) return false;
-    const at = units.indexOf(unit);
-    if (at >= 0) units.splice(at, 1);
-    unit.alive = false;
+    // ВЕТКА «СТОРОНА ИГРОКА» (0x433E30:29-35): союзник вычёркивается из
+    // отряда — счёт −1, сдвиг хвоста, правка панели девяти. Так уходит
+    // Лучеслав (узел 4582, действие 46). Без этого его иконка оставалась в
+    // отряде, partyCapture возил запись дальше, spawnCompanion на каждом
+    // входе ставил его рядом с героем, и квест закрывался заново.
+    // ally снимаем: снимок жителей карты берёт только не-союзников, а без
+    // снимка removed юнит воскресал бы из пака.
+    if (unit.ally) {
+      partyRelease(unit);
+      deselect(unit);
+      unit.ally = false;
+    } else {
+      // Иначе-ветка движка: житель вычёркивается из отряда своей деревни со
+      // сдвигом массива (0x433E30:101-109) — счётчик отряда убавляется.
+      const settlement = dialogVillage();
+      if (settlement && typeof settlement.side === "number" &&
+          unit.side === settlement.side &&
+          (settlement.squad_people ?? 0) > 0) {
+        settlement.squad_people -= 1;
+      }
+    }
+    // Пометка вместо вырезания — иначе снимок карты его не увидит и на
+    // следующем входе юнит вернётся из пака (см. squadLeaves).
+    unit.removed = true;
+    unit.hidden = true;
     unit.cell = null;
     // Должности поселения: своя освобождается — движок пишет в её слово
     // (+0x3D0) ноль, а стоящие после неё уменьшает на единицу; уменьшать нам
     // нечего, у нас не индексы в массиве, а ссылки.
-    const officials = world.map?.village?.officials;
+    const officials = dialogVillage()?.officials;
     if (Array.isArray(officials)) {
       const place = officials.indexOf(unit.slot);
       if (place >= 0) officials[place] = 0;
@@ -876,7 +1260,7 @@ const HANDLERS = {
   // (VA 0x41C944). Поэтому первая ступень заложенной постройки проходит
   // быстрее следующих — так в движке и есть, это не наша вольность.
   40: (argument) => {
-    const data = world.map?.village;
+    const data = dialogVillage();
     if (!data) return false;
     const places = data.buildings ?? [];
     let chosen;
@@ -925,7 +1309,7 @@ const HANDLERS = {
   // 17. Отказ движок никак не показывает — возврат действия отбрасывается
   // (0x435F44), поэтому и мы молчим.
   43: (argument) => {
-    const settlement = world.map?.village;
+    const settlement = dialogVillage();
     const unit = argument ? unitByNumber(argument) : dialog.unit;
     if (!settlement || !unit || unit.alive === false) return false;
     const places = settlement.squad_places ?? 0;
@@ -1018,6 +1402,12 @@ const HANDLERS = {
     const door = (world.map?.exits ?? []).find((exit) => exit.index === argument);
     if (band && door) {
       const half = Math.max(0, (band.count ?? 1) - 1);
+      // ЭТО НЕ МЁРТВАЯ ЗАПИСЬ, ХОТЬ И ВЫГЛЯДИТ ЕЮ. `roam` — прямоугольник
+      // СКИТАНИЙ из записи отряда (konung2/gamefile.py, party_combat), а
+      // `zone` рядом — зона появления, по ней идёт проверка агра. Скитания
+      // у нас пока не ходят: их водит ИИ юнитов, который ещё не перенесён
+      // (задача 12, VA 0x41611C и соседние). Поэтому поле пишется впрок и
+      // ждёт читателя — не удалять как «никем не читаемое».
       band.roam = {
         row_from: (door.entry_row ?? 0) - half,
         row_to: (door.entry_row ?? 0) + half,
@@ -1051,7 +1441,7 @@ const HANDLERS = {
   // Если деревня переполнена, 0x4338B0 возвращает ноль, и 0x435D4C бросает
   // всё как было: должность не занимается, спутник остаётся в отряде.
   74: (post) => {
-    const village = world.map?.village;
+    const village = dialogVillage();
     const unit = dialog.unit;
     if (!village || !unit || unit.alive === false) return false;
     if (!(post >= 0 && post < 5)) return false;
@@ -1119,6 +1509,9 @@ function questApproach(argument, armed) {
   if (number == null) return false;
   if (armed) dialog.approach.add(number);
   else dialog.approach.delete(number);
+  //: Помним ПРАВКУ, а не итог: набор пересобирается из пака при каждой
+  //: загрузке, и поверх него ложится только то, что изменил разговор.
+  dialog.approachEdits.set(number, armed);
   return true;
 }
 // Таблица видна снаружи там же, где missing и pending: чтобы разобранное
@@ -1126,8 +1519,16 @@ function questApproach(argument, armed) {
 dialog.handlers = HANDLERS;
 
 // Юнит по номеру слота — движок ищет его в общем массиве (VA 0x432D1C).
+//
+// В движке массив ГЛОБАЛЬНЫЙ и слот уникален; в порте слоты разных карт
+// пересекаются (донорские несут свои номера), поэтому номер из данных
+// диалога значит: юнит ЭТОЙ карты либо спутник (его номер — с карты
+// найма, он и есть адресат «отпустить»/«назначить»). Чужаку с той же
+// цифрой, но другой родной картой номер не принадлежит.
 function unitByNumber(number) {
-  return (world.units ?? []).find((unit) => unit.slot === number) ?? null;
+  const mapNumber = Number(world.map?.legacy?.map_number ?? NaN);
+  return (world.units ?? []).find((unit) => unit.slot === number &&
+    (unit.ally || unit.homeMap == null || unit.homeMap === mapNumber)) ?? null;
 }
 
 // Должность собеседника: номер его места в списке должностей плюс один
@@ -1166,6 +1567,11 @@ export function dialogStart(unit) {
   const root = unit?.dialog?.root;
   if (root == null) return false;
   dialog.unit = unit;
+  //: Выбор чужого поселения живёт РОВНО ОДИН разговор: в движке его
+  //: глобальную ячейку переставляет вход на карту, у нас переставлять
+  //: нечему, поэтому сбрасываем на входе в разговор. Иначе следующий
+  //: собеседник отвечал бы про чужую деревню.
+  dialog.villageOverride = null;
   // Пока идёт разговор, собеседник стоит и смотрит на игрока
   // (VA 0x413894, случай 0x0C сверяет юнита с 0x849524).
   world.talking = { unit };

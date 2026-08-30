@@ -60,15 +60,31 @@ function greetingOnce() {
 }
 
 function musicFollowsMap() {
-  // Ручной выбор панели сильнее трека карты — это дев-инструмент.
-  // На глобальной карте свой трек (слот 20, VA 0x4209FA).
-  const mapTrack = worldMap.onMap
-    ? sound.rules?.tracks?.global_map
-    : world.map?.audio?.map_track;
-  const track = sound.musicOverride ?? mapTrack;
-  if (!track || !sound.context || !sound.musicOn) return;
-  if (sound.music?.slot === track) return;
-  playMusic(track);
+  if (!sound.context || !sound.musicOn) return;
+  // Ручной выбор панели сильнее трека карты — это дев-инструмент, и список
+  // в нём собран из набора текущей карты, поэтому и банк её же.
+  if (sound.musicOverride) { playMusic(sound.musicOverride, sound.game); return; }
+  // НА ГЛОБАЛЬНОЙ КАРТЕ ТРЕК КАНОННЫЙ. Слот у неё свой (20, VA 0x4209FA), но
+  // набор — канона: карта мира в мире одна на две игры. Под тем же номером у
+  // донора лежит обрывок на 0.37 секунды вместо темы на 39, и зациклённый он
+  // и давал «заглючивший» звук после выхода с донорской карты.
+  if (worldMap.onMap) {
+    // В плавании у глобальной карты свой трек: слот 21 против пешего 20
+    // (0x420900 зовёт музыку 0x15 у корабельного выхода и 0x14 у пешего).
+    const track = worldMap.ship === -1
+      ? sound.rules?.tracks?.sea_map ?? 21
+      : sound.rules?.tracks?.global_map;
+    if (track) playMusic(track, null);
+    return;
+  }
+  // БАНК БЕРЁТСЯ У ТОЙ ЖЕ КАРТЫ, ЧТО И НОМЕР ТРЕКА, а не из `sound.game`.
+  // `sound.game` выставляется в `soundMapEnter`, и на загрузке такт успевает
+  // пройти раньше: трек просили с ещё канонным банком. Под номером 38 у
+  // канона лежит звук на 0.34 с — и он крутился петлёй вместо
+  // тридцатидвухсекундной дорожки донора. Номер и набор должны приходить
+  // из одного места, иначе они разъезжаются.
+  const audio = world.map?.audio;
+  if (audio?.map_track) playMusic(audio.map_track, audio.game ?? null);
 }
 
 export function soundscapeTick(now) {
